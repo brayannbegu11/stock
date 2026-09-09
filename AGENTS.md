@@ -15,7 +15,9 @@ Este repositorio implementa la especificación de `docs/spec/v2/` (laboratorio b
 ## Comandos útiles
 
 ```
-python -m pytest -q -p no:cacheprovider          # 72 pruebas de aceptación, sin red
+python -m pytest -q -p no:cacheprovider          # pruebas de aceptación, sin red (recuento vigente en README.md)
+python scripts/build_master.py                   # maestro y censo desde data/raw (sin red)
+python scripts/run_q0_demo.py                    # demo de extremo a extremo con la regla Q0 sobre la muestra archivada (sin red)
 python -c "import sys; sys.path.insert(0,'src'); import twlab"
 ```
 

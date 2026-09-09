@@ -42,6 +42,22 @@ class UnclassifiedCalendarRow(ValueError):
     pass
 
 
+_EN_SESSION_EXACT = ("Market Open", "Last Trading Day", "First Trading Day")
+_EN_CLOSURE_TOKENS = ("No Trading", "Holiday", "New Year", "Chinese New Year", "Peace Memorial", "Children", "Tomb-sweeping",
+                      "Tomb Sweeping", "Labor Day", "Dragon Boat", "Mid-autumn", "Moon Festival", "National Day", "Teacher",
+                      "Restoration Day", "Constitution Day", "Typhoon")
+
+
+def classify_holiday_row_en(description: str) -> str:
+    """Clasifica una fila del endpoint histórico en inglés (``rwd/en/holidaySchedule``); ante duda, ``unknown``."""
+    text = " ".join(str(description).replace("\n", " ").split())
+    if any(text.startswith(p) or text == p for p in _EN_SESSION_EXACT) and "No Trading" not in text:
+        return ROW_SESSION_MARKER
+    if any(tok.lower() in text.lower() for tok in _EN_CLOSURE_TOKENS):
+        return ROW_CLOSURE
+    return ROW_UNKNOWN
+
+
 def classify_holiday_row(row: Mapping[str, str]) -> str:
     """Clasifica una fila del endpoint oficial; ante ambigüedad o negación devuelve ``unknown``."""
     name = str(row.get("Name", ""))
@@ -215,6 +231,38 @@ class TradingCalendar:
         )
 
 
+    @classmethod
+    def from_twse_legacy_rows(
+        cls,
+        rows_by_year: Mapping[int, Iterable[Sequence[str]]],
+        *,
+        source_id: str,
+        recorded_at: datetime,
+        version: str = "1",
+    ) -> "TradingCalendar":
+        """Construye un calendario multianual desde ``rwd/en/holidaySchedule`` (filas ``[fecha ISO, descripción]``)."""
+        years = sorted(rows_by_year)
+        if years != list(range(years[0], years[-1] + 1)):
+            raise CalendarRangeError(f"years must be contiguous, got {years}")
+        closures: set[date] = set()
+        unknown: list[str] = []
+        for year, rows in rows_by_year.items():
+            for row in rows:
+                d, desc = row[0], row[1]
+                kind = classify_holiday_row_en(desc)
+                day = parse_date(d)
+                if day.year != year:
+                    raise CalendarRangeError(f"row {d} does not belong to {year}")
+                if kind == ROW_CLOSURE:
+                    closures.add(day)
+                elif kind == ROW_UNKNOWN:
+                    unknown.append(f"{d} {desc}")
+        if unknown:
+            raise UnclassifiedCalendarRow("unclassified rows; refusing to guess: " + "; ".join(unknown))
+        return cls(start=date(years[0], 1, 1), end=date(years[-1], 12, 31), closures=closures,
+                   source_id=source_id, recorded_at=recorded_at, version=version)
+
+
 class CalendarStore:
     """Versiones inmutables del calendario con ``recorded_at``: conocido vs. efectivo."""
 
@@ -237,6 +285,27 @@ class CalendarStore:
         if not self._versions:
             raise CalendarRangeError("no calendar versions")
         return max(self._versions, key=lambda c: to_utc(c.recorded_at))
+
+
+def load_twse_reference_calendar(start_year: int = 2021, end_year: int = 2026) -> TradingCalendar:
+    """Calendario oficial multianual desde las capturas del endpoint histórico en inglés (9-09-2026).
+
+    Cobertura: 2021-2026. La captura es manual (curl) y sin recibo de sello temporal;
+    su ``recorded_at`` es la hora real aproximada de la descarga.
+    """
+    rows_by_year = {}
+    for year in range(start_year, end_year + 1):
+        path = REFERENCE_DIR / f"twse_holidaySchedule_en_{year}__captured_2026-09-09.json"
+        body = json.loads(path.read_text(encoding="utf-8"))
+        if body.get("stat") != "ok" or int(body.get("queryYear", year)) != year:
+            raise CalendarRangeError(f"unexpected legacy calendar payload for {year}")
+        rows_by_year[year] = body["data"]
+    return TradingCalendar.from_twse_legacy_rows(
+        rows_by_year,
+        source_id="S06:www.twse.com.tw/rwd/en/holidaySchedule/holidaySchedule",
+        recorded_at=datetime(2026, 9, 10, 4, 5, tzinfo=TAIPEI),
+        version=f"captured_2026-09-09_{start_year}-{end_year}",
+    )
 
 
 def load_twse_reference_calendar_2026() -> TradingCalendar:

@@ -17,3 +17,6 @@ dist/
 review/out/*.tmp
 # pruebas temporales del revisor (sandbox de Codex)
 review/out/astra_scratch/
+
+# registros de corridas locales
+data/*.log

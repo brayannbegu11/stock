@@ -21,7 +21,7 @@ from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
 from typing import Mapping, Optional, Sequence
 
-from .ledger import Fill, PaperLedger, Rejection
+from .ledger import Fill, PaperLedger, Rejection, _positive_decimal
 
 D = Decimal
 _Q = D("1E-12")
@@ -140,6 +140,7 @@ def exit_basket(
     at: datetime,
     week_id: str,
 ) -> list[Slot]:
+    ledger.advance_to(at)      # la salida respeta el reloj del libro aunque no venda nada (R07-07)
     for s in slots:
         if s.entry is None or s.security_id is None or s.owner is None:
             continue
@@ -149,25 +150,24 @@ def exit_basket(
             continue                                        # nada que vender ni valorar
         pos = ledger.positions.get(s.security_id)
         owned = pos.owner_quantity(s.owner) if pos is not None else D(0)
-        price = close_prices.get(s.security_id)
+        raw_price = close_prices.get(s.security_id)
+        price = _positive_decimal(raw_price, f"close_price[{s.security_id}]") if raw_price is not None else None   # R07-08
         if owned == 0:
             # liquidación completa previa del propietario (R06-08): la salida está realizada
             s.status = "exited"
-            _refresh(s, ledger, D(price) if price is not None else s.exit_price)
+            _refresh(s, ledger, price if price is not None else s.exit_price)
             s.notes.append(f"already_liquidated_before_exit@{at.isoformat()}")
             continue
         if price is None:
-            if s.status != "exited":
-                s.status = "exit_blocked"
-                s.reason = "no_close_price"
+            s.status = "exit_blocked"                       # también si ya había salido: el reintento queda bloqueado (R07-06)
+            s.reason = "no_close_price"
+            _refresh(s, ledger, None)
             s.notes.append(f"exit_attempt_blocked:no_close_price@{at.isoformat()}")
             continue
-        price = D(price)
         sellable = (int(owned.to_integral_value(rounding=ROUND_DOWN)) // ledger.lot_size) * ledger.lot_size
         if sellable <= 0:
-            if s.status != "exited":
-                s.status = "exit_blocked"
-                s.reason = "odd_lot_remainder_only"
+            s.status = "exit_blocked"
+            s.reason = "odd_lot_remainder_only"
             _refresh(s, ledger, price)
             s.notes.append(f"exit_attempt_blocked:odd_lot_remainder_only@{at.isoformat()}")
             continue
@@ -175,9 +175,9 @@ def exit_basket(
         res = ledger.sell(security_id=s.security_id, price=price, shares=sellable, at=at,
                           event_id=f"{s.owner}:exit:{s.security_id}:attempt{attempt}", owner=s.owner)
         if isinstance(res, Rejection):
-            if s.status != "exited":
-                s.status = "exit_blocked"
-                s.reason = res.reason
+            s.status = "exit_blocked"
+            s.reason = res.reason
+            _refresh(s, ledger, price)
             s.notes.append(f"exit_attempt_blocked:{res.reason}@{at.isoformat()}")
         else:
             s.status = "exited"

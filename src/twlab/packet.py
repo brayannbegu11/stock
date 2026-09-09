@@ -287,6 +287,51 @@ def build_packet(
     )
 
 
+def packet_to_json(packet: Packet) -> bytes:
+    """Serialización canónica del paquete para archivarlo junto a su hash (registro de paquetes acreditados)."""
+    return canonical_bytes({
+        "packet_id": packet.packet_id, "cutoff_at": packet.cutoff_at, "mode": packet.mode,
+        "evidence_class": packet.evidence_class, "created_at": packet.created_at, "week_id": packet.week_id,
+        "week_status": packet.week_status, "deadline_at": packet.deadline_at,
+        "registration_deadline_at": packet.registration_deadline_at, "entry_at": packet.entry_at,
+        "exit_at": packet.exit_at, "calendar_version": packet.calendar_version,
+        "admitted": [d.canonical() for d in packet.admitted],
+        "rejected": [[r.doc_id, r.reason, r.detail] for r in packet.rejected],
+        "packet_hash": packet.packet_hash(),
+    })
+
+
+def _dt(v: Optional[str]) -> Optional[datetime]:
+    return datetime.fromisoformat(v) if isinstance(v, str) else None
+
+
+def packet_from_json(raw: bytes) -> Packet:
+    """Reconstruye un paquete archivado y comprueba que su hash coincide con el declarado."""
+    body = json.loads(raw.decode("utf-8"))
+    docs = []
+    for c in body["admitted"]:
+        docs.append(Document(
+            doc_id=c["doc_id"], kind=c["kind"], source_id=c["source_id"], security_ids=tuple(c["security_ids"]),
+            available_at=_dt(c["available_at"]), availability_quality=AvailabilityQuality(c["availability_quality"]),
+            published_at=_dt(c.get("published_at")), first_seen_at=_dt(c.get("first_seen_at")),
+            version=c.get("version", 1), supersedes=c.get("supersedes"),
+            period_end=date.fromisoformat(c["period_end"]) if c.get("period_end") else None,
+            scheduled_for=_dt(c.get("scheduled_for")), capture_id=c.get("capture_id"),
+            source_sha256=c.get("source_sha256"), derivation=c.get("derivation"), payload=c.get("payload") or {},
+        ))
+    packet = Packet(
+        packet_id=body["packet_id"], cutoff_at=_dt(body["cutoff_at"]), mode=body["mode"],
+        evidence_class=body["evidence_class"], admitted=tuple(docs),
+        rejected=tuple(Rejection(*r) for r in body["rejected"]), created_at=_dt(body["created_at"]),
+        week_id=body.get("week_id"), week_status=body.get("week_status"), deadline_at=_dt(body.get("deadline_at")),
+        registration_deadline_at=_dt(body.get("registration_deadline_at")), entry_at=_dt(body.get("entry_at")),
+        exit_at=_dt(body.get("exit_at")), calendar_version=body.get("calendar_version"),
+    )
+    if packet.packet_hash() != body.get("packet_hash"):
+        raise ValueError("archived packet hash does not match its content")
+    return packet
+
+
 def validate_document_references(document_ids: Sequence[str], packet: Packet) -> list[str]:
     """TXT-05: devuelve los identificadores citados que NO están en el paquete."""
     allowed = packet.admitted_ids()

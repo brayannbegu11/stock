@@ -88,32 +88,42 @@ No se quita nada de la pregunta científica. No se añade ninguna afirmación de
 taiwan-ia-lab/
   docs/spec/v2/          especificación recibida (inmutable; sha256 en MANIFEST.json)
   docs/informes/         00 perfil Astra · 01 este informe · 02 auditoría A · 03+ rondas de revisión
-  data/reference/        capturas oficiales pequeñas versionadas en git (calendario 2026)
+  data/reference/        capturas oficiales pequeñas versionadas en git (calendario 2026 zh; calendario 2021-2026 en)
   data/raw/              archivo original (manifest.jsonl con sha256 + ingested_at); fuera de git
+  data/store/            derivados reproducibles (maestro, muestra, salidas de la demo); fuera de git
   data/audit/            inventario de fuentes
   src/twlab/
     timeutil.py          fechas ROC, horas HHMMSS, política de disponibilidad
-    calendar.py          calendario oficial versionado; semanas con sesiones reales
+    calendar.py          calendario oficial versionado (una lista anual o varias); semanas con sesiones reales
+    weekly.py            plan semanal del protocolo: corte, plazo, entrada, salida, semana sin sesiones
     master.py            maestro SCD2, resolución símbolo→identidad, cobertura
     store.py             archivo sólo anexado, hashes, recibos de sello temporal
-    packet.py            paquetes por corte, modos histórico/prospectivo, aislamiento del predictor
-    schemas.py           validación de PREDICCION.schema.json + TXT-05
-    ledger.py            libro determinista (lotes, costes, impuestos, acciones corporativas)
+    seals.py             registro de verificadores de producción (vacío y de sólo lectura hasta tener adaptadores)
+    packet.py            paquetes por corte con plan semanal, modos histórico/prospectivo, archivo JSON del paquete
+    schemas.py           validación de PREDICCION.schema.json, reglas semánticas, plan del paquete, sello
+    ledger.py            libro determinista (lotes por propietario, costes, impuestos, acciones corporativas)
     simulation.py        cesta semanal de cinco puestos con efectivo
-    evaluation.py        exceso emparejado, bootstrap por bloques
+    evaluation.py        exceso emparejado, bootstrap por bloques, re-validación del sobre archivado
     sources/catalog.py   registro de endpoints con unidades, formatos y campo de sesión
-    audit/               (siguiente) inventario reproducible
+    sources/twse.py      lectura tipada de censos TWSE/TPEx/ESB y retiradas → maestro
+    sources/finmind.py   descarga y lectura tipada de FinMind (catálogo, barras nominales, dividendos)
     features/ models/ extraction/   posteriores; fuera del núcleo
   scripts/capture_daily.py          captura diaria a data/raw
+  scripts/build_master.py           maestro y censo desde las capturas (informe 10)
+  scripts/fetch_history_sample.py   muestra estratificada del censo con histórico FinMind archivado
+  scripts/run_q0_demo.py            demo de extremo a extremo con la regla Q0 (informe 11)
+  scripts/register_daily_capture.ps1  registro (manual) de la tarea diaria de captura en Windows
   review/                brief, prompts, esquema de hallazgos, salidas archivadas de Astra
-  tests/                 72 pruebas de aceptación (PIT, UNI, TXT, SIM, STA)
+  tests/                 pruebas de aceptación (PIT, UNI, TXT, SIM, STA); recuento vigente en README.md
 ```
 
 ## 7. Primera entrega verificable (existe hoy)
 
-`python -m pytest -q -p no:cacheprovider` ejecuta 187 pruebas que cubren PIT-01 a PIT-12, UNI-01/02/03/05/07, TXT-05/07, SIM-01/02/03/05/06/07/08/09/10/11/12, STA-01/04, la aritmética de fricción de 0,585 % y los contraejemplos reproducibles de las rondas 1 a 6 de Astra (`docs/informes/03_…` a `08_respuesta_ronda6_astra.md`). Todo con datos sintéticos explícitos o con la captura oficial del calendario. Ninguna prueba usa red. La primera corrida real de `scripts/capture_daily.py` (37 endpoints, 0 fallos) está registrada en `data/audit/manifest_2026-09-09.jsonl`.
+`python -m pytest -q -p no:cacheprovider` ejecuta las pruebas de aceptación (recuento vigente en `README.md`) que cubren PIT-01 a PIT-12, UNI-01/02/03/05/07, TXT-05/07, SIM-01/02/03/05/06/07/08/09/10/11/12, STA-01/04, la aritmética de fricción de 0,585 % y los contraejemplos reproducibles de las rondas 1 a 7 de Astra (`docs/informes/03_…` a `09_respuesta_ronda7_astra.md`). Todo con datos sintéticos explícitos o con las capturas oficiales del calendario. Ninguna prueba usa red. La primera corrida real de `scripts/capture_daily.py` (37 endpoints, 0 fallos) está registrada en `data/audit/manifest_2026-09-09.jsonl`.
 
-Lo que **no** existe todavía: adaptadores de ingestión completos, maestro poblado con datos reales, doce cortes históricos auditados, verificador criptográfico de recibos, módulo de informe estadístico (STA-02/03/05/06/07), modelo numérico, extracción de eventos, interfaz.
+Con datos reales existe además (9-09-2026): el maestro construido desde el censo vigente (`docs/informes/10_censo_2026-09-09.md`), el calendario oficial 2021-2026 con sus discrepancias documentadas frente a `exchange_calendars`, una muestra archivada de 67 valores TWSE con barras y dividendos de FinMind 2021-2025, y una demo de extremo a extremo de la regla Q0 sobre esa muestra (`docs/informes/11_demo_q0_2024-2025.md`). La demo prueba que la cadena funciona; **no** mide rentabilidad (muestra del censo vigente, costes ilustrativos, protocolo sin congelar).
+
+Lo que **no** existe todavía: adaptadores de ingestión para noticias y anuncios, maestro histórico completo (las retiradas anteriores al censo vigente carecen de fecha de alta), doce cortes históricos auditados, verificador criptográfico de recibos, módulo de informe estadístico (STA-02/03/05/06/07), modelo numérico, extracción de eventos, interfaz.
 
 ## 8. Siguientes pasos en orden
 

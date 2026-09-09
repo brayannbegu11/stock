@@ -362,10 +362,11 @@ class PaperLedger:
         if pos.status != "open":
             return self._reject(security_id, "sell", f"exit_blocked_{pos.status}", "position remains in ledger", at, event_id)
         lots = [lot for lot in pos.lots if owner is None or lot.owner == owner]
-        available = sum((lot.quantity for lot in lots), ZERO)
+        # sólo se venden acciones enteras de cada lote: las fracciones son derechos pendientes, no se consumen (R07-09)
+        available = sum((D(int(lot.quantity.to_integral_value(rounding=ROUND_DOWN))) for lot in lots), ZERO)
         if D(shares) > available:
             return self._reject(security_id, "sell", "invalid_quantity",
-                                f"shares={shares} held={available} owner={owner or 'any'}", at, event_id)
+                                f"shares={shares} whole_held={available} owner={owner or 'any'}", at, event_id)
         if shares % self.lot_size != 0:
             return self._reject(security_id, "sell", "odd_lot_requires_separate_mechanism",
                                 f"shares={shares} lot={self.lot_size}; regular-session price not applicable (SIM-06)", at, event_id)
@@ -380,7 +381,9 @@ class PaperLedger:
         for lot in lots:                                   # FIFO dentro del propietario (o global si owner=None)
             if remaining <= 0:
                 break
-            take = min(lot.quantity, remaining)
+            take = min(D(int(lot.quantity.to_integral_value(rounding=ROUND_DOWN))), remaining)
+            if take <= 0:
+                continue
             part = q_twd(lot.cost_twd * take / lot.quantity) if lot.quantity else ZERO
             lot.quantity -= take
             lot.cost_twd -= part

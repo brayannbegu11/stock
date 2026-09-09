@@ -1,15 +1,26 @@
 """Comparaciones emparejadas e incertidumbre por bloques de semanas.
 
-Correcciones rondas 1-5 (R01-21, R02-07/08, R03-14, R04-01, R05-02/03/10):
-una comparación sólo es emparejada si comparte extremos temporales, tipo de
-precio, exposición, moneda y tratamiento de costes. La unidad estadística es
-la semana ISO (STA-01). Para la clase prospectiva cada corrida **válida**
-debe apuntar a una captura del archivo cuyo sello de producción se
-recalcula, cuyos bytes son la predicción canónica archivada
-(``forecast_id`` y semana derivada del corte deben coincidir con la
-observación), acreditada y archivada antes del plazo de registro del
-paquete; una captura no puede acreditar dos semanas. Las corridas inválidas
-sin predicción se cuentan como excluidas sin exigirles sello (STA-04, R05-10).
+Correcciones rondas 1-7. Una comparación sólo es emparejada si comparte
+extremos temporales, tipo de precio, exposición, moneda y tratamiento de
+costes. La unidad estadística es la semana ISO (STA-01).
+
+Para la clase prospectiva cada corrida **válida** debe apuntar a una
+captura del archivo cuyos bytes son la predicción canónica archivada; el
+evaluador (R07-01/02/03/04):
+
+- recalcula el sello (autoridades de producción; las de prueba sólo con la
+  bandera explícita);
+- **recupera el paquete acreditado** por su hash desde el registro de
+  paquetes archivados y ejecuta la misma validación completa que el
+  registro de predicciones (``validate_prediction`` con paquete, archivo y
+  calendario): esquema, orden temporal, experimento, ranking, calibradores,
+  plan semanal re-derivado del calendario, referencias documentales y sello;
+- exige que ``forecast_id``, semana y clase de evidencia coincidan con la
+  observación, que la corrida archivada sea ``selected`` y que una captura
+  no acredite dos semanas.
+
+Las corridas inválidas sin predicción se cuentan como excluidas sin exigirles
+sello (STA-04).
 """
 from __future__ import annotations
 
@@ -20,10 +31,11 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
+from .packet import Packet
 from .store import RawStore
-from .timeutil import TAIPEI, to_utc
+from .timeutil import to_utc
 
 _WEEK = re.compile(r"^(\d{4})-W(0[1-9]|[1-4]\d|5[0-3])$")
 EVIDENCE_PROSPECTIVE = "prospective_registered"
@@ -55,11 +67,51 @@ class IntervalReturn:
                 self.exposure, self.currency, self.net_of_costs, self.week_id)
 
 
-def paired_excess(a: IntervalReturn, b: IntervalReturn) -> Decimal:
-    """SIM-12 / R01-21: sólo se restan rentabilidades estrictamente comparables."""
-    if a.pairing_key() != b.pairing_key():
-        raise IntervalMismatch(f"{a.label} {a.pairing_key()} vs {b.label} {b.pairing_key()}")
+def paired_excess(a: IntervalReturn, b: IntervalReturn, *, exposure_tolerance: Decimal = Decimal(0)) -> Decimal:
+    """SIM-12 / R01-21: sólo se restan rentabilidades estrictamente comparables.
+
+    ``exposure_tolerance`` (por defecto 0: igualdad exacta) admite la diferencia de
+    exposición que produce el redondeo a lotes enteros entre dos carteras del mismo
+    tamaño. Es un valor del protocolo: se declara antes de mirar los datos, nunca se
+    elige para que una semana «cuadre».
+    """
+    tol = Decimal(exposure_tolerance)
+    if not tol.is_finite() or tol < 0 or tol >= 1:
+        raise ValueError("exposure_tolerance must be a finite Decimal in [0, 1)")
+    ka, kb = a.pairing_key(), b.pairing_key()
+    same_frame = ka[:4] == kb[:4] and ka[5:] == kb[5:]
+    if not same_frame or abs(Decimal(a.exposure) - Decimal(b.exposure)) > tol:
+        raise IntervalMismatch(f"{a.label} {ka} vs {b.label} {kb} (exposure_tolerance={tol})")
     return a.value - b.value
+
+
+def _segments(mondays: Sequence[date]) -> list[tuple[int, int]]:
+    """Tramos ``(inicio, longitud)`` de lunes consecutivos (siete días exactos entre vecinos)."""
+    if not mondays:
+        return []
+    segments: list[tuple[int, int]] = []
+    start = 0
+    for i in range(1, len(mondays) + 1):
+        if i == len(mondays) or (mondays[i] - mondays[i - 1]).days != 7:
+            segments.append((start, i - start))
+            start = i
+    return segments
+
+
+def _block_starts(mondays: Sequence[date], block_length: int) -> list[tuple[int, int]]:
+    """Bloques móviles que nunca cruzan un hueco (R02-08).
+
+    Devuelve ``(inicio, longitud)`` dentro de cada tramo de semanas consecutivas.
+    Un tramo más corto que el bloque forma un bloque propio: no se pierde la
+    observación y ningún bloque une dos semanas que no fueron consecutivas.
+    """
+    out: list[tuple[int, int]] = []
+    for s0, ln in _segments(mondays):
+        if ln <= block_length:
+            out.append((s0, ln))
+        else:
+            out.extend((s0 + k, block_length) for k in range(ln - block_length + 1))
+    return out
 
 
 def week_monday(week_id: str) -> date:
@@ -92,50 +144,41 @@ class BootstrapResult:
     block_length: int
     seed: int
     evidence_class: str
+    n_segments: int = 1     # tramos de semanas consecutivas entre los que los bloques no cruzan (R02-08)
 
 
-def _archived_forecast(store: RawStore, capture_id: str, *, allow_test_authorities: bool) -> Optional[dict]:
-    """Lee la predicción canónica archivada, la valida contra el contrato y recalcula su sello.
+def _archived_forecast(
+    store: RawStore, capture_id: str, *, packets: Mapping[str, Packet], calendar, known_calibrators,
+    allow_test_authorities: bool,
+) -> tuple[Optional[dict], str]:
+    """Lee la predicción canónica archivada, recupera su paquete y la valida por completo.
 
-    El plazo de registro no se toma del archivo: se deriva del protocolo a
-    partir del corte (que debe ser el corte semanal) y del plazo de emisión,
-    que debe ser un 08:30 Taipei dentro de la semana objetivo o, para una
-    semana sin sesiones, igual al corte (R06-02, R06-03). ``None`` si algo no cuadra.
+    Devuelve ``(resumen, motivo)``; ``resumen`` es ``None`` si algo no cuadra.
     """
-    from datetime import time as _time, timedelta as _td
-    from .schemas import prediction_validator
-    from .weekly import WEEKLY_DEADLINE_TIME, is_weekly_cutoff, target_monday_for, taipei as _taipei
+    from .schemas import RECEIPT_FIELD, validate_prediction
+    from .weekly import target_monday_for
     try:
         rec = store.get(capture_id)
         body = json.loads(store.read(rec).decode("utf-8"))
         forecast = body["forecast"]
-        if not isinstance(forecast, dict) or not isinstance(body.get("packet_hash"), str):
-            return None
-        # el recibo se asigna después de archivar: el sobre sellado no lo contiene por diseño
-        candidate = {**forecast, "independent_timestamp_receipt_id": forecast.get("independent_timestamp_receipt_id") or "assigned-after-seal"}
-        if any(True for _ in prediction_validator().iter_errors(candidate)):
-            return None                                   # el archivo no es una predicción completa del contrato
-        cutoff = datetime.fromisoformat(forecast["cutoff_at"])
-        deadline = datetime.fromisoformat(forecast["deadline_at"])
-    except Exception:
-        return None
-    if cutoff.tzinfo is None or deadline.tzinfo is None or not is_weekly_cutoff(cutoff):
-        return None
-    monday = target_monday_for(cutoff)
-    week_end = _taipei(monday + _td(days=7), _time(0, 0))
-    if to_utc(deadline) == to_utc(cutoff):
-        not_after = week_end                                # semana sin sesiones: registro dentro de la semana objetivo
-    else:
-        local = to_utc(deadline).astimezone(TAIPEI)
-        if local.time() != WEEKLY_DEADLINE_TIME or not (monday <= local.date() < monday + _td(days=7)):
-            return None                                     # plazo archivado incompatible con el protocolo
-        not_after = deadline
-    info = store.seal_info(rec, not_after=not_after)
-    if info is None or (not info.production and not allow_test_authorities):
-        return None
+        packet_hash = body.get("packet_hash")
+    except Exception as exc:
+        return None, f"unreadable archive: {exc}"
+    if not isinstance(forecast, dict) or not isinstance(packet_hash, str):
+        return None, "archive is not a sealed forecast envelope"
+    packet = packets.get(packet_hash)
+    if packet is None or packet.packet_hash() != packet_hash or packet.packet_id != forecast.get("packet_id"):
+        return None, "accredited packet not found in the packet registry (R07-03)"
+    receipt = rec.receipt_obj
+    candidate = {**forecast, RECEIPT_FIELD: receipt.receipt_id if receipt else "missing"}
+    problems = validate_prediction(candidate, packet, store=store, calendar=calendar, known_calibrators=known_calibrators,
+                                   allow_test_authorities=allow_test_authorities)
+    if problems:
+        return None, "; ".join(problems[:5])
+    monday = target_monday_for(packet.cutoff_at)
     iso = monday.isocalendar()
     return {"forecast_id": forecast.get("forecast_id"), "week_id": f"{iso[0]}-W{iso[1]:02d}",
-            "evidence_class": forecast.get("evidence_class"), "status": forecast.get("status"), "digest": info.digest}
+            "evidence_class": forecast.get("evidence_class"), "status": forecast.get("status")}, "ok"
 
 
 def block_bootstrap_mean(
@@ -145,6 +188,9 @@ def block_bootstrap_mean(
     n_boot: int,
     seed: int,
     store: Optional[RawStore] = None,
+    packets: Optional[Mapping[str, Packet]] = None,
+    calendar=None,
+    known_calibrators=None,
     require_sealed: bool = False,
     allow_test_authorities: bool = False,
 ) -> BootstrapResult:
@@ -168,6 +214,8 @@ def block_bootstrap_mean(
     if need_seal:
         if not isinstance(store, RawStore):
             raise ObservationError("prospective evaluation requires the RawStore to recompute seals (R04-01)")
+        if not isinstance(packets, Mapping) or calendar is None:
+            raise ObservationError("prospective evaluation requires the packet registry and the calendar (R07-03/04)")
         used: set[str] = set()
         for o in observations:
             if not o.valid_run:
@@ -175,9 +223,11 @@ def block_bootstrap_mean(
             if not o.seal_capture_id or o.seal_capture_id in used:
                 raise ObservationError(f"{o.week_id}: missing or reused seal capture (R05-02)")
             used.add(o.seal_capture_id)
-            archived = _archived_forecast(store, o.seal_capture_id, allow_test_authorities=allow_test_authorities)
+            archived, why = _archived_forecast(store, o.seal_capture_id, packets=packets, calendar=calendar,
+                                               known_calibrators=known_calibrators,
+                                               allow_test_authorities=allow_test_authorities)
             if archived is None:
-                raise ObservationError(f"{o.week_id}: unsealed, late or unreadable archived forecast (R05-02/03)")
+                raise ObservationError(f"{o.week_id}: archived forecast rejected: {why}")
             if archived["forecast_id"] != o.forecast_id or archived["week_id"] != o.week_id or archived["evidence_class"] != evidence_class:
                 raise ObservationError(f"{o.week_id}: archived forecast does not match the observation (R05-02)")
             if archived["status"] != "selected":
@@ -192,25 +242,23 @@ def block_bootstrap_mean(
         raise ObservationError("no valid runs")
     if block_length < 1 or block_length > n:
         raise ObservationError("block_length must be within 1..n_valid")
-    if block_length > 1:
-        for (m1, _), (m2, _) in zip(valid, valid[1:]):
-            if (m2 - m1).days != 7:
-                raise ObservationError(
-                    f"valid weeks are not consecutive between {m1.isoformat()} and {m2.isoformat()}; "
-                    "blocks of length > 1 cannot bridge invalid or missing weeks"
-                )
+    # Las semanas inválidas o ausentes parten la serie en tramos; los bloques se muestrean dentro de cada
+    # tramo y nunca unen dos semanas que no fueron consecutivas (R02-08). Con un solo tramo sin huecos el
+    # muestreo es el bootstrap por bloques móviles clásico.
     values = [float(o.value) for _, o in valid]  # type: ignore[arg-type]
+    valid_mondays = [m for m, _ in valid]
+    starts = _block_starts(valid_mondays, block_length)
+    n_segments = len(_segments(valid_mondays))
     rng = random.Random(seed)
-    starts = n - block_length + 1
     means: list[float] = []
     for _ in range(n_boot):
         sample: list[float] = []
         while len(sample) < n:
-            s = rng.randrange(starts)
-            sample.extend(values[s:s + block_length])
+            s0, ln = starts[rng.randrange(len(starts))]
+            sample.extend(values[s0:s0 + ln])
         sample = sample[:n]
         means.append(sum(sample) / n)
     means.sort()
     lo = means[int(0.025 * (n_boot - 1))]
     hi = means[int(0.975 * (n_boot - 1))]
-    return BootstrapResult(sum(values) / n, lo, hi, n, n_invalid, block_length, seed, evidence_class)
+    return BootstrapResult(sum(values) / n, lo, hi, n, n_invalid, block_length, seed, evidence_class, n_segments)

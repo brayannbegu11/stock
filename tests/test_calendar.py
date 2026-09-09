@@ -4,7 +4,7 @@ import pytest
 
 from twlab.calendar import (
     ROW_CLOSURE, ROW_SESSION_MARKER, ROW_UNKNOWN, CalendarRangeError, CalendarStore, TradingCalendar,
-    UnclassifiedCalendarRow, classify_holiday_row,
+    UnclassifiedCalendarRow, classify_holiday_row, load_twse_reference_calendar_2026,
 )
 from twlab.timeutil import TAIPEI
 
@@ -152,6 +152,29 @@ def test_r02_18_calendar_is_immutable():
     assert store.as_known_at(R).session_open(date(2026, 9, 7)) == before
     with pytest.raises(TypeError):
         store.add("not a calendar")  # type: ignore[arg-type]
+
+
+def test_official_multiyear_calendar_from_legacy_english_endpoint():
+    from twlab.calendar import classify_holiday_row_en, load_twse_reference_calendar
+    c = load_twse_reference_calendar()
+    assert (c.start, c.end) == (date(2021, 1, 1), date(2026, 12, 31)) and len(c.sessions) == 1462
+    assert {y: len([s for s in c.sessions if s.year == y]) for y in range(2021, 2027)} == \
+        {2021: 243, 2022: 246, 2023: 240, 2024: 247, 2025: 243, 2026: 243}
+    # las filas informativas en inglés son sesiones; «No Trading» y festivos son cierres
+    assert classify_holiday_row_en("Market Open") == ROW_SESSION_MARKER
+    assert classify_holiday_row_en("Last Trading Day") == ROW_SESSION_MARKER
+    assert classify_holiday_row_en("No Trading / Market opens only for Clearing & Settlement") == ROW_CLOSURE
+    assert classify_holiday_row_en("Adjusted Holiday/ Chinese New Year’s Eve") == ROW_CLOSURE
+    assert classify_holiday_row_en("Bridge closure announced by exchange") == ROW_UNKNOWN
+    assert c.is_session(date(2021, 1, 4)) and c.is_session(date(2022, 1, 26)) and not c.is_session(date(2022, 1, 27))
+    # la versión inglesa y la china de 2026 coinciden en cierres de día laborable
+    zh = load_twse_reference_calendar_2026()
+    assert {d for d in c.closures if d.year == 2026 and d.weekday() < 5} == {d for d in zh.closures if d.weekday() < 5}
+    with pytest.raises(UnclassifiedCalendarRow):
+        TradingCalendar.from_twse_legacy_rows({2021: [["2021-06-01", "Bridge closure announced by exchange"]]},
+                                              source_id="t", recorded_at=R)
+    with pytest.raises(CalendarRangeError):
+        TradingCalendar.from_twse_legacy_rows({2021: [], 2023: []}, source_id="t", recorded_at=R)
 
 
 def test_calendar_store_known_vs_effective():

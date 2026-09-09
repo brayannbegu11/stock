@@ -7,7 +7,7 @@ from twlab.evaluation import (
     IntervalMismatch, IntervalReturn, ObservationError, WeeklyObservation, block_bootstrap_mean, paired_excess,
 )
 from twlab.ledger import (
-    CorporateAction, CostModel, DuplicateCorporateAction, LedgerError, MissingPrice, OutOfOrderEvent, PaperLedger,
+    CorporateAction, CostModel, DuplicateCorporateAction, Fill, LedgerError, MissingPrice, OutOfOrderEvent, PaperLedger,
     Rejection, q_twd,
 )
 from twlab.simulation import basket_report, enter_basket, exit_basket
@@ -466,6 +466,63 @@ def test_r06_10_dividend_attribution_uses_the_unrounded_reference_value():
     assert lg.cash == D("200000") - D("100000") + D("100000") + D("1234")      # el efectivo cobrado sí se redondea (floor)
 
 
+def _residue(lg):
+    """W37 compra 1.000 a 100, recibe 50 % en acciones y vende 1.000 a 60: quedan 500."""
+    w = enter_basket(lg, picks=["A"], slots=1, notional_per_slot=D(100000), open_prices={"A": D(100)}, at=MON, week_id="2026-W37")
+    lg.apply_corporate_action(CorporateAction("stock", "A", "stock_dividend", MON, stock_ratio=D("0.5")))
+    exit_basket(lg, w, close_prices={"A": D(60)}, at=FRI, week_id="2026-W37")
+    assert w[0].status == "exited" and w[0].exit_residual_quantity == D(500)
+    return w
+
+
+def test_r07_06_blocked_retry_of_an_exited_slot_is_reported_blocked_with_fresh_figures():
+    lg = ledger("1000000", FREE)
+    w = _residue(lg)
+    at = MON + timedelta(days=7)
+    lg.apply_corporate_action(CorporateAction("split", "A", "split", at, split_ratio=D(2)))
+    lg.apply_corporate_action(CorporateAction("div", "A", "cash_dividend", at, per_share_cash=D(2)))
+    lg.mark_suspended("A", at=at)
+    exit_basket(lg, w, close_prices={"A": D(30)}, at=FRI + timedelta(days=7), week_id="2026-W37")
+    assert w[0].status == "exit_blocked" and w[0].gross_pick_return is None
+    assert w[0].exit_residual_quantity == D(1000) and w[0].dividends_declared == D(2000)
+    report = basket_report("2026-W37", w, equity_start=D(100000), equity_end=D(92000))
+    assert report.exit_blocked_slots == 1
+
+
+def test_r07_07_exits_respect_the_ledger_clock():
+    lg = ledger("1000000", FREE)
+    w = enter_basket(lg, picks=["A"], slots=1, notional_per_slot=D(100000), open_prices={"A": D(100)}, at=MON, week_id="2026-W37")
+    lg.sell(security_id="A", price=D(200), shares=1000, at=MON + timedelta(days=21), event_id="future-sale", owner=w[0].owner)
+    with pytest.raises(OutOfOrderEvent):
+        exit_basket(lg, w, close_prices={}, at=FRI, week_id="2026-W37")
+    lg2 = ledger("1000000", FREE)
+    w2 = _residue(lg2)
+    lg2.apply_corporate_action(CorporateAction("div", "A", "cash_dividend", MON + timedelta(days=14), per_share_cash=D(20), pay_at=MON + timedelta(days=14)))
+    with pytest.raises(OutOfOrderEvent):
+        exit_basket(lg2, w2, close_prices={"A": D(60)}, at=FRI, week_id="2026-W37")   # salida fechada antes del dividendo
+
+
+@pytest.mark.parametrize("price", [D(-60), D(0), D("NaN")])
+def test_r07_08_residual_valuation_rejects_invalid_prices(price):
+    lg = ledger("1000000", FREE)
+    w = _residue(lg)
+    with pytest.raises(LedgerError):
+        exit_basket(lg, w, close_prices={"A": price}, at=FRI + timedelta(days=7), week_id="2026-W37")
+
+
+def test_r07_09_fifo_sale_never_consumes_fractional_rights():
+    lg = ledger("1000000", FREE)
+    a = enter_basket(lg, picks=["A"], slots=1, notional_per_slot=D(100000), open_prices={"A": D(100)}, at=MON, week_id="2026-W37")
+    b = enter_basket(lg, picks=["A"], slots=1, notional_per_slot=D(100000), open_prices={"A": D(100)}, at=MON + timedelta(days=7), week_id="2026-W38")
+    at = MON + timedelta(days=14)
+    lg.apply_corporate_action(CorporateAction("reverse", "A", "split", at, split_ratio=D("0.5005")))
+    res = lg.sell(security_id="A", price=D(200), shares=1000, at=at, event_id="fifo")
+    assert isinstance(res, Fill)
+    assert lg.positions["A"].owner_quantity(a[0].owner) == D("0.5") and lg.positions["A"].owner_quantity(b[0].owner) == D("0.5")
+    assert lg.positions["A"].unresolved_fraction == D("1.0")
+    assert isinstance(lg.sell(security_id="A", price=D(200), shares=1000, at=at, event_id="none-left"), Rejection)
+
+
 def test_r04_08_late_known_payment_date_never_backdates_cash():
     lg = ledger(costs=FREE)
     lg.buy(security_id="A", price=D(100), shares=1000, at=MON, event_id="b")
@@ -566,10 +623,19 @@ def test_sta01_bootstrap_unit_is_the_iso_week():
         block_bootstrap_mean([obs("2026-W30", 0.1)], block_length=1, n_boot=10, seed=1, require_sealed=True)
 
 
+PRO = "prospective_registered"
+
+
+def _eval(store, rec, week, pkt, *, forecast_id="f-1", packets=None, calendar=None, **kw):
+    from tests.test_schema import CAL_2030
+    packets = packets if packets is not None else {pkt.packet_hash(): pkt}
+    return block_bootstrap_mean([WeeklyObservation(week, forecast_id, PRO, rec.capture_id, True, 0.1)],
+                                block_length=1, n_boot=10, seed=1, store=store, packets=packets,
+                                calendar=calendar or CAL_2030, allow_test_authorities=True, **kw)
+
+
 def test_r04_01_r05_02_r05_03_r05_10_prospective_evaluation_binds_each_week_to_its_archived_forecast(tmp_path):
-    from tests.test_schema import CUTOFF_2030, archive_and_seal, prospective_forecast, prospective_packet
-    from twlab.store import RawStore
-    PRO = "prospective_registered"
+    from tests.test_schema import CAL_2030, archive_and_seal, prospective_forecast, prospective_packet
     pro = [WeeklyObservation("2030-W02", "f-1", PRO, "cap-1", True, 0.1)]
     with pytest.raises(ObservationError):
         block_bootstrap_mean(pro, block_length=1, n_boot=10, seed=1)                    # sin archivo: no hay sello
@@ -578,11 +644,14 @@ def test_r04_01_r05_02_r05_03_r05_10_prospective_evaluation_binds_each_week_to_i
     pkt = prospective_packet()
     obj = prospective_forecast(pkt)                                                       # forecast_id f-1, semana 2030-W02
     store, rec = archive_and_seal(tmp_path, obj, pkt)
-    good = [WeeklyObservation("2030-W02", "f-1", PRO, rec.capture_id, True, 0.1)]
+    packets = {pkt.packet_hash(): pkt}
     with pytest.raises(ObservationError):
-        block_bootstrap_mean(good, block_length=1, n_boot=10, seed=1, store=store)      # autoridad de prueba: bloqueado
-    r = block_bootstrap_mean(good, block_length=1, n_boot=10, seed=1, store=store, allow_test_authorities=True)
-    assert r.n_used == 1
+        block_bootstrap_mean([WeeklyObservation("2030-W02", "f-1", PRO, rec.capture_id, True, 0.1)],
+                             block_length=1, n_boot=10, seed=1, store=store, packets=packets, calendar=CAL_2030)   # prueba: bloqueado
+    with pytest.raises(ObservationError):
+        block_bootstrap_mean([WeeklyObservation("2030-W02", "f-1", PRO, rec.capture_id, True, 0.1)],
+                             block_length=1, n_boot=10, seed=1, store=store, allow_test_authorities=True)         # sin paquetes ni calendario
+    assert _eval(store, rec, "2030-W02", pkt).n_used == 1
     # R05-02: una captura ajena (otros bytes) o reutilizada no acredita semanas
     weather = store.put(source_id="weather", dataset="rain", payload=b"weather:rain=0", url="u")
     store.attach_receipt(weather.capture_id, receipt_id="fixture:w", authority="fixture", digest=weather.sha256, attested_at=weather.ingested_at)
@@ -591,25 +660,25 @@ def test_r04_01_r05_02_r05_03_r05_10_prospective_evaluation_binds_each_week_to_i
                   WeeklyObservation("2030-W03", "f-1", PRO, rec.capture_id, True, 0.1)],
                  [WeeklyObservation("2030-W03", "f-1", PRO, rec.capture_id, True, 0.1)]):      # semana distinta a la archivada
         with pytest.raises(ObservationError):
-            block_bootstrap_mean(rows, block_length=1, n_boot=10, seed=1, store=store, allow_test_authorities=True)
+            block_bootstrap_mean(rows, block_length=1, n_boot=10, seed=1, store=store, packets=packets, calendar=CAL_2030,
+                                 allow_test_authorities=True)
     # R05-03: acreditación tardía rechazada también en evaluación
     late_obj = prospective_forecast(pkt, forecast_id="f-late")
     late_store, late_rec = archive_and_seal(tmp_path / "late", late_obj, pkt, attested_at=(pkt.deadline_at + timedelta(days=7)).isoformat())
     with pytest.raises(ObservationError):
-        block_bootstrap_mean([WeeklyObservation("2030-W02", "f-late", PRO, late_rec.capture_id, True, 0.1)],
-                             block_length=1, n_boot=10, seed=1, store=late_store, allow_test_authorities=True)
+        _eval(late_store, late_rec, "2030-W02", pkt, forecast_id="f-late")
     # R05-10: una corrida inválida sin predicción se cuenta como excluida sin exigirle sello
     rows = [WeeklyObservation("2030-W02", "f-1", PRO, rec.capture_id, True, 0.1),
             WeeklyObservation("2030-W03", "failed-run", PRO, None, False, None)]
-    r2 = block_bootstrap_mean(rows, block_length=1, n_boot=10, seed=1, store=store, allow_test_authorities=True)
+    r2 = block_bootstrap_mean(rows, block_length=1, n_boot=10, seed=1, store=store, packets=packets, calendar=CAL_2030,
+                              allow_test_authorities=True)
     assert r2.n_used == 1 and r2.n_invalid_excluded == 1
 
 
-def test_r06_02_r06_03_r06_04_evaluator_validates_the_archived_forecast_not_declared_fields(tmp_path):
+def test_r06_02_r06_03_r06_04_r07_01_r07_02_r07_03_evaluator_validates_the_archived_forecast_completely(tmp_path):
     import json
     from tests.test_schema import CUTOFF_2030_EMPTY, archive_and_seal, prospective_forecast, prospective_packet
     from twlab.store import RawStore
-    PRO = "prospective_registered"
 
     def archive_body(root, body):
         s = RawStore(root, verifiers={"fixture": lambda r, rc: rc.digest == r.sha256})
@@ -618,30 +687,55 @@ def test_r06_02_r06_03_r06_04_evaluator_validates_the_archived_forecast_not_decl
         s.attach_receipt(r.capture_id, receipt_id="fixture:x", authority="fixture", digest=r.sha256, attested_at=r.ingested_at)
         return s, r
 
-    def evaluate(s, r, week, forecast_id="f-1"):
-        return block_bootstrap_mean([WeeklyObservation(week, forecast_id, PRO, r.capture_id, True, 0.1)],
-                                    block_length=1, n_boot=10, seed=1, store=s, allow_test_authorities=True)
-
+    pkt = prospective_packet()
     # R06-02: un sobre incompleto (sin ranking, modelo, packet_hash...) no es una predicción del contrato
     s, r = archive_body(tmp_path / "a", {"forecast": {"forecast_id": "f-1", "cutoff_at": "2030-01-06T18:00:00+08:00",
-                                                       "deadline_at": "2030-01-07T08:30:00+08:00", "evidence_class": PRO}})
+                                                       "deadline_at": "2030-01-07T08:30:00+08:00", "evidence_class": PRO},
+                                         "packet_hash": pkt.packet_hash()})
     with pytest.raises(ObservationError):
-        evaluate(s, r, "2030-W02")
+        _eval(s, r, "2030-W02", pkt)
     # R06-03: el plazo archivado no puede anular ni extender el límite de registro, ni el corte dejar de ser semanal
-    pkt = prospective_packet()
     for cutoff, deadline in (("2021-01-03T18:00:00+08:00", "2021-01-03T18:00:00+08:00"),
                              ("2021-01-03T18:00:00+08:00", "2099-01-05T08:30:00+08:00"),
                              ("2030-01-10T18:00:00+08:00", "2030-01-11T08:30:00+08:00")):
         obj = prospective_forecast(pkt, cutoff_at=cutoff, issued_at=cutoff.replace("18:00", "18:30"), deadline_at=deadline)
         s2, r2 = archive_and_seal(tmp_path / cutoff[:10] / deadline[:10], obj, pkt)
         with pytest.raises(ObservationError):
-            evaluate(s2, r2, "2021-W01" if cutoff.startswith("2021") else "2030-W02")
+            _eval(s2, r2, "2021-W01" if cutoff.startswith("2021") else "2030-W02", pkt)
     # R06-04: una corrida archivada como inválida no puede entrar como observación válida
     p_empty = prospective_packet(cutoff=CUTOFF_2030_EMPTY)
     inv = prospective_forecast(p_empty, status="invalid", ranking=[], status_reason="no_sessions", deadline_at=CUTOFF_2030_EMPTY.isoformat())
     s3, r3 = archive_and_seal(tmp_path / "inv", inv, p_empty)
     with pytest.raises(ObservationError):
-        evaluate(s3, r3, p_empty.week_id)
+        _eval(s3, r3, p_empty.week_id, p_empty)
+    # R07-01: orden temporal también en el evaluador
+    for issued in ((pkt.cutoff_at - timedelta(days=1)).isoformat(), (pkt.deadline_at + timedelta(days=4)).isoformat()):
+        o = prospective_forecast(pkt, issued_at=issued)
+        s4, r4 = archive_and_seal(tmp_path / "t" / issued[:13], o, pkt)
+        with pytest.raises(ObservationError):
+            _eval(s4, r4, "2030-W02", pkt)
+    # R07-02: reglas semánticas sin paquete (experimento, rangos, calibrador)
+    for over in ({"experiment_id": "UNREGISTERED-99"},):
+        o = prospective_forecast(pkt, **over)
+        s5, r5 = archive_and_seal(tmp_path / "sem" / over["experiment_id"], o, pkt)
+        with pytest.raises(ObservationError):
+            _eval(s5, r5, "2030-W02", pkt)
+    dup = prospective_forecast(pkt)
+    dup["ranking"] = [dict(dup["ranking"][0]), dict(dup["ranking"][0])]
+    s6, r6 = archive_and_seal(tmp_path / "dup", dup, pkt)
+    with pytest.raises(ObservationError):
+        _eval(s6, r6, "2030-W02", pkt)
+    # R07-03: el paquete acreditado debe existir en el registro, con el mismo hash y las referencias válidas
+    ghost = prospective_forecast(pkt, packet_id="nonexistent-packet")
+    ghost["ranking"][0]["document_ids"] = ["future-result-2099"]
+    s7, r7 = archive_body(tmp_path / "ghost", {"forecast": ghost, "packet_hash": "0" * 64})
+    with pytest.raises(ObservationError):
+        _eval(s7, r7, "2030-W02", pkt)
+    ok = prospective_forecast(pkt)
+    s8, r8 = archive_and_seal(tmp_path / "ok", ok, pkt)
+    with pytest.raises(ObservationError):
+        _eval(s8, r8, "2030-W02", pkt, packets={})                   # paquete no archivado
+    assert _eval(s8, r8, "2030-W02", pkt).n_used == 1
 
 
 def test_r02_08_daily_rows_are_not_weeks_and_blocks_do_not_bridge_gaps():
@@ -649,13 +743,48 @@ def test_r02_08_daily_rows_are_not_weeks_and_blocks_do_not_bridge_gaps():
     with pytest.raises(ObservationError):
         block_bootstrap_mean(rows, block_length=1, n_boot=10, seed=1)
     gap = [obs("2026-W30", 0.1), obs("2026-W31", None, valid=False), obs("2026-W32", -0.1)]
-    with pytest.raises(ObservationError):
-        block_bootstrap_mean(gap, block_length=2, n_boot=10, seed=1)
     r = block_bootstrap_mean(gap, block_length=1, n_boot=50, seed=1)       # con bloque 1 se cuenta la inválida
     assert r.n_used == 2 and r.n_invalid_excluded == 1
+    # Con bloque 2 la semana inválida parte la serie en dos tramos de una semana: cada tramo es un bloque
+    # propio y ningún bloque une W30 con W32 (C-08-01; antes se rechazaba toda la evaluación).
+    r2 = block_bootstrap_mean(gap, block_length=2, n_boot=50, seed=1)
+    assert r2.n_used == 2 and r2.n_invalid_excluded == 1 and r2.n_segments == 2
     missing = [obs("2026-W30", 0.1), obs("2026-W32", -0.1)]
-    with pytest.raises(ObservationError):
-        block_bootstrap_mean(missing, block_length=2, n_boot=10, seed=1)
+    assert block_bootstrap_mean(missing, block_length=2, n_boot=10, seed=1).n_segments == 2
+
+
+def test_c08_01_blocks_are_sampled_inside_contiguous_segments_only():
+    from twlab.evaluation import _block_starts, _segments, week_monday
+    mondays = [week_monday(w) for w in ("2026-W30", "2026-W31", "2026-W32", "2026-W34", "2026-W35", "2026-W37")]
+    assert _segments(mondays) == [(0, 3), (3, 2), (5, 1)]
+    starts = _block_starts(mondays, 2)
+    assert starts == [(0, 2), (1, 2), (3, 2), (5, 1)]          # W32→W34 y W35→W37 no forman bloque
+    for s0, ln in starts:
+        for k in range(1, ln):
+            assert (mondays[s0 + k] - mondays[s0 + k - 1]).days == 7
+    assert _block_starts(mondays[:3], 2) == [(0, 2), (1, 2)]   # sin huecos: bloques móviles clásicos
+    assert _block_starts(mondays[:3], 5) == [(0, 3)]           # tramo más corto que el bloque: un bloque propio
+    assert _block_starts([], 2) == []
+    # sin huecos el resultado es idéntico al del bootstrap clásico con la misma semilla
+    rows = [obs(f"2026-W{w}", v) for w, v in zip(range(30, 38), (0.1, -0.2, 0.05, 0.0, 0.3, -0.1, 0.02, 0.07))]
+    r = block_bootstrap_mean(rows, block_length=3, n_boot=200, seed=7)
+    assert r.n_segments == 1 and r.n_used == 8 and r.ci_low <= r.mean <= r.ci_high
+
+
+def test_c08_02_paired_excess_exposure_tolerance_is_declared_not_inferred():
+    from dataclasses import replace
+    a = IntervalReturn("Q0", MON, FRI, "open", "close", D("0.010"), D("0.95"), week_id="2026-W37")
+    b = replace(a, label="A1", value=D("0.020"), exposure=D("1.00"))
+    with pytest.raises(IntervalMismatch):
+        paired_excess(a, b)                                          # por defecto: igualdad exacta (SIM-12)
+    assert paired_excess(a, b, exposure_tolerance=D("0.05")) == D("-0.010")
+    with pytest.raises(IntervalMismatch):
+        paired_excess(a, replace(b, exposure=D("0.80")), exposure_tolerance=D("0.10"))
+    with pytest.raises(IntervalMismatch):
+        paired_excess(a, replace(b, end_price_kind="open"), exposure_tolerance=D("0.50"))   # la tolerancia no relaja el marco
+    for bad in (D("1"), D("-0.1"), D("NaN")):
+        with pytest.raises(ValueError):
+            paired_excess(a, b, exposure_tolerance=bad)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, "0.1"])
