@@ -18,6 +18,7 @@ Este repositorio implementa la especificación de `docs/spec/v2/` (laboratorio b
 python -m pytest -q -p no:cacheprovider          # pruebas de aceptación, sin red (recuento vigente en README.md)
 python scripts/build_master.py                   # maestro y censo desde data/raw (sin red)
 python scripts/run_q0_demo.py                    # demo de extremo a extremo con la regla Q0 sobre la muestra archivada (sin red)
+python scripts/run_backtest.py --manifest sample --start 2024-01-01 --end 2025-12-31 --forecasters Q0,Q1,A1   # backtest con Q1 (sin red)
 python -c "import sys; sys.path.insert(0,'src'); import twlab"
 ```
 
