@@ -25,6 +25,16 @@ from .timeutil import ensure_aware, to_utc
 
 ORDINARY_EQUITY = "ordinary_equity"
 SIMULATION_MARKETS = ("TWSE", "TPEX")
+SIMULATION_BOARDS = ("main",)
+
+
+def security_id_for(market: str, symbol: str, listing_date: date) -> str:
+    """Identidad generada mientras no exista un maestro histórico con identificador de emisor (TEJ).
+
+    Incluye la fecha de alta para que dos emisores que reutilizan el mismo símbolo
+    (UNI-03, R08-05) reciban identidades distintas: ``TWSE:2432@2023-05-31``.
+    """
+    return f"{market}:{symbol}@{listing_date.isoformat()}"
 
 
 class UnknownSymbol(KeyError):
@@ -207,6 +217,10 @@ class SecurityMaster:
         segs = [v for v in self._effective(known_at) if v.security_id == security_id]
         return max(segs, key=lambda v: v.valid_from) if segs else None
 
+    def segments_of_symbol(self, symbol: str, *, known_at: Optional[datetime] = None) -> list[SecurityVersion]:
+        """Todos los segmentos efectivos que han usado un símbolo, ordenados por fecha de alta (UNI-03)."""
+        return sorted((v for v in self._effective(known_at) if v.symbol == symbol), key=lambda v: v.valid_from)
+
     def resolve_symbol(self, symbol: str, *, as_of: date, known_at: Optional[datetime] = None) -> SecurityVersion:
         """Símbolo + fecha → segmento vigente, según lo conocido en ``known_at``."""
         covering = [v for v in self._effective(known_at) if v.symbol == symbol and v.covers(as_of)]
@@ -224,7 +238,13 @@ class SecurityMaster:
         known_at: Optional[datetime] = None,
         instrument_types: tuple[str, ...] = (ORDINARY_EQUITY,),
         markets: tuple[str, ...] = SIMULATION_MARKETS,
+        boards: tuple[str, ...] = SIMULATION_BOARDS,
     ) -> list[SecurityVersion]:
+        """Universo simulable: acciones ordinarias del tablero principal de TWSE/TPEx salvo habilitación explícita.
+
+        El tablero de innovación (inversores cualificados) y cualquier otro tablero quedan fuera
+        hasta que el protocolo los admita pasando ``boards`` (R08-13).
+        """
         best: dict[str, SecurityVersion] = {}
         for v in self._effective(known_at):
             if not v.covers(as_of):
@@ -232,7 +252,7 @@ class SecurityMaster:
             cur = best.get(v.security_id)
             if cur is None or v.valid_from > cur.valid_from:
                 best[v.security_id] = v
-        out = [v for v in best.values() if v.instrument_type in instrument_types and v.market in markets]
+        out = [v for v in best.values() if v.instrument_type in instrument_types and v.market in markets and v.board in boards]
         return sorted(out, key=lambda v: (v.market, v.symbol))
 
     def terminal_events(self, security_id: str, *, known_at: Optional[datetime] = None) -> list[TerminalEvent]:

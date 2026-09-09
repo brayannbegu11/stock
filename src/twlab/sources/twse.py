@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Optional
 
-from ..master import ORDINARY_EQUITY, SecurityVersion, TerminalEvent
+from ..master import ORDINARY_EQUITY, SecurityMaster, SecurityVersion, TerminalEvent, security_id_for
 from ..store import CaptureRecord, RawStore
 from ..timeutil import DateParseError, parse_date
 
@@ -106,8 +106,9 @@ def security_versions_from_census(
     for r in rows:
         if r.listing_date is None:
             continue
+        sec_id = security_id_for(market, r.symbol, r.listing_date)     # símbolo + fecha de alta: identidad separada por emisor (R08-05)
         out.append(SecurityVersion(
-            security_id=f"{market}:{r.symbol}", issuer_id=r.symbol, symbol=r.symbol, name_zh=r.name_zh,
+            security_id=sec_id, issuer_id=sec_id, symbol=r.symbol, name_zh=r.name_zh,
             market=market, board=boards.get(r.symbol, "main"),
             instrument_type=instrument_types.get(r.symbol, "unclassified"),
             valid_from=r.listing_date, valid_to=None, recorded_at=recorded_at, source_id=source_id,
@@ -115,8 +116,35 @@ def security_versions_from_census(
     return out
 
 
-def terminal_events_from_delistings(rows: Iterable[DelistingRow], *, market: str, recorded_at: datetime, source_id: str) -> list[TerminalEvent]:
-    return [TerminalEvent(f"{market}:{r.symbol}", "delisting", r.delisting_date, recorded_at, source_id, r.name_zh) for r in rows]
+@dataclass(frozen=True)
+class DelistingResolution:
+    events: tuple[TerminalEvent, ...]      # retiradas que cierran un segmento existente
+    prior_issuer: tuple[str, ...]          # retirada de un emisor anterior que usó el mismo símbolo (UNI-03): no cierra nada
+    orphan: tuple[str, ...]                # símbolo sin segmento en el maestro (falta la fecha de alta histórica)
+    ambiguous: tuple[str, ...]             # varios segmentos vigentes para el símbolo: no se adivina
+
+
+def resolve_delistings(rows: Iterable[DelistingRow], master: SecurityMaster, *, market: str, recorded_at: datetime,
+                       source_id: str) -> DelistingResolution:
+    """Convierte retiradas por símbolo en eventos terminales sobre identidades del maestro."""
+    events: list[TerminalEvent] = []
+    prior: list[str] = []
+    orphan: list[str] = []
+    ambiguous: list[str] = []
+    for r in rows:
+        segs = [v for v in master.segments_of_symbol(r.symbol) if v.market == market]
+        if not segs:
+            orphan.append(r.symbol)
+            continue
+        covering = [v for v in segs if v.valid_from < r.delisting_date and (v.valid_to is None or r.delisting_date <= v.valid_to)]
+        if len(covering) > 1:
+            ambiguous.append(r.symbol)
+            continue
+        if not covering:
+            prior.append(f"{r.symbol} (retirada {r.delisting_date.isoformat()} ≤ alta vigente {segs[-1].valid_from.isoformat()})")
+            continue
+        events.append(TerminalEvent(covering[0].security_id, "delisting", r.delisting_date, recorded_at, source_id, r.name_zh))
+    return DelistingResolution(tuple(events), tuple(prior), tuple(orphan), tuple(ambiguous))
 
 
 __all__ = ["ORDINARY_EQUITY"]

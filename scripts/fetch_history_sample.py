@@ -36,7 +36,8 @@ def main() -> int:
     instrument, board, market = finmind.classify_info(info_rows)
     by_industry: dict[str, list] = defaultdict(list)
     for r in census:
-        if instrument.get(r.symbol, "ordinary_equity") != "ordinary_equity" or r.listing_date is None:
+        # un símbolo ausente del catálogo o sin clasificar no se supone acción ordinaria (R08-04)
+        if instrument.get(r.symbol) != "ordinary_equity" or board.get(r.symbol, "main") != "main" or r.listing_date is None:
             continue
         if r.listing_date > date(2020, 6, 30):          # historial suficiente para 120 sesiones antes de 2021
             continue

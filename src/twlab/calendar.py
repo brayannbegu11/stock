@@ -48,12 +48,30 @@ _EN_CLOSURE_TOKENS = ("No Trading", "Holiday", "New Year", "Chinese New Year", "
                       "Restoration Day", "Constitution Day", "Typhoon")
 
 
+_EN_DOUBT_TOKENS = ("cancel", "to be confirmed", "tbc", "tbd", "tentative", "pending", "postpone", "resume", "normal trading",
+                    "subject to", "if ", "unless", "may ", "might ", "not yet", "provisional", "?")
+
+
 def classify_holiday_row_en(description: str) -> str:
-    """Clasifica una fila del endpoint histórico en inglés (``rwd/en/holidaySchedule``); ante duda, ``unknown``."""
+    """Clasifica una fila del endpoint histórico en inglés (``rwd/en/holidaySchedule``); ante duda, ``unknown``.
+
+    Reglas (R08-02): una negación, cancelación, condición o anuncio pendiente es ``unknown``;
+    un marcador de sesión al principio combinado con un término de cierre es una contradicción
+    y también ``unknown``; la comparación no distingue mayúsculas.
+    """
     text = " ".join(str(description).replace("\n", " ").split())
-    if any(text.startswith(p) or text == p for p in _EN_SESSION_EXACT) and "No Trading" not in text:
+    low = text.lower()
+    if not low:
+        return ROW_UNKNOWN
+    if any(tok in low for tok in _EN_DOUBT_TOKENS):
+        return ROW_UNKNOWN
+    session_marker = any(low.startswith(p.lower()) for p in _EN_SESSION_EXACT)
+    closure = any(tok.lower() in low for tok in _EN_CLOSURE_TOKENS)
+    if session_marker and closure:
+        return ROW_UNKNOWN
+    if session_marker:
         return ROW_SESSION_MARKER
-    if any(tok.lower() in text.lower() for tok in _EN_CLOSURE_TOKENS):
+    if closure:
         return ROW_CLOSURE
     return ROW_UNKNOWN
 

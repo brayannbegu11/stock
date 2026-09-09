@@ -787,6 +787,42 @@ def test_c08_02_paired_excess_exposure_tolerance_is_declared_not_inferred():
             paired_excess(a, b, exposure_tolerance=bad)
 
 
+def test_r08_11_segments_are_weighted_by_length_not_by_block_count():
+    # dos tramos constantes (4 valores 1, 8 valores 0) separados por una semana ausente; media exacta 1/3.
+    # Con bloque 4 el primer tramo aporta 1 bloque y el segundo 5: muestrear bloques uniformemente sesgaba a 0,165.
+    rows = [obs(f"2026-W{w}", 1.0) for w in range(20, 24)] + [obs(f"2026-W{w}", 0.0) for w in range(25, 33)]
+    r = block_bootstrap_mean(rows, block_length=4, n_boot=4000, seed=1)
+    assert r.n_used == 12 and r.n_segments == 2 and abs(r.mean - 1 / 3) < 1e-9
+    assert abs(r.resample_mean - 1 / 3) < 0.03
+    assert r.ci_low <= r.mean <= r.ci_high
+
+
+def test_r08_01_recovered_packet_is_readmitted_document_by_document(tmp_path):
+    from dataclasses import replace
+    from datetime import timedelta
+    from twlab.packet import Document, readmission_problems
+    from twlab.timeutil import AvailabilityQuality
+    from tests.test_schema import archive_and_seal, prospective_forecast, prospective_packet
+    pkt = prospective_packet()
+    future = Document(doc_id="future-result-2099", kind="news", source_id="x", security_ids=("SEC-1",),
+                      available_at=pkt.cutoff_at + timedelta(days=30), availability_quality=AvailabilityQuality.CONSERVATIVE_INFERENCE,
+                      payload={"future_profit": 999})
+    unknown = Document(doc_id="unknown-availability", kind="news", source_id="x", security_ids=("SEC-1",),
+                       available_at=pkt.cutoff_at - timedelta(days=1), availability_quality=AvailabilityQuality.UNKNOWN,
+                       capture_id="cap-none", source_sha256="00" * 32, derivation="d")
+    # un paquete construido a mano (no por build_packet) con un documento futuro admitido: su hash es válido, su contenido no
+    for bad_doc in (future, unknown):
+        forged = replace(pkt, admitted=(bad_doc,))
+        problems = readmission_problems(forged)
+        assert problems and all(p.startswith(bad_doc.doc_id) for p in problems)
+        o = prospective_forecast(forged)
+        o["ranking"][0]["document_ids"] = [bad_doc.doc_id]
+        store, rec = archive_and_seal(tmp_path / bad_doc.doc_id, o, forged)
+        with pytest.raises(ObservationError, match="readmission"):
+            _eval(store, rec, "2030-W02", forged)
+    assert readmission_problems(pkt) == []               # el paquete legítimo pasa
+
+
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, "0.1"])
 def test_r03_14_non_finite_or_non_numeric_values_are_rejected(value):
     with pytest.raises(ObservationError):

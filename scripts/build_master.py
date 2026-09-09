@@ -14,7 +14,7 @@ import json
 import sys
 from collections import Counter
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,8 +23,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from twlab.master import ORDINARY_EQUITY, AmbiguousSymbol, SecurityMaster  # noqa: E402
 from twlab.sources import finmind  # noqa: E402
 from twlab.sources.twse import (  # noqa: E402
-    census_rows_tpex, census_rows_twse, delisting_rows_twse, latest_capture, load_rows, security_versions_from_census,
-    terminal_events_from_delistings,
+    census_rows_tpex, census_rows_twse, delisting_rows_twse, latest_capture, load_rows, resolve_delistings,
+    security_versions_from_census,
 )
 from twlab.store import RawStore  # noqa: E402
 
@@ -55,24 +55,20 @@ def main() -> int:
             except Exception as exc:  # solapes o duplicados: se informan, no se ocultan
                 problems.append(f"{market}:{v.symbol}: {exc}")
     delistings = delisting_rows_twse(load_rows(store, caps["delist_twse"]))
-    terminal = terminal_events_from_delistings(delistings, market="TWSE", recorded_at=caps["delist_twse"].ingested_at_dt,
-                                               source_id=caps["delist_twse"].capture_id)
+    # las retiradas vienen por símbolo; se resuelven contra el maestro (identidad = símbolo + fecha de alta, R08-05).
+    # La fila de retirada es una revisión posterior a la de alta: recorded_at estrictamente mayor (R04-12).
+    resolution = resolve_delistings(delistings, master, market="TWSE",
+                                    recorded_at=caps["delist_twse"].ingested_at_dt + timedelta(seconds=1),
+                                    source_id=caps["delist_twse"].capture_id)
     closed = 0
-    orphan_delistings = 0
-    reused_symbols: list[str] = []
-    for ev in terminal:
-        seg = master.current_segment(ev.security_id)
-        if seg is None:
-            orphan_delistings += 1
-        elif ev.effective <= seg.valid_from:
-            # UNI-03 en datos reales: la retirada es de un emisor anterior que usó el mismo símbolo; el segmento
-            # vigente pertenece a otro emisor y no se cierra. El emisor anterior queda pendiente de fecha de alta.
-            reused_symbols.append(f"{ev.security_id} (retirada {ev.effective.isoformat()} ≤ alta vigente {seg.valid_from.isoformat()})")
-        else:
-            master.close_version(ev.security_id, valid_to=ev.effective, recorded_at=ev.recorded_at, source_id=ev.source_id, terminal=ev)
-            closed += 1
+    for ev in resolution.events:
+        master.close_version(ev.security_id, valid_to=ev.effective, recorded_at=ev.recorded_at, source_id=ev.source_id, terminal=ev)
+        closed += 1
+    orphan_delistings = len(resolution.orphan)
+    reused_symbols = list(resolution.prior_issuer)
     today = as_of.date()
-    universe = master.universe(as_of=today)
+    universe = master.universe(as_of=today)                                          # tablero principal por defecto (R08-13)
+    innovation = master.universe(as_of=today, boards=("innovation",))
     # comprobaciones UNI sobre datos reales
     ambiguous = 0
     for v in universe:
@@ -82,7 +78,7 @@ def main() -> int:
             ambiguous += 1
     counts = {m: Counter(v.instrument_type for v in master.universe(as_of=today, markets=(m,), instrument_types=tuple({v.instrument_type for v in master._versions})))
               for m in ("TWSE", "TPEX", "ESB")}
-    industries = Counter((v.market, v.board) for v in universe)
+    industries = Counter((v.market, v.board) for v in master.universe(as_of=today, boards=("main", "innovation")))
     out_dir = ROOT / "data" / "store"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = today.isoformat()
@@ -108,8 +104,10 @@ def main() -> int:
         report.append(f"| {m} | {len(census[m])} | {len(segs)} | {eq} | {others} |")
     report += [
         "",
-        f"- Universo simulable por defecto (TWSE + TPEX, acciones ordinarias, vigentes): **{len(universe)}**.",
-        f"- Tableros (mercado, tablero): {dict(industries)}.",
+        f"- Universo simulable por defecto (TWSE + TPEX, acciones ordinarias, **tablero principal**, vigentes): **{len(universe)}**. "
+        f"Tablero de innovación fuera del universo salvo habilitación explícita del protocolo: {len(innovation)} valores.",
+        f"- Tableros (mercado, tablero) entre las acciones ordinarias vigentes: {dict(industries)}.",
+        f"- Retiradas con símbolo ambiguo (varios segmentos vigentes): {len(resolution.ambiguous)}.",
         f"- Clasificación FinMind de los vigentes: {dict(fm_types)} (`absent` = no aparece en `TaiwanStockInfo`).",
         f"- Retiradas TWSE listadas: {len(delistings)}; cerradas en el maestro (existían en el censo vigente): {closed}; "
         f"sin segmento porque no están en el censo vigente ni se conoce su fecha de alta: {orphan_delistings} (pendiente: TEJ o histórico de FinMind).",
@@ -118,9 +116,10 @@ def main() -> int:
         + ("" if not reused_symbols else " Ejemplos: " + "; ".join(reused_symbols[:8])),
         f"- Filas rechazadas por el maestro (solapes/duplicados): {len(problems)}." + ("" if not problems else " Detalle: " + "; ".join(problems[:10])),
         "",
-        "Exclusiones del universo simulable: ETF, ETN, DR, certificados de beneficio, filas de índice, tablero de innovación "
-        "(se cataloga con `board=innovation` y queda dentro del universo sólo si el protocolo lo admite), ESB (mercado fuera de alcance), "
-        "y todo símbolo sin clasificación (`unclassified`).",
+        "Exclusiones del universo simulable por defecto: ETF, ETN, DR, certificados de beneficio, filas de índice, tablero de innovación "
+        "(se cataloga con `board=innovation`; `SecurityMaster.universe` lo excluye salvo `boards=(\"main\", \"innovation\")`), "
+        "ESB (mercado fuera de alcance), y todo símbolo sin clasificación (`unclassified`: ausente del catálogo de FinMind o con "
+        "categoría no reconocida).",
     ]
     (ROOT / "docs" / "informes" / f"10_censo_{stamp}.md").write_text("\n".join(report) + "\n", encoding="utf-8")
     print("\n".join(report))

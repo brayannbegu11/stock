@@ -145,6 +145,7 @@ class BootstrapResult:
     seed: int
     evidence_class: str
     n_segments: int = 1     # tramos de semanas consecutivas entre los que los bloques no cruzan (R02-08)
+    resample_mean: float = float("nan")   # media de las medias remuestreadas: diagnóstico de sesgo del remuestreo (R08-11)
 
 
 def _archived_forecast(
@@ -169,6 +170,11 @@ def _archived_forecast(
     packet = packets.get(packet_hash)
     if packet is None or packet.packet_hash() != packet_hash or packet.packet_id != forecast.get("packet_id"):
         return None, "accredited packet not found in the packet registry (R07-03)"
+    # El registro no es de confianza: un paquete recuperado vuelve a pasar el filtro de admisión (R08-01).
+    from .packet import readmission_problems
+    readmit = readmission_problems(packet, store=store)
+    if readmit:
+        return None, "recovered packet fails readmission: " + "; ".join(readmit[:5])
     receipt = rec.receipt_obj
     candidate = {**forecast, RECEIPT_FIELD: receipt.receipt_id if receipt else "missing"}
     problems = validate_prediction(candidate, packet, store=store, calendar=calendar, known_calibrators=known_calibrators,
@@ -249,16 +255,30 @@ def block_bootstrap_mean(
     valid_mondays = [m for m, _ in valid]
     starts = _block_starts(valid_mondays, block_length)
     n_segments = len(_segments(valid_mondays))
+    # Ponderación (R08-11): el tramo se elige con probabilidad proporcional a su longitud y el bloque
+    # uniformemente dentro del tramo; así cada tramo pesa lo que pesa en la muestra, no según cuántos
+    # bloques caben en él. Con un solo tramo equivale al bootstrap por bloques móviles clásico.
+    segments = _segments(valid_mondays)
+    blocks_by_segment = [[(s0, ln) for s0, ln in starts if seg0 <= s0 < seg0 + seg_len] for seg0, seg_len in segments]
+    cumulative: list[int] = []
+    acc = 0
+    for _, seg_len in segments:
+        acc += seg_len
+        cumulative.append(acc)
     rng = random.Random(seed)
     means: list[float] = []
     for _ in range(n_boot):
         sample: list[float] = []
         while len(sample) < n:
-            s0, ln = starts[rng.randrange(len(starts))]
+            u = rng.randrange(n)
+            seg_idx = next(i for i, c in enumerate(cumulative) if u < c)
+            blocks = blocks_by_segment[seg_idx]
+            s0, ln = blocks[rng.randrange(len(blocks))]
             sample.extend(values[s0:s0 + ln])
         sample = sample[:n]
         means.append(sum(sample) / n)
+    resample_mean = sum(means) / len(means)
     means.sort()
     lo = means[int(0.025 * (n_boot - 1))]
     hi = means[int(0.975 * (n_boot - 1))]
-    return BootstrapResult(sum(values) / n, lo, hi, n, n_invalid, block_length, seed, evidence_class, n_segments)
+    return BootstrapResult(sum(values) / n, lo, hi, n, n_invalid, block_length, seed, evidence_class, n_segments, resample_mean)

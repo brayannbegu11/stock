@@ -34,7 +34,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from .calendar import TradingCalendar
-from .store import CaptureRecord
+from .store import CaptureRecord, RawStore
 from .timeutil import UTC, AvailabilityQuality, ensure_aware, is_after, to_utc
 from .weekly import STATUS_VALID, plan_week
 
@@ -285,6 +285,50 @@ def build_packet(
         exit_at=week.exit_at if week else None,
         calendar_version=f"{calendar.source_id}@{calendar.version}" if calendar is not None else None,
     )
+
+
+def readmission_problems(packet: Packet, *, store: Optional[RawStore] = None) -> list[str]:
+    """Vuelve a aplicar el filtro de admisión a un paquete recuperado de un registro (R08-01).
+
+    El hash acredita bytes, no admisibilidad: un paquete construido a mano puede contener documentos
+    que ``build_packet`` habría rechazado. Se comprueban, por documento admitido, disponibilidad
+    conocida, coherencia de fechas, disponibilidad e ingestión no posteriores al corte y, en modo
+    prospectivo, procedencia contra el archivo (captura existente, hash de origen, reloj del sistema).
+    """
+    problems: list[str] = []
+    seen: set[str] = set()
+    for d in packet.admitted:
+        if d.doc_id in seen:
+            problems.append(f"{d.doc_id}: duplicate doc_id")
+        seen.add(d.doc_id)
+        if d.availability_quality == AvailabilityQuality.UNKNOWN:
+            problems.append(f"{d.doc_id}: {R_UNKNOWN_AVAILABILITY}")
+        if d.published_at is not None and is_after(d.published_at, d.available_at):
+            problems.append(f"{d.doc_id}: {R_INCONSISTENT_METADATA}")
+        if is_after(d.available_at, packet.cutoff_at):
+            problems.append(f"{d.doc_id}: {R_AVAILABLE_AFTER_CUTOFF}")
+        if packet.mode == MODE_PROSPECTIVE:
+            if d.capture_id is None or d.source_sha256 is None or d.derivation is None:
+                problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE}")
+                continue
+            if d.first_seen_at is None or is_after(d.first_seen_at, packet.cutoff_at):
+                problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
+            if store is not None:
+                try:
+                    rec = store.get(d.capture_id)
+                except KeyError:
+                    problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE} (capture {d.capture_id} not in archive)")
+                    continue
+                if rec.source_id != d.source_id or rec.sha256 != d.source_sha256:
+                    problems.append(f"{d.doc_id}: {R_PROVENANCE_MISMATCH}")
+                if rec.clock_source != "system":
+                    problems.append(f"{d.doc_id}: {R_SYNTHETIC_CAPTURE}")
+                if is_after(rec.ingested_at_dt, packet.cutoff_at) or (d.first_seen_at is not None and to_utc(d.first_seen_at) != to_utc(rec.ingested_at_dt)):
+                    problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
+    for r in packet.rejected:
+        if r.doc_id in seen:
+            problems.append(f"{r.doc_id}: document is both admitted and rejected")
+    return problems
 
 
 def packet_to_json(packet: Packet) -> bytes:
