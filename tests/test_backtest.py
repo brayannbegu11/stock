@@ -84,6 +84,27 @@ def test_r10_05_manifest_identity_and_listing_are_enforced_and_pre_listing_bars_
     assert week["coverage_reasons"].get("insufficient_history", 0) >= 1
 
 
+def test_r10_05_listed_and_delisted_declarations_are_checked_too(tmp_path):
+    store, path = make_market(tmp_path)
+    m = json.loads(path.read_text(encoding="utf-8"))
+    m["listed"][0]["security_id"] = "TPEX:B@1990-01-01"
+    path.write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(ManifestInconsistent):
+        load_market(store, path, CAL)
+    m = json.loads(path.read_text(encoding="utf-8"))
+    del m["listed"][0]["security_id"]
+    m["listed"].append({"symbol": "A", "name": "otra", "listing_date": "2024-01-01"})
+    path.write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(ManifestInconsistent):
+        load_market(store, path, CAL)                        # símbolo repetido en listed
+    m = json.loads(path.read_text(encoding="utf-8"))
+    m["listed"].pop()
+    m["delisted"].append({"symbol": "A", "name": "A", "delisting_date": "2024-03-01", "listing_date": "2000-01-01"})
+    path.write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(ManifestInconsistent):
+        load_market(store, path, CAL)                        # alta declarada en delisted distinta de listed
+
+
 def test_r10_06_dividend_captures_are_always_read_and_checked(tmp_path):
     divs = {"A": dividend_rows("A", ex_date=date(2024, 1, 10), cash=2.0, pay=date(2024, 2, 1))}
     store, path = make_market(tmp_path, dividends=divs, overrides={"A": {"dividend_rows": 0}})
@@ -102,6 +123,56 @@ def test_r10_06_dividend_captures_are_always_read_and_checked(tmp_path):
                               "captures": {"A": {"price": prec.capture_id, "price_rows": len(rows), "dividend": drec.capture_id, "dividend_rows": 1}}}), encoding="utf-8")
     with pytest.raises(SourceIdentityMismatch):
         load_market(store3, p3, CAL)
+    # recuento positivo sin captura de dividendos: error, no silencio (ronda 11)
+    store4, path4 = make_market(tmp_path / "d", overrides={"A": {"dividend_rows": 1}})
+    with pytest.raises(ManifestInconsistent):
+        load_market(store4, path4, CAL)
+
+
+def test_r10_07_invalid_week_beyond_the_bound_is_not_processed(tmp_path):
+    closed_week = TradingCalendar(start=CAL.start, end=CAL.end, closures=[date(2024, 1, d) for d in range(15, 20)],
+                                  source_id="synthetic", recorded_at=CAL.recorded_at, version="closed-W03")
+    divs = {"A": dividend_rows("A", ex_date=date(2024, 1, 18), cash=2.0, pay=date(2024, 2, 1))}
+    store, path = make_market(tmp_path, dividends=divs, end=date(2024, 3, 29))
+    m = load_market(store, path, closed_week)
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 16), label="t")
+    res = Runner(store, m, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()      # antes: OutOfOrderEvent
+    s = res["summary"]
+    assert s["simulation_bound"] == "2024-01-16"
+    w3 = next(w for w in res["weeks"] if w["week_id"] == "2024-W03")
+    assert w3["status"] == "invalid:no_sessions" and "hasta el límite" in w3["note"]
+    for name in ("Q0", "A1"):
+        assert s["forecasters"][name]["final_valuation"]["events_processed_through"] == "2024-01-16"
+        assert s["forecasters"][name]["final_valuation"]["receivables"] == 0.0                # el dividendo del 18-01 no se reconoce
+
+
+def test_r11_03_r11_04_forecasters_must_share_market_and_par_value_with_the_runner(tmp_path):
+    store, path = make_market(tmp_path, end=date(2024, 6, 28))
+    m = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 3, 29), label="t", par_value=D(5))
+    with pytest.raises(ValueError, match="par_value"):
+        Runner(store, m, cfg, [TabularForecaster(m, min_weeks=10), RandomForecaster(1)])
+    other = load_market(store, path, CAL)
+    with pytest.raises(ValueError, match="different MarketData"):
+        Runner(store, m, BacktestConfig(start=date(2024, 1, 1), end=date(2024, 3, 29), label="t"), [TabularForecaster(other, min_weeks=10), RandomForecaster(1)])
+
+
+def test_r11_05_markdown_report_keeps_uncertainty_states():
+    from twlab.backtest import markdown_report
+    result = {"summary": {"period": ["2024-01-01", "2024-01-12"], "manifest": "m", "universe_size": 2, "weeks_operated": 1, "weeks_invalid_no_sessions": 0,
+                          "weeks_pending_outcome": [], "assumptions": {"baseline": "A1"}, "universe_ew": {"mean_weekly_gross_open_close": None},
+                          "forecasters": {"Q0": {"model_id": "q0", "mean_weekly_net_return_open_close": None, "mean_weekly_gross_pick_return": None,
+                                                 "mean_costs_over_invested": None, "weeks_positive": 0, "final_equity": None,
+                                                 "final_valuation": {"error": "missing price"},
+                                                 "paired_excess_vs_baseline": {"baseline": "A1", "error": "degenerate resampling"}},
+                                          "A1": {"model_id": "a1", "mean_weekly_net_return_open_close": None, "mean_weekly_gross_pick_return": None,
+                                                 "mean_costs_over_invested": None, "weeks_positive": 0, "final_equity": 1.0, "final_valuation": {}}}},
+              "weeks": [{"week_id": "2024-W02", "status": "valid", "pending_outcome": False,
+                         "forecasters": {"Q0": {"picks": [{"symbol": "A", "name": "A"}], "stale_prices": ["stale_price:A:2024-01-11"]},
+                                         "A1": {"picks": [{"symbol": "B", "name": "B"}], "stale_prices": []}}}]}
+    md = markdown_report(result, title="t")
+    assert "desconocido: missing price" in md and "no estimable: degenerate resampling" in md
+    assert "sin intervalo medible (precio obsoleto)" in md and "→ pendiente" not in md
 
 
 def test_r10_07_r09_06_period_end_is_respected_and_entries_before_the_bound_are_executed(tmp_path):

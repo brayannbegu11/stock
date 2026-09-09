@@ -1,0 +1,255 @@
+{
+  "ronda": "11",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado. Pasan las 258 pruebas de aceptación y las 27 verificaciones adaptadas. Los 25 casos adversariales adicionales producen 23 fallos y 2 controles aprobados. Reproduje exactamente el JSON de la muestra, el informe 14 y los resúmenes Q0/A1 de la demo. Audité 103 paquetes y 6.901 documentos: ninguna barra posterior al corte y ninguna diferencia de características. Las cifras del README coinciden con el JSON; las garantías generales del informe 16 siguen excediendo lo demostrado. Los fallos de anuncios tardíos y dividendos duplicados se reproducen sintéticamente; no aparecen en los 331 registros de dividendos de la muestra. Evidencias y pruebas en review/out/astra_scratch/r11_*. No ejecuté la descarga ni modifiqué código del constructor.",
+  "hallazgos": [
+    {
+      "id": "R09-03/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 394,
+      "afirmacion": "No corregido: las plantillas todavía permiten transportar contenido arbitrario hasta PredictorView.",
+      "contraejemplo": "El detalle \"security_ids ('profit in 2099 = 999; buy A',) do not equal extracted ()\" pasa rejection_detail_is_canonical y readmission_problems devuelve []. También pasa \"extractor profit_in_2099_999 failed: Buy_A\". Ambos textos sobreviven al archivo y quedan visibles al predictor. Contradice informe 16 §2 P1.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k rejection_cannot --basetemp=review/out/astra_scratch/repro11_rejection",
+      "prueba_propuesta": "from dataclasses import replace\nfrom tests.test_schema import prospective_packet\nfrom twlab.packet import Rejection, readmission_problems, packet_from_json, packet_to_json\nfrom twlab.store import RawStore\n\ndef test_rejection_cannot_smuggle_content(tmp_path):\n    detail = \"security_ids ('profit in 2099 = 999; buy A',) do not equal extracted ()\"\n    p = replace(prospective_packet(), rejected=(Rejection('ghost', 'derivation_mismatch', detail),))\n    p = packet_from_json(packet_to_json(p))\n    assert readmission_problems(p, store=RawStore(tmp_path))\n\n# Sustituir campos abiertos por metadatos estructurados comprobables o excluirlos de la vista del predictor.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-06/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 527,
+      "afirmacion": "Corregida la desaparición de entradas en semanas pendientes; queda el fallo independiente del límite en R10-07/verificacion.",
+      "contraejemplo": "Con último dato el martes 16-01, la entrada del lunes se conserva junto con la cesta anterior: patrimonio 150.000 TWD, dos cestas en seguimiento y ningún derecho del dividendo del 18-01.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k partial_tuesday --basetemp=review/out/astra_scratch/repro11_partial",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-12/verificacion",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 270,
+      "afirmacion": "Parcial: los pesos por tramo son exactos, pero el remuestreo puede carecer totalmente de variabilidad y presentarse como IC 95 %.",
+      "contraejemplo": "W01/W03/W05/W07 con valores [0,1; −0,1; 0,3; 0,5], block_length=1 y 1.000 réplicas devuelve media=0,2 e IC=[0,2;0,2]. Dos tramos W01–W02/W04–W05, valores [0,1;0,2;0,3;0,6] y bloque 3 devuelven IC=[0,3;0,3]. Cada réplica reproduce obligatoriamente toda la muestra, aunque sus valores difieren. No hay aviso de diseño degenerado.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k bootstrap_degenerate --basetemp=review/out/astra_scratch/repro11_bootstrap",
+      "prueba_propuesta": "from twlab.evaluation import WeeklyObservation, block_bootstrap_mean, ObservationError\n\ndef test_degenerate_bootstrap_is_not_reported_as_confidence():\n    rows = [WeeklyObservation(f'2024-W{w:02}', str(w), 'historical_numeric_temporally_controlled', None, True, v) for w, v in zip([1,3,5,7], [.1,-.1,.3,.5])]\n    try:\n        r = block_bootstrap_mean(rows, block_length=1, n_boot=1000, seed=1)\n    except ObservationError:\n        return\n    assert r.ci_low < r.ci_high\n\n# Rechazar o señalar explícitamente que el diseño no permite estimar incertidumbre; no cambiar silenciosamente el bloque.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-01/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 103,
+      "afirmacion": "Corregido para ambas barras; la nueva dependencia temporal de dividendos se trata en R11-01.",
+      "contraejemplo": "La apertura del 08-01 disponible el 20-01 impide admitir la etiqueta al corte del 14-01, aunque el cierre ya esté disponible.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_verifications.py -k label_requires_both --basetemp=review/out/astra_scratch/repro11_endpoints",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-02/verificacion",
+      "severidad": "baja",
+      "categoria": "contrato",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 270,
+      "afirmacion": "El retroceso está corregido; la afirmación del informe 16 de que se rechazan cortes no crecientes es inexacta.",
+      "contraejemplo": "14-01 seguido de 07-01 provoca ValueError, pero dos llamadas al 07-01-2024 18:00 se aceptan. La condición implementada es <, no <=. La exclusividad entre recorridos tampoco está garantizada: véase R11-04.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k equal_cutoffs --basetemp=review/out/astra_scratch/repro11_equal",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.r10_support import fixture, date, time, taipei\nfrom twlab.backtest import TabularForecaster\n\ndef test_strictly_increasing_cutoffs(tmp_path):\n    _, market = fixture(tmp_path)\n    f = TabularForecaster(market, min_weeks=1)\n    cutoff = taipei(date(2024,1,7), time(18))\n    f.maybe_train(cutoff)\n    with pytest.raises(ValueError):\n        f.maybe_train(cutoff)\n\n# Alternativa: documentar y probar una operación idempotente para cortes iguales.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-03/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 210,
+      "afirmacion": "Parcial: se reintentan etiquetas ausentes y se distinguen capturas, pero la caché no identifica el calendario que determina la etiqueta.",
+      "contraejemplo": "Con las mismas capturas, un calendario termina W02 el viernes 12-01 y otro declara cerrado ese viernes. Apertura=100, cierre del jueves=100 y del viernes=110. MarketData.data_version es idéntico; la caché devuelve +10 %, mientras el cálculo fresco con el segundo calendario devuelve 0 %.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k data_version_includes_calendar --basetemp=review/out/astra_scratch/repro11_cache",
+      "prueba_propuesta": "from dataclasses import replace\nfrom review.out.astra_scratch.r10_support import fixture, date, time, taipei, D, TradingCalendar\nfrom twlab.models import q1\n\ndef test_calendar_change_invalidates_rows(tmp_path):\n    _, m = fixture(tmp_path, end='2024-01-19')\n    cal = TradingCalendar(start=date(2021,1,1), end=date(2026,12,31), closures=[date(2024,1,12)], source_id='revised', recorded_at=taipei(date(2021,1,1)))\n    revised = replace(m, calendar=cal)\n    bars = {s.security_id: [replace(b, close=D(110)) if b.session == date(2024,1,12) else b for b in s.bars] for s in m.securities.values()}\n    cuts = [taipei(date(2024,1,7), time(18))]\n    now = taipei(date(2024,1,14), time(18))\n    cache = {}\n    q1.build_training_rows(bars, cuts, now_cutoff=now, calendar=m.calendar, cache=cache, data_version=m.data_version)\n    cached = q1.build_training_rows(bars, cuts, now_cutoff=now, calendar=cal, cache=cache, data_version=revised.data_version)\n    fresh = q1.build_training_rows(bars, cuts, now_cutoff=now, calendar=cal, data_version=revised.data_version)\n    assert cached == fresh",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-04/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 107,
+      "afirmacion": "Corregido: los empates reciben rango medio y el componente constante no cancela la señal.",
+      "contraejemplo": "Pasan las pruebas de tres predicciones constantes y de ridge descendente combinada con un booster constante.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_verifications.py -k 'ties_do_not or constant_booster' --basetemp=review/out/astra_scratch/repro11_ranks",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-05/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 116,
+      "afirmacion": "Parcial: se comprueban ciertos campos de captures y se descartan barras anteriores al alta, pero listed/delisted todavía se reducen por símbolo y pierden contradicciones.",
+      "contraejemplo": "listed declara security_id='TPEX:B@1990-01-01' y se acepta TWSE:A@2000-01-01. Dos filas listed para A con altas 2000-01-01 y 2024-01-01 se aceptan, ganando la última. Una retirada que declara alta 2000 se aplica al valor reconstruido con alta 2024. También se ignoran market/security_id declarados únicamente en listed.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k partial_manifest_identity --basetemp=review/out/astra_scratch/repro11_manifest",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.r10_support import fixture\nfrom twlab.backtest import ManifestInconsistent\n\ndef test_identity_declared_in_listed_is_checked(tmp_path):\n    def mutate(manifest, *_):\n        manifest['listed'][0]['security_id'] = 'TPEX:B@1990-01-01'\n    with pytest.raises(ManifestInconsistent):\n        fixture(tmp_path, mutate=mutate)\n\n# Las variantes completas de duplicados y reutilización están en test_r11_attacks.py::test_partial_manifest_identity_is_checked. Resolver por segmento económico o rechazar la ambigüedad antes de construir diccionarios por símbolo.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-06/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 155,
+      "afirmacion": "Parcial: una captura existente ya se comprueba, pero un recuento positivo sin referencia a captura sigue convirtiéndose silenciosamente en cero dividendos.",
+      "contraejemplo": "captures.A contiene dividend_rows=1 y carece de dividend. load_market termina sin error ni advertencia y carga dividends=[]. La validación del recuento sólo se ejecuta dentro de if caps.get('dividend').",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k dividend_count_requires --basetemp=review/out/astra_scratch/repro11_divcapture",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.r10_support import fixture\nfrom twlab.backtest import ManifestInconsistent\n\ndef test_declared_dividend_requires_capture(tmp_path):\n    def mutate(m, *_):\n        m['captures']['A'].pop('dividend')\n        m['captures']['A']['dividend_rows'] = 1\n    with pytest.raises(ManifestInconsistent):\n        fixture(tmp_path, mutate=mutate)",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-07/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 469,
+      "afirmacion": "Parcial: la rama invalid:no_sessions sigue procesando eventos y valorando más allá del límite; la rama pendiente también consulta el cierre futuro.",
+      "contraejemplo": "Periodo hasta 16-01-2024, semana 15–19 sin sesiones y residuo de 500 acciones: se reconoce el dividendo del 18-01 por 1.000 TWD y ambos cursores avanzan al 21-01. La valoración final falla con OutOfOrderEvent al volver al 16-01. Separadamente, con límite 09-01, la comprensión de close_prices en línea 513 consulta el 12-01 antes de comprobar pending_exit. Esta lectura no demostró una operación futura, pero contradice la garantía de no consultar nada posterior.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k 'invalid_week_respects_bound or pending_exit_does_not_read' --basetemp=review/out/astra_scratch/repro11_bound",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner, stock_div, date, timedelta\n\ndef test_invalid_week_obeys_requested_end(tmp_path):\n    closures = [date(2024,1,15) + timedelta(days=i) for i in range(5)]\n    dividends = [stock_div('2024-01-10', 5), {'stock_id':'A', 'year':'2024', 'CashExDividendTradingDate':'2024-01-18', 'CashEarningsDistribution':2}]\n    r = runner(tmp_path, end='2024-01-26', config_end='2024-01-16', closures=closures, dividends=dividends)\n    r.run()\n    assert r.cursor['Q0'] <= date(2024,1,16)\n    assert all(e.at.date() <= date(2024,1,16) for e in r.ledgers['Q0'].events)\n\n# Calcular el límite antes de bifurcar por validez del plan; diferir la consulta del cierre hasta comprobarlo.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-08/verificacion",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 244,
+      "afirmacion": "Parcial: las semanas objetivo y los cambios ordinarios de datos/configuración se identifican, pero el hash redondea datos que el entrenamiento utiliza sin redondear.",
+      "contraejemplo": "Etiquetas [1e-12,2e-12,3e-12] frente a [3e-12,2e-12,1e-12], mismas características y semilla: predicciones [0,25;0,5;0,75] frente a [0,75;0,5;0,25], pero idéntico training_manifest_id, con data=b3d57f0e9f16 y cfg=6b8158989452. El redondeo destruye diferencias que sí cambian los rangos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k training_hash --basetemp=review/out/astra_scratch/repro11_hash",
+      "prueba_propuesta": "from dataclasses import replace\nfrom review.out.astra_scratch.r10_support import date, time, taipei\nfrom twlab.models import q1\n\ndef test_hash_covers_actual_training_values():\n    cutoff = taipei(date(2024,1,7), time(18))\n    known = taipei(date(2024,1,13), time(13,30))\n    rows = [q1.TrainingRow(cutoff, str(i), {k:float(i) for k in q1.FEATURE_NAMES}, (i+1)*1e-12, known) for i in range(3)]\n    now = taipei(date(2024,1,14), time(18))\n    a = q1.fit_q1(rows, trained_at=now, min_weeks=1, seed=1)\n    b = q1.fit_q1([replace(r, label=(3-i)*1e-12) for i,r in enumerate(rows)], trained_at=now, min_weeks=1, seed=1)\n    assert a.training_manifest_id != b.training_manifest_id\n\n# Hashear la representación exacta utilizada para ajustar el modelo.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-09/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 100,
+      "afirmacion": "Parcial: la etiqueta incorpora dividendos simples, pero no actualiza la cantidad sobre la que se devenga efectivo después de un dividendo en acciones.",
+      "contraejemplo": "Entrada 08-01 a 100; dividendo en acciones 1:1 el 09-01; efectivo 10 por acción el 11-01; cierre 12-01 a 50. Valor final por acción inicial=2×50+2×10=120: retorno +20 %. weekly_label devuelve +10 %. El control de efectivo y acciones el mismo día, sin barra en la fecha ex, sí pasa.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k 'cash_scales or same_day_cash' --basetemp=review/out/astra_scratch/repro11_total",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r11_attacks import endpoints\nfrom review.out.astra_scratch.r10_support import date, D\nfrom twlab.models import q1\n\ndef test_cash_after_stock_uses_updated_quantity():\n    a, b, bars = endpoints()\n    ds = [q1.DividendLike(date(2024,1,9), stock_ratio=D(1)), q1.DividendLike(date(2024,1,11), cash_per_share=D(10))]\n    assert q1.weekly_label(bars, a.session, b.session, ds)[0] == pytest.approx(.2)\n\n# Procesar eventos cronológicamente, preservando la base anterior para derechos simultáneos.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-10/verificacion",
+      "severidad": "baja",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/11_demo_q0_2024-2025.md",
+      "linea": 5,
+      "afirmacion": "Parcial: §2 ya recoge 104 cortes y 103 paquetes, pero la introducción conserva el recuento antiguo de 102 paquetes.",
+      "contraejemplo": "La reproducción genera 103 paquetes y el JSON tiene 103 semanas válidas, incluida 2026-W01 pendiente. La introducción dice '102 paquetes recuperables por hash' y línea 37 vuelve a hablar de 102 paquetes sin delimitar el subconjunto. El reintento semanal del informe 13 sí coincide con la ejecución del viernes 19-01.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k all_packet_counts --basetemp=review/out/astra_scratch/repro11_doc",
+      "prueba_propuesta": "import json\nfrom pathlib import Path\n\ndef test_report_packet_count_matches_all_archived_weeks():\n    result = json.loads(Path('data/store/q0_demo_2024-01-01_2025-12-31.json').read_text(encoding='utf-8'))\n    report = Path('docs/informes/11_demo_q0_2024-2025.md').read_text(encoding='utf-8')\n    n = sum(w['status'] == 'valid' for w in result['weeks'])\n    assert f'{n} paquetes recuperables por hash' in report\n\n# Distinguir explícitamente 102 semanas evaluadas de 103 paquetes/predicciones emitidos.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R11-01",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 263,
+      "afirmacion": "La conversión a DividendLike elimina la disponibilidad del anuncio; las etiquetas pueden incorporar dividendos conocidos después del entrenamiento.",
+      "contraejemplo": "Dividendo de 100 TWD con fecha ex 10-01-2024 y AnnouncementDate=01-02-2024, 08:00. Al corte 14-01 se admite una etiqueta +100 % y label_known_at=13-01 13:30. La madurez sólo considera las barras. El dato posterior puede representar una revisión o una inconsistencia: ninguna opción permite usarlo silenciosamente antes de su publicación.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k late_dividend --basetemp=review/out/astra_scratch/repro11_latediv",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import fixture, date, time, taipei\nfrom twlab.backtest import TabularForecaster\nfrom twlab.models import q1\n\ndef test_late_dividend_prevents_mature_label(tmp_path):\n    ds = [{'stock_id':'A', 'year':'2024', 'AnnouncementDate':'2024-02-01', 'AnnouncementTime':'08:00:00', 'CashExDividendTradingDate':'2024-01-10', 'CashEarningsDistribution':100}]\n    _, m = fixture(tmp_path, end='2024-01-19', dividends=ds)\n    f = TabularForecaster(m, min_weeks=1)\n    sec = next(iter(m.securities))\n    rows = q1.build_training_rows({sec:m.securities[sec].bars}, [taipei(date(2024,1,7),time(18))], now_cutoff=taipei(date(2024,1,14),time(18)), calendar=m.calendar, dividends_by_security=f.dividends)\n    assert not rows\n\n# Preservar disponibilidad y versión de cada evento; extender label_known_at a todas sus dependencias.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R11-02",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 101,
+      "afirmacion": "Q1 aplica dos veces un dividendo duplicado que el libro aplica una sola vez.",
+      "contraejemplo": "Dos filas idénticas del dividendo en acciones 1:1 del 10-01, periodo 2024; apertura 100 y cierre 50. El libro identifica el evento repetido y obtiene retorno 0 %. Q1 multiplica dos veces por 2 y etiqueta +100 %. DividendLike carece de identificador de evento/versión.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k duplicate_dividend --basetemp=review/out/astra_scratch/repro11_duplicate",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.r10_support import runner, stock_div, date, D\nfrom twlab.backtest import TabularForecaster\nfrom twlab.models import q1\n\ndef test_duplicate_event_does_not_duplicate_target(tmp_path):\n    d = stock_div('2024-01-10', 10)\n    r = runner(tmp_path, end='2024-01-12', dividends=[d,d], prices=lambda day: D(50) if day >= date(2024,1,10) else D(100))\n    f = TabularForecaster(r.market, min_weeks=1)\n    sec = next(iter(r.market.securities))\n    label = q1.weekly_label(r.market.by_session[sec], date(2024,1,8), date(2024,1,12), f.dividends[sec])[0]\n    actual = r.run()['weeks'][0]['forecasters']['Q0']['portfolio_net_return_open_close']\n    assert label == pytest.approx(actual)\n\n# Resolver duplicados y revisiones antes de alimentar tanto al libro como al etiquetador.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R11-03",
+      "severidad": "media",
+      "categoria": "unidades",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 265,
+      "afirmacion": "Runner admite que Q1 y el libro conviertan el mismo dividendo con valores nominales distintos.",
+      "contraejemplo": "BacktestConfig.par_value=5 y TabularForecaster creado con su valor por defecto 10. Distribución nominal=5, apertura=100 y cierre=50: el libro aplica ratio 1 y obtiene 0 %; Q1 aplica ratio 0,5 y etiqueta −25 %. Runner acepta la combinación. El CLI actual sí transmite cfg.par_value; el fallo corresponde a la API pública.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k nominal_value --basetemp=review/out/astra_scratch/repro11_par",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner, stock_div, date, D\nfrom twlab.backtest import Runner, TabularForecaster, RandomForecaster\n\ndef test_runner_rejects_inconsistent_par_value(tmp_path):\n    r = runner(tmp_path, end='2024-01-12', dividends=[stock_div('2024-01-10',5)], prices=lambda d: D(50) if d >= date(2024,1,10) else D(100))\n    r.cfg.par_value = D(5)\n    f = TabularForecaster(r.market, min_weeks=1)\n    try:\n        Runner(r.store, r.market, r.cfg, [f, RandomForecaster(1)])\n    except ValueError:\n        return\n    assert f.par_value == r.cfg.par_value\n\n# Compartir una conversión validada por valor/evento o rechazar configuraciones incompatibles.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R11-04",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 331,
+      "afirmacion": "Una instancia de TabularForecaster puede servir a dos Runner con mercados distintos y cortes crecientes sin revalidar su mercado, caché o modelo.",
+      "contraejemplo": "Primer Runner: mercado exclusivamente A y corte 07-01. Segundo Runner: mercado exclusivamente B y corte 14-01, reutilizando Q1. Se emite y ejecuta una selección de B, mientras f.market sigue conteniendo exclusivamente A y conserva el entrenamiento del primer recorrido. No se produce error ni queda declarada una transferencia entre universos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k cross_runner --basetemp=review/out/astra_scratch/repro11_cross",
+      "prueba_propuesta": "from dataclasses import replace\nfrom review.out.astra_scratch.r10_support import fixture, date\nfrom twlab.backtest import BacktestConfig, Runner, TabularForecaster, RandomForecaster\n\ndef test_forecaster_is_bound_to_its_run_market(tmp_path):\n    s1, m1 = fixture(tmp_path/'one', end='2024-03-29')\n    s2, m2 = fixture(tmp_path/'two', end='2024-03-29', symbols=('B',))\n    f = TabularForecaster(m1, min_weeks=1)\n    cfg = BacktestConfig(date(2024,1,1), date(2024,1,12), slots=1, block_length=1, n_boot=10)\n    Runner(s1,m1,cfg,[f,RandomForecaster(1)]).run()\n    try:\n        Runner(s2,m2,replace(cfg,start=date(2024,1,14),end=date(2024,1,19)),[f,RandomForecaster(1)]).run()\n    except ValueError:\n        return\n    assert f.market is m2\n\n# Rechazar reutilización incompatible o reinicializar explícitamente todo el estado y documentar el nuevo recorrido.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R11-05",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 708,
+      "afirmacion": "markdown_report no conserva los estados de incertidumbre del JSON: falla con patrimonio desconocido y presenta intervalos no medibles como pendientes.",
+      "contraejemplo": "Con final_equity=null y final_valuation.error='missing price', lanza TypeError al aplicar ':,.0f'. En una ejecución real sintética, A carece de barra el 12-01 y B sí tiene barra: W02 tiene pending_outcome=false y stale_prices no vacío, pero la tabla muestra '→ pendiente' para ambos pronosticadores, sin indicar precio obsoleto ni intervalo no medible.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r11_attacks.py -k markdown --basetemp=review/out/astra_scratch/repro11_markdown",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner, date, D\nfrom twlab.backtest import markdown_report\n\ndef test_markdown_handles_unknown_equity(tmp_path):\n    result = runner(tmp_path, end='2024-01-12').run()\n    result['summary']['forecasters']['Q0']['final_equity'] = None\n    result['summary']['forecasters']['Q0']['final_valuation'] = {'equity':None, 'error':'missing price'}\n    assert 'Q0' in markdown_report(result, title='test')\n\ndef test_markdown_distinguishes_stale_from_pending(tmp_path):\n    result = runner(tmp_path, end='2024-01-19', symbols=('A','B'), slots=2, prices=lambda d: D(0) if d == date(2024,1,12) else D(100)).run()\n    assert not result['weeks'][0]['pending_outcome']\n    line = next(x for x in markdown_report(result,title='test').splitlines() if x.startswith('| 2024-W02 |'))\n    assert 'stale' in line or 'no medible' in line",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Qué identidad, versión y disponibilidad tendrá cada acción corporativa para que libro, etiquetas y caché consuman exactamente los mismos eventos?",
+    "¿Cómo se declarará un bootstrap sin variabilidad de remuestreo: error de diseño o incertidumbre no estimable, evitando publicarlo como IC 95 % ordinario?"
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "rechazo",
+      "argumento": "La condición declarada cumplida sigue fallando: security_ids y los identificadores de extractor transportan contenido arbitrario aceptado por readmission_problems y visible al predictor."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "El registro de verificadores de producción permanece vacío y protegido por MappingProxyType. Mantener bloqueada la vía prospectiva hasta verificadores criptográficos y readmisión completa; la vulnerabilidad de rechazos impide dar esta última condición por satisfecha."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Acepto exclusivamente las garantías acotadas del libro. El libro evita aplicar dos veces el evento duplicado del contraejemplo; esa garantía no se extiende a Q1 ni al coordinador."
+    },
+    {
+      "id": "P4",
+      "posicion": "rechazo",
+      "argumento": "Las entradas pendientes se conservan y la muestra se reproduce, pero invalid:no_sessions rebasa el límite, reconoce derechos posteriores y provoca OutOfOrderEvent. La afirmación de que nada posterior se consulta tampoco se sostiene."
+    },
+    {
+      "id": "P5",
+      "posicion": "rechazo",
+      "argumento": "Las cifras reproducidas no distinguen Q1 de cero, como se informa. Sin embargo, las nuevas etiquetas omiten disponibilidad e identidad de dividendos, calculan mal eventos encadenados y pueden discrepar del valor nominal del libro. Persisten colisiones del identificador de entrenamiento, caché incompleta y reutilización entre mercados."
+    }
+  ],
+  "veredicto": "rechazado"
+}

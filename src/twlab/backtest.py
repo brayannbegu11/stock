@@ -113,12 +113,30 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
     listing: dict[str, date] = {}
     delisting: dict[str, date] = {}
     names: dict[str, str] = {}
+    declared: dict[str, dict] = {}              # símbolo → campos declarados en listed/delisted (security_id, market, listing_date)
     for row in manifest.get("listed", []):
-        listing[row["symbol"]] = date.fromisoformat(row["listing_date"])
-        names[row["symbol"]] = row.get("name", "")
+        sid = row["symbol"]
+        if sid in listing:
+            raise ManifestInconsistent(f"{sid}: repeated in listed")
+        listing[sid] = date.fromisoformat(row["listing_date"])
+        names[sid] = row.get("name", "")
+        declared[sid] = {k: row[k] for k in ("security_id", "market") if k in row}
     for row in manifest.get("delisted", []):
-        delisting[row["symbol"]] = date.fromisoformat(row["delisting_date"])
-        names[row["symbol"]] = row.get("name", "")
+        sid = row["symbol"]
+        if sid in delisting:
+            raise ManifestInconsistent(f"{sid}: repeated in delisted")
+        delisting[sid] = date.fromisoformat(row["delisting_date"])
+        names.setdefault(sid, row.get("name", ""))
+        if row.get("listing_date"):
+            if sid in listing and date.fromisoformat(row["listing_date"]) != listing[sid]:
+                raise ManifestInconsistent(f"{sid}: listing_date in delisted != listed")
+            listing.setdefault(sid, date.fromisoformat(row["listing_date"]))
+        d = declared.setdefault(sid, {})
+        for k in ("security_id", "market"):
+            if k in row:
+                if k in d and d[k] != row[k]:
+                    raise ManifestInconsistent(f"{sid}: {k} in delisted != listed")
+                d[k] = row[k]
     now = datetime.now(TAIPEI)
     master = SecurityMaster()
     securities: dict[str, Security] = {}
@@ -136,15 +154,21 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
         raw_bars = finmind.bars_from_rows(finmind.rows(store, rec), stock_id=sid)
         if "price_rows" in caps and caps["price_rows"] != len(raw_bars):
             raise ManifestInconsistent(f"{sid}: manifest declares {caps['price_rows']} price rows, capture has {len(raw_bars)}")
-        market = caps.get("market", default_market)
+        dec = declared.get(sid, {})
+        market = caps.get("market") or dec.get("market") or default_market
+        if caps.get("market") and dec.get("market") and caps["market"] != dec["market"]:
+            raise ManifestInconsistent(f"{sid}: market in captures != listed/delisted")
         if caps.get("listing_date") and sid in listing and date.fromisoformat(caps["listing_date"]) != listing[sid]:
             raise ManifestInconsistent(f"{sid}: listing_date {caps['listing_date']} in captures != {listing[sid].isoformat()} in listed")
         vf = date.fromisoformat(caps["listing_date"]) if caps.get("listing_date") else listing.get(sid, raw_bars[0].session if raw_bars else None)
         if vf is None:
             continue
         sec_id = security_id_for(market, sid, vf)
-        if caps.get("security_id") and caps["security_id"] != sec_id:
-            raise ManifestInconsistent(f"{sid}: manifest security_id {caps['security_id']!r} != reconstructed {sec_id!r}")
+        for where, declared_id in (("captures", caps.get("security_id")), ("listed/delisted", dec.get("security_id"))):
+            if declared_id and declared_id != sec_id:
+                raise ManifestInconsistent(f"{sid}: security_id {declared_id!r} in {where} != reconstructed {sec_id!r}")
+        if caps.get("dividend_rows", 0) > 0 and not caps.get("dividend"):
+            raise ManifestInconsistent(f"{sid}: manifest declares {caps['dividend_rows']} dividend rows but no dividend capture (R10-06)")
         usable = [b for b in raw_bars if b.has_regular_price]
         dropped += len(raw_bars) - len(usable)
         bars = [b for b in usable if b.session >= vf]
@@ -241,6 +265,27 @@ class RandomForecaster:
         return [Selection(c.security_id, 0.0, [c.doc_id], []) for c in picks], {"training_manifest_id": None}
 
 
+def dividend_known_at(dv: finmind.DividendRow) -> Optional[datetime]:
+    if dv.announced_at is not None:
+        return dv.announced_at
+    if dv.announced_date is not None:
+        return taipei(dv.announced_date + timedelta(days=1), time(0, 0))
+    return None
+
+
+def dividend_events(sec_id: str, rows: Sequence[finmind.DividendRow], par_value: D) -> list[q1mod.DividendLike]:
+    """Los mismos eventos, con los mismos ``event_id``, que ``Runner.apply_actions`` aplica al libro."""
+    out: list[q1mod.DividendLike] = []
+    for dv in rows:
+        if dv.cash_ex_date and dv.cash_per_share > 0:
+            out.append(q1mod.DividendLike(f"{sec_id}:cash:{dv.cash_ex_date}:{dv.period}", dv.cash_ex_date, "cash",
+                                          cash_per_share=dv.cash_per_share, known_at=dividend_known_at(dv)))
+        if dv.stock_ex_date and dv.stock_per_share > 0:
+            out.append(q1mod.DividendLike(f"{sec_id}:stock:{dv.stock_ex_date}:{dv.period}", dv.stock_ex_date, "stock",
+                                          stock_ratio=dv.stock_per_share / par_value, known_at=dividend_known_at(dv)))
+    return out
+
+
 class TabularForecaster:
     """Q1: características de precio/volumen del paquete y modelo entrenado sólo con etiquetas conocidas al corte."""
     name, model_id, version = "Q1", q1mod.MODEL_ID, "q1_v1"
@@ -259,12 +304,10 @@ class TabularForecaster:
         self.cache: dict = {}
         self.history: list[str] = []
         self.data_version = market.data_version
-        # derechos para la etiqueta de retorno total (R10-09): efectivo y acciones nuevas por acción (valor nominal declarado)
-        self.dividends = {
-            sec_id: [q1mod.DividendLike(dv.cash_ex_date, cash_per_share=dv.cash_per_share) for dv in s.dividends if dv.cash_ex_date and dv.cash_per_share > 0]
-            + [q1mod.DividendLike(dv.stock_ex_date, stock_ratio=dv.stock_per_share / par_value) for dv in s.dividends if dv.stock_ex_date and dv.stock_per_share > 0]
-            for sec_id, s in market.securities.items()
-        }
+        # derechos para la etiqueta de retorno total (R10-09) con la misma identidad de evento que el libro (R11-02) y su
+        # instante de conocimiento (R11-01): hora de anuncio si existe; fecha de anuncio sin hora → día siguiente 00:00
+        # Taipei (una fecha sin hora no es las 00:00); sin anuncio → desconocido, y la etiqueta de esa semana no madura.
+        self.dividends = {sec_id: dividend_events(sec_id, s.dividends, par_value) for sec_id, s in market.securities.items()}
 
     def maybe_train(self, cutoff_at: datetime) -> None:
         if self.last_cutoff is not None and cutoff_at < self.last_cutoff:
@@ -333,6 +376,14 @@ class Runner:
         self.forecasters = {f.name: f for f in forecasters}
         if cfg.baseline not in self.forecasters:
             raise ValueError(f"baseline {cfg.baseline!r} is not among the forecasters")
+        for f in forecasters:
+            # un pronosticador ligado a un mercado sirve sólo a ese mercado (R11-04) y convierte los derechos con el mismo
+            # valor nominal que el libro (R11-03)
+            if getattr(f, "market", None) is not None and getattr(f, "market") is not market:
+                raise ValueError(f"forecaster {f.name} is bound to a different MarketData; build one per run (R11-04)")
+            if getattr(f, "par_value", None) is not None and getattr(f, "par_value") != cfg.par_value:
+                raise ValueError(f"forecaster {f.name} converts stock dividends with par_value={getattr(f, 'par_value')} "
+                                 f"but the ledger uses {cfg.par_value} (R11-03)")
         costs = CostModel(commission_per_side=cfg.commission_per_side, sell_tax=cfg.sell_tax, slippage_bps_per_side=cfg.slippage_bps)
         self.costs = costs
         self.initial = D(cfg.notional * cfg.slots)
@@ -465,28 +516,33 @@ class Runner:
         plan = plan_week(cutoff, self.market.calendar)
         record: dict = {"week_id": plan.week_id, "cutoff_at": cutoff.isoformat(), "status": plan.status, "forecasters": {}}
         self.weeks.append(record)
+        bound = min(cfg.end, self.last_data_day)
         if not plan.is_valid:
             week_end = plan.target_monday + timedelta(days=6)
-            last_close = self.market.calendar.prev_session(before=week_end + timedelta(days=1))
+            if plan.target_monday > bound:                  # semana sin sesiones más allá del límite: sólo se registra (R10-07)
+                record["note"] = "invalid:no_sessions (registrado; fuera del límite de simulación)"
+                record["pending_outcome"] = True
+                return
+            upto = min(week_end, bound)                     # nunca se procesa ni se valora más allá del límite
+            last_close = self.market.calendar.prev_session(before=upto + timedelta(days=1))
             for name, lg in self.ledgers.items():
-                self.apply_actions(name, week_end)
-                lg.advance_to(taipei(week_end, time(23, 59)))
+                self.apply_actions(name, upto)
+                lg.advance_to(taipei(upto, time(23, 59)))
                 prices, stale = self.marks(last_close, lg, "close")
                 try:
-                    v = lg.valuation(prices=prices, at=taipei(week_end, time(23, 59)))
+                    v = lg.valuation(prices=prices, at=taipei(upto, time(23, 59)))
                     record["forecasters"][name] = {"equity_end": float(v.total), "flags": list(v.flags)[:6] + stale}
                     self.prev_equity[name] = v.total
                 except MissingPrice as exc:
                     record["forecasters"][name] = {"equity_end": None, "flags": [f"missing_price:{exc}"] + stale}
-            record["note"] = "invalid:no_sessions (registrado, sin operaciones; eventos procesados)"
+            record["note"] = "invalid:no_sessions (registrado, sin operaciones; eventos procesados hasta el límite)"
             return
         packet, pkt_rec, candidates = self.build_week_packet(plan)
         view = PredictorView(packet)
         entry_s, exit_s = plan.entry_at.date(), plan.exit_at.date()
         # Límite de simulación (R09-06, R10-07): nunca más allá del final del periodo pedido ni del último dato.
         # La entrada se ejecuta si su sesión está dentro del límite; la salida sólo si también lo está. Lo que
-        # queda fuera no se intenta (ni se marca bloqueado): queda pendiente para una corrida posterior.
-        bound = min(cfg.end, self.last_data_day)
+        # queda fuera no se intenta (ni se marca bloqueado) ni se consulta: queda pendiente para una corrida posterior.
         pending_entry, pending_exit = entry_s > bound, exit_s > bound
         record.update(eligible=sum(1 for c in candidates if c.eligible), scored=sum(1 for c in candidates if c.scorable),
                       coverage_reasons=dict(collections.Counter(r.split(":")[0] for c in candidates for r in c.reasons)),
@@ -510,7 +566,7 @@ class Runner:
             record["note"] = f"pending_outcome: entrada prevista {entry_s.isoformat()} posterior al límite {bound.isoformat()}"
             return
         open_prices = {sec: m[entry_s].open for sec, m in self.market.by_session.items() if entry_s in m}
-        close_prices = {sec: m[exit_s].close for sec, m in self.market.by_session.items() if exit_s in m}
+        close_prices = {} if pending_exit else {sec: m[exit_s].close for sec, m in self.market.by_session.items() if exit_s in m}
         intervals: dict[str, IntervalReturn] = {}
         for name, lg in self.ledgers.items():
             self.apply_actions(name, entry_s)
@@ -674,7 +730,9 @@ class Runner:
                     entry["paired_excess_vs_baseline"] = {"baseline": cfg.baseline, "mean": boot.mean, "ci95": [boot.ci_low, boot.ci_high],
                                                           "n_used": boot.n_used, "n_excluded": boot.n_invalid_excluded,
                                                           "block_length": boot.block_length, "n_segments": boot.n_segments,
-                                                          "resample_mean": boot.resample_mean}
+                                                          "resample_mean": boot.resample_mean,
+                                                          "n_fixed_observations": boot.n_fixed_observations,
+                                                          "variability_limited": boot.variability_limited, "degenerate": boot.degenerate}
                 except Exception as exc:
                     entry["paired_excess_vs_baseline"] = {"baseline": cfg.baseline, "error": str(exc)}
                 entry["unpaired_reasons"] = dict(collections.Counter((w["paired"][name]["unpaired_reason"] or "").split(":")[0]
@@ -699,13 +757,22 @@ def markdown_report(result: dict, *, title: str) -> str:
              "Nada de esto es una estimación de rendimiento futuro.", "",
              "| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 | Patrimonio final | Exceso neto vs " + s["assumptions"]["baseline"] + " (IC 95 %) |",
              "|---|---|---|---|---|---|---|"]
+    fmt = lambda x: "—" if x is None else f"{x*100:+.2f} %"
     for name, e in s["forecasters"].items():
         pe = e.get("paired_excess_vs_baseline")
-        pe_txt = "—" if not pe or "error" in (pe or {}) else f"{pe['mean']*100:+.2f} % [{pe['ci_low' if 'ci_low' in pe else 'ci95'][0]*100:+.2f} %, {pe['ci95'][1]*100:+.2f} %] n={pe['n_used']}" if pe and "ci95" in pe else "—"
-        fmt = lambda x: "—" if x is None else f"{x*100:+.2f} %"
+        if pe and pe.get("degenerate"):
+            pe_txt = f"{pe['mean']*100:+.2f} % (incertidumbre no estimable: remuestreo degenerado, n={pe['n_used']})"
+        elif pe and "ci95" in pe:
+            pe_txt = f"{pe['mean']*100:+.2f} % [{pe['ci95'][0]*100:+.2f} %, {pe['ci95'][1]*100:+.2f} %] n={pe['n_used']}"
+            if pe.get("n_fixed_observations"):
+                pe_txt += f" (variabilidad limitada: {pe['n_fixed_observations']} semanas fijas)"
+        elif pe and "error" in pe:
+            pe_txt = f"no estimable: {pe['error']}"
+        else:
+            pe_txt = "—"
+        equity_txt = f"{e['final_equity']:,.0f} TWD" if e.get("final_equity") is not None else "desconocido: " + str(e.get("final_valuation", {}).get("error", ""))
         lines.append(f"| {name} (`{e['model_id']}`) | {fmt(e['mean_weekly_net_return_open_close'])} | {fmt(e['mean_weekly_gross_pick_return'])} | "
-                     f"{fmt(e['mean_costs_over_invested'])} | {e['weeks_positive']}/{s['weeks_operated']} | "
-                     f"{e['final_equity']:,.0f} TWD | {pe_txt} |")
+                     f"{fmt(e['mean_costs_over_invested'])} | {e['weeks_positive']}/{s['weeks_operated']} | {equity_txt} | {pe_txt} |")
     ew = s["universe_ew"]["mean_weekly_gross_open_close"]
     lines += ["", f"Referencia equiponderada del universo elegible (bruta, apertura→cierre): {ew*100:+.2f} % semanal." if ew is not None else "", ""]
     lines += ["## Selecciones semana a semana", ""]
@@ -725,6 +792,14 @@ def markdown_report(result: dict, *, title: str) -> str:
                 continue
             txt = ", ".join(f"{p['symbol']} {p['name']}" + (f" {p['gross_return']*100:+.1f} %" if p.get("gross_return") is not None else "") for p in picks)
             net = fr.get("portfolio_net_return_open_close")
-            cells.append(txt + (f" → neto {net*100:+.2f} %" if net is not None else " → pendiente"))
+            if net is not None:
+                tail = f" → neto {net*100:+.2f} %"
+            elif w.get("pending_outcome"):
+                tail = " → pendiente"
+            elif fr.get("stale_prices"):
+                tail = " → sin intervalo medible (precio obsoleto)"
+            else:
+                tail = " → sin intervalo medible"
+            cells.append(txt + tail)
         lines.append(f"| {w['week_id']} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"

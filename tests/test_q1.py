@@ -99,9 +99,9 @@ def test_r10_03_cache_retries_missing_outcomes_and_is_keyed_by_data_version():
     assert q1.build_training_rows({"A": partial}, [cutoff], now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL, cache=cache) == []
     assert cache == {}                                                       # nada incompleto se guarda
     rows = q1.build_training_rows({"A": full}, [cutoff], now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL, cache=cache, data_version="v2")
-    assert len(rows) == 1 and (cutoff, "A", "v2") in cache
+    assert len(rows) == 1 and any(k[:3] == (cutoff, "A", "v2") for k in cache)
     assert q1.build_training_rows({"A": full}, [cutoff], now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL, cache=cache, data_version="v3")
-    assert (cutoff, "A", "v3") in cache and (cutoff, "A", "v2") in cache     # otra versión de datos no reutiliza la anterior
+    assert {k[2] for k in cache} == {"v2", "v3"}                            # otra versión de datos no reutiliza la anterior
 
 
 def test_r10_04_ties_get_average_ranks_so_a_flat_component_cannot_cancel_signal():
@@ -132,14 +132,59 @@ def test_r10_08_r10_09_training_manifest_identifies_rows_and_config_and_label_is
     ids = {m.training_manifest_id for m in (m1, m2, m3)}
     assert len(ids) == 3 and all("|data=" in i and "|cfg=" in i for i in ids)
     assert m1.first_label_week == q1.label_week_id(rows[0].cutoff_at) and q1.label_week_id(taipei(date(2024, 1, 7), time(18, 0))) == "2024-W02"
+    # R10-08 (ronda 11): el hash de datos no redondea; diferencias diminutas que cambian los rangos cambian el identificador
+    tiny = [q1.TrainingRow(r.cutoff_at, r.security_id, r.features, 1e-12 * (i % 3), r.label_known_at) for i, r in enumerate(rows)]
+    tiny2 = [q1.TrainingRow(r.cutoff_at, r.security_id, r.features, 1e-12 * (2 - i % 3), r.label_known_at) for i, r in enumerate(rows)]
+    assert q1.fit_q1(tiny, trained_at=now, min_weeks=20, seed=1).training_manifest_id != q1.fit_q1(tiny2, trained_at=now, min_weeks=20, seed=1).training_manifest_id
     # etiqueta de retorno total: apertura 100, cierre 50 tras dividendo en acciones 1:1 dentro de la semana → 0 %
     entry, exit_ = date(2024, 1, 8), date(2024, 1, 12)
     by = {entry: q1.BarLike(entry, D(100), D(100), D(1), taipei(entry, time(13, 30))), exit_: q1.BarLike(exit_, D(50), D(50), D(1), taipei(exit_, time(13, 30)))}
+    known = taipei(date(2023, 12, 1))
+    stock = q1.DividendLike("A:stock:2024-01-10:2023", date(2024, 1, 10), "stock", stock_ratio=D(1), known_at=known)
+    cash = q1.DividendLike("A:cash:2024-01-10:2023", date(2024, 1, 10), "cash", cash_per_share=D(10), known_at=known)
     assert q1.weekly_label(by, entry, exit_)[0] == pytest.approx(-0.5)
-    assert q1.weekly_label(by, entry, exit_, [q1.DividendLike(date(2024, 1, 10), stock_ratio=D(1))])[0] == pytest.approx(0.0)
-    assert q1.weekly_label(by, entry, exit_, [q1.DividendLike(date(2024, 1, 10), cash_per_share=D(10))])[0] == pytest.approx(-0.4)
+    assert q1.weekly_label(by, entry, exit_, [stock])[0] == pytest.approx(0.0)
+    assert q1.weekly_label(by, entry, exit_, [cash])[0] == pytest.approx(-0.4)
     # un derecho con fecha ex el propio día de entrada no pertenece al comprador; uno posterior a la salida tampoco
-    assert q1.weekly_label(by, entry, exit_, [q1.DividendLike(entry, cash_per_share=D(10)), q1.DividendLike(date(2024, 1, 15), cash_per_share=D(10))])[0] == pytest.approx(-0.5)
+    outside = [q1.DividendLike("A:cash:2024-01-08:2023", entry, "cash", cash_per_share=D(10), known_at=known),
+               q1.DividendLike("A:cash:2024-01-15:2023", date(2024, 1, 15), "cash", cash_per_share=D(10), known_at=known)]
+    assert q1.weekly_label(by, entry, exit_, outside)[0] == pytest.approx(-0.5)
+
+
+def test_r10_09_r11_01_r11_02_chained_rights_duplicates_and_announcement_availability():
+    entry, exit_ = date(2024, 1, 8), date(2024, 1, 12)
+    by = {entry: q1.BarLike(entry, D(100), D(100), D(1), taipei(entry, time(13, 30))), exit_: q1.BarLike(exit_, D(50), D(50), D(1), taipei(exit_, time(13, 30)))}
+    known = taipei(date(2023, 12, 1))
+    stock = q1.DividendLike("A:stock:2024-01-09:2023", date(2024, 1, 9), "stock", stock_ratio=D(1), known_at=known)
+    cash = q1.DividendLike("A:cash:2024-01-11:2023", date(2024, 1, 11), "cash", cash_per_share=D(10), known_at=known)
+    # R10-09: acciones 1:1 el 9-01 y 10 TWD por acción el 11-01 → 2×50 + 2×10 = 120 por acción inicial: +20 %
+    assert q1.weekly_label(by, entry, exit_, [cash, stock])[0] == pytest.approx(0.20)
+    # efectivo y acciones el mismo día: efectivo primero sobre la cantidad previa, como el libro
+    same_day_cash = q1.DividendLike("A:cash:2024-01-09:2023", date(2024, 1, 9), "cash", cash_per_share=D(10), known_at=known)
+    assert q1.weekly_label(by, entry, exit_, [stock, same_day_cash])[0] == pytest.approx((2 * 50 + 10) / 100 - 1)
+    # R11-02: el mismo evento repetido cuenta una vez
+    assert q1.weekly_label(by, entry, exit_, [stock, stock])[0] == pytest.approx(0.0)
+    # R11-01: un derecho anunciado después del corte de entrenamiento no madura; sin instante conocido no hay etiqueta
+    late = q1.DividendLike("A:cash:2024-01-10:2023", date(2024, 1, 10), "cash", cash_per_share=D(100), known_at=taipei(date(2024, 2, 1), time(8, 0)))
+    lab = q1.weekly_label(by, entry, exit_, [late])
+    assert lab is not None and lab[1] == late.known_at
+    assert q1.weekly_label(by, entry, exit_, [q1.DividendLike("x", date(2024, 1, 10), "cash", cash_per_share=D(1))]) is None
+    bars = {"A": synthetic_bars(date(2023, 1, 2), 300, seed=6)}
+    cutoff = taipei(date(2024, 1, 7), time(18, 0))
+    rows = q1.build_training_rows(bars, [cutoff], now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL, dividends_by_security={"A": [late]})
+    assert rows == []                                                       # la etiqueta existe pero no está madura el 14-01
+    rows = q1.build_training_rows(bars, [cutoff], now_cutoff=taipei(date(2024, 2, 4), time(18, 0)), calendar=CAL, dividends_by_security={"A": [late]})
+    assert len(rows) == 1
+
+
+def test_r10_03_cache_is_keyed_by_calendar_version_too():
+    bars = {"A": synthetic_bars(date(2023, 1, 2), 300, seed=7)}
+    cutoff = taipei(date(2024, 1, 7), time(18, 0))
+    cache: dict = {}
+    r1 = q1.build_training_rows(bars, [cutoff], now_cutoff=taipei(date(2024, 1, 21), time(18, 0)), calendar=CAL, cache=cache)
+    closed_friday = TradingCalendar(start=CAL.start, end=CAL.end, closures=[date(2024, 1, 12)], source_id="synthetic", recorded_at=CAL.recorded_at, version="2")
+    r2 = q1.build_training_rows(bars, [cutoff], now_cutoff=taipei(date(2024, 1, 21), time(18, 0)), calendar=closed_friday, cache=cache)
+    assert len(cache) == 2 and r1[0].label != r2[0].label                   # otra versión del calendario: otra etiqueta, otra clave
 
 
 def test_ridge_recovers_a_linear_signal():

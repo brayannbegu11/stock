@@ -146,6 +146,13 @@ class BootstrapResult:
     evidence_class: str
     n_segments: int = 1     # tramos de semanas consecutivas entre los que los bloques no cruzan (R02-08)
     resample_mean: float = float("nan")   # media de las medias remuestreadas: diagnóstico de sesgo del remuestreo (R08-11)
+    n_fixed_observations: int = 0         # observaciones de tramos no más largos que el bloque: entran íntegras en cada réplica (R09-12)
+    degenerate: bool = False              # toda la muestra es fija: no hay remuestreo; ci_low/ci_high son NaN (incertidumbre no estimable)
+
+    @property
+    def variability_limited(self) -> bool:
+        """Parte de la muestra no se remuestrea: el intervalo subestima la incertidumbre y debe declararse así."""
+        return self.n_fixed_observations > 0
 
 
 def _archived_forecast(
@@ -263,6 +270,13 @@ def block_bootstrap_mean(
     # bootstrap por bloques móviles clásico (con su efecto de borde inherente, que se declara).
     segments = _segments(valid_mondays)
     blocks_by_segment = [[(s0, ln) for s0, ln in starts if seg0 <= s0 < seg0 + seg_len] for seg0, seg_len in segments]
+    # Un tramo no más largo que el bloque entra íntegro en cada réplica: no aporta variabilidad. Si eso ocurre con
+    # toda la muestra, el «intervalo» sería la media repetida: se declara degenerado (incertidumbre no estimable,
+    # límites NaN) en vez de publicarlo como IC 95 % (R09-12). La media y los recuentos siguen siendo válidos.
+    n_fixed = sum(seg_len for _, seg_len in segments if seg_len <= block_length)
+    if n_fixed == n:
+        return BootstrapResult(sum(values) / n, float("nan"), float("nan"), n, n_invalid, block_length, seed, evidence_class,
+                               len(segments), sum(values) / n, n_fixed, True)
     rng = random.Random(seed)
     means: list[float] = []
     for _ in range(n_boot):
@@ -278,4 +292,4 @@ def block_bootstrap_mean(
     means.sort()
     lo = means[int(0.025 * (n_boot - 1))]
     hi = means[int(0.975 * (n_boot - 1))]
-    return BootstrapResult(sum(values) / n, lo, hi, n, n_invalid, block_length, seed, evidence_class, n_segments, resample_mean)
+    return BootstrapResult(sum(values) / n, lo, hi, n, n_invalid, block_length, seed, evidence_class, n_segments, resample_mean, n_fixed)

@@ -2,15 +2,14 @@
 
 Contrato temporal (PIT):
 - Las características de un valor en un corte T se calculan sólo con barras cuya ``available_at`` ≤ T.
-- Las etiquetas de entrenamiento son rentabilidades **totales** apertura→cierre (dividendos en efectivo y
-  en acciones con fecha ex dentro de la semana, según el protocolo) de semanas cuya apertura y cierre
-  tienen ``available_at`` ≤ T. Una semana cuya apertura o cierre aún no está disponible en T no se etiqueta.
+- Las etiquetas de entrenamiento son rentabilidades **totales** apertura→cierre (derechos con fecha ex dentro de
+  la semana, encadenados en orden y sin duplicados) de semanas cuya apertura, cierre y derechos implicados tienen
+  ``available_at``/``known_at`` ≤ T. Un derecho sin instante de conocimiento invalida la etiqueta de su semana.
 - El modelo se reentrena con cadencia declarada y sólo con filas anteriores al corte; el identificador del
-  entrenamiento incluye el hash de las filas y de la configuración.
+  entrenamiento incluye el hash exacto de las filas y de la configuración.
 
 El objetivo es el **rango** cruzado de la rentabilidad semanal (0..1 dentro de cada semana, empates con
-rango medio), no el nivel: reduce el peso de valores extremos y es lo que la cesta de cinco puestos
-necesita (ordenar, no estimar). Sin fundamentales ni noticias todavía: modelo de precios/volumen modesto.
+rango medio), no el nivel. Sin fundamentales ni noticias todavía: modelo de precios/volumen modesto.
 """
 from __future__ import annotations
 
@@ -48,10 +47,19 @@ class BarLike:
 
 @dataclass(frozen=True)
 class DividendLike:
-    """Derecho con fecha ex: efectivo por acción y/o acciones nuevas por acción (para la etiqueta de retorno total)."""
+    """Un derecho con fecha ex para la etiqueta de retorno total.
+
+    ``event_id`` identifica el evento como en el libro (un mismo derecho repetido no se aplica dos veces, R11-02);
+    ``known_at`` es el instante en que el derecho era público (anuncio); ``None`` = desconocido, y entonces la
+    etiqueta de esa semana no puede madurar (R11-01). ``kind`` ordena efectivo antes que acciones el mismo día,
+    como el libro.
+    """
+    event_id: str
     ex_date: date
+    kind: str                                   # cash | stock
     cash_per_share: Decimal = Decimal(0)
     stock_ratio: Decimal = Decimal(0)
+    known_at: Optional[datetime] = None
 
 
 def features_from_bars(bars: Sequence[BarLike], cutoff_at: datetime, *, sessions_expected_20: int = 20) -> Optional[dict[str, float]]:
@@ -82,25 +90,38 @@ class TrainingRow:
     security_id: str
     features: dict[str, float]
     label: float                 # rentabilidad total apertura→cierre de la semana siguiente al corte
-    label_known_at: datetime     # available_at más tardío de las barras usadas para la etiqueta (apertura y cierre)
+    label_known_at: datetime     # instante más tardío entre barras y derechos usados para la etiqueta
 
 
 def weekly_label(bars_by_session: Mapping[date, BarLike], entry_s: date, exit_s: date,
                  dividends: Iterable[DividendLike] = ()) -> Optional[tuple[float, datetime]]:
-    """Retorno total apertura(entrada)→cierre(salida): derechos con fecha ex en (entrada, salida] (R10-09).
+    """Retorno total apertura(entrada)→cierre(salida) por acción inicial, con derechos en (entrada, salida].
 
-    El instante en que la etiqueta se conoce es el ``available_at`` más tardío de las dos barras (R10-01).
+    Los derechos se aplican en orden (fecha ex; efectivo antes que acciones el mismo día) sobre la cantidad
+    vigente, como en el libro (R10-09); un ``event_id`` repetido cuenta una sola vez (R11-02). El instante de
+    conocimiento es el más tardío de apertura, cierre y derechos (R10-01, R11-01); un derecho sin instante conocido
+    hace que la etiqueta no exista.
     """
     a, b = bars_by_session.get(entry_s), bars_by_session.get(exit_s)
     if a is None or b is None or a.open <= 0 or b.close <= 0:
         return None
-    cash, factor = 0.0, 1.0
+    seen: set[str] = set()
+    events = []
     for d in dividends:
-        if entry_s < d.ex_date <= exit_s:
-            cash += float(d.cash_per_share)
-            factor *= 1.0 + float(d.stock_ratio)
-    total = (float(b.close) * factor + cash) / float(a.open) - 1.0
+        if entry_s < d.ex_date <= exit_s and d.event_id not in seen:
+            seen.add(d.event_id)
+            events.append(d)
     known_at = max(a.available_at, b.available_at, key=to_utc)
+    shares, cash = 1.0, 0.0
+    for d in sorted(events, key=lambda e: (e.ex_date, 0 if e.kind == "cash" else 1)):
+        if d.known_at is None:
+            return None
+        known_at = max(known_at, d.known_at, key=to_utc)
+        if d.kind == "cash":
+            cash += float(d.cash_per_share) * shares
+        else:
+            shares *= 1.0 + float(d.stock_ratio)
+    total = (float(b.close) * shares + cash) / float(a.open) - 1.0
     return total, known_at
 
 
@@ -181,6 +202,10 @@ class Q1Model:
         return r
 
 
+def calendar_version_of(calendar: TradingCalendar) -> str:
+    return f"{calendar.source_id}@{calendar.version}"
+
+
 def build_training_rows(
     bars_by_security: Mapping[str, Sequence[BarLike]],
     cutoffs: Iterable[datetime],
@@ -193,12 +218,14 @@ def build_training_rows(
 ) -> list[TrainingRow]:
     """Filas (corte anterior, valor) con etiqueta conocida en ``now_cutoff``; nunca usa barras posteriores.
 
-    La caché sólo guarda filas completas y su clave incluye ``data_version`` (R10-03): una fila sin
-    desenlace se vuelve a intentar en cada llamada, y otra versión de los datos no reutiliza nada.
+    La caché sólo guarda filas completas y su clave incluye ``data_version`` y la versión del calendario
+    (R10-03): una fila sin desenlace se vuelve a intentar en cada llamada, y otra versión de datos o de
+    calendario no reutiliza nada.
     """
     rows: list[TrainingRow] = []
     cache = cache if cache is not None else {}
     divs = dividends_by_security or {}
+    cal_v = calendar_version_of(calendar)
     for cutoff in cutoffs:
         if to_utc(cutoff) >= to_utc(now_cutoff):
             continue
@@ -207,7 +234,7 @@ def build_training_rows(
             continue
         entry_s, exit_s = plan.entry_at.date(), plan.exit_at.date()
         for sec, bars in bars_by_security.items():
-            key = (cutoff, sec, data_version)
+            key = (cutoff, sec, data_version, cal_v)
             row = cache.get(key)
             if row is None:
                 feats = features_from_bars(bars, cutoff)
@@ -241,8 +268,8 @@ def fit_q1(rows: Sequence[TrainingRow], *, trained_at: datetime, min_weeks: int 
         for r, rk in zip(wrows, ranks):
             X.append([r.features[k] for k in FEATURE_NAMES])
             y.append(rk)
-            digest.update(json.dumps([cutoff.isoformat(), r.security_id, [round(r.features[k], 10) for k in FEATURE_NAMES],
-                                      round(r.label, 10)]).encode("utf-8"))
+            # hash exacto (repr de coma flotante sin redondeo, R10-08): cualquier diferencia que cambie un rango cambia el id
+            digest.update(json.dumps([cutoff.isoformat(), r.security_id, [r.features[k] for k in FEATURE_NAMES], r.label]).encode("utf-8"))
     alpha = float(len(X)) * 0.01
     ridge = RidgeRank(alpha=alpha).fit(X, y)
     lgbm = None
@@ -257,6 +284,6 @@ def fit_q1(rows: Sequence[TrainingRow], *, trained_at: datetime, min_weeks: int 
            "seed": seed, "target": "rank01(total_return_open_close_next_week)", "min_weeks": min_weeks}
     cfg_hash = hashlib.sha256(json.dumps(cfg, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
     manifest = (f"{MODEL_ID}|rows={len(X)}|weeks={len(weeks)}|labels={label_week_id(weeks[0])}..{label_week_id(weeks[-1])}"
-                f"|lgbm={'yes' if lgbm else 'no'}|data={digest.hexdigest()[:12]}|cfg={cfg_hash}")
+                f"|lgbm={'yes' if lgbm else 'no'}|data={digest.hexdigest()[:16]}|cfg={cfg_hash}")
     return Q1Model(trained_at=trained_at, n_rows=len(X), n_weeks=len(weeks), first_label_week=label_week_id(weeks[0]),
                    last_label_week=label_week_id(weeks[-1]), ridge=ridge, lgbm=lgbm, training_manifest_id=manifest)

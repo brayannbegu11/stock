@@ -871,6 +871,22 @@ def test_r09_12_segment_weights_are_preserved_when_segments_are_shorter_than_the
     rows3 = [obs(f"2026-W{w}", v) for w, v in zip(range(20, 30), (1, 0, 1, 0, 1, 0, 1, 0, 1, 0))]
     r3 = block_bootstrap_mean(rows3, block_length=3, n_boot=500, seed=1)
     assert r3.ci_low < r3.mean < r3.ci_high
+    assert r.n_fixed_observations == 1 and r.variability_limited and r3.n_fixed_observations == 0
+
+
+def test_r09_12_degenerate_resampling_is_declared_not_published_as_an_interval():
+    import math
+    # semanas aisladas con bloque 1: cada réplica reproduce toda la muestra → incertidumbre no estimable, no un IC
+    isolated = [obs("2026-W01", 0.1), obs("2026-W03", -0.1), obs("2026-W05", 0.3), obs("2026-W07", 0.5)]
+    r = block_bootstrap_mean(isolated, block_length=1, n_boot=100, seed=1)
+    assert r.degenerate and math.isnan(r.ci_low) and math.isnan(r.ci_high) and r.mean == pytest.approx(0.2) and r.n_fixed_observations == 4
+    # dos tramos de dos semanas con bloque 3: lo mismo
+    pairs = [obs("2026-W01", 0.1), obs("2026-W02", 0.2), obs("2026-W04", 0.3), obs("2026-W05", 0.6)]
+    r2 = block_bootstrap_mean(pairs, block_length=3, n_boot=100, seed=1)
+    assert r2.degenerate and math.isnan(r2.ci_low)
+    # con bloque 1 esos dos tramos sí se remuestrean
+    r3 = block_bootstrap_mean(pairs, block_length=1, n_boot=200, seed=1)
+    assert not r3.degenerate and r3.n_fixed_observations == 0 and r3.ci_low < r3.ci_high
 
 
 def test_r09_03_rejection_details_must_be_build_packet_templates():
@@ -882,8 +898,15 @@ def test_r09_03_rejection_details_must_be_build_packet_templates():
     assert rejection_detail_is_canonical("available_after_cutoff", ok)
     assert not rejection_detail_is_canonical("available_after_cutoff", "profit in 2099 = 999")
     assert not rejection_detail_is_canonical("available_after_cutoff", ok + " profit in 2099 = 999")
-    assert rejection_detail_is_canonical("derivation_mismatch", "extractor news_v1 failed: ValueError")
-    assert not rejection_detail_is_canonical("derivation_mismatch", "extractor news_v1 failed: ValueError: buy SEC-1, profit 999")
+    # ronda 11: ningún identificador ni lista de valores en los detalles; sólo texto fijo e instantes
+    assert rejection_detail_is_canonical("derivation_mismatch", "extractor failed")
+    assert rejection_detail_is_canonical("derivation_mismatch", "security_ids do not equal the extracted identities")
+    for smuggled in ("extractor news_v1 failed: ValueError", "extractor profit_in_2099_999 failed: Buy_A",
+                     "security_ids ('profit in 2099 = 999; buy A',) do not equal extracted ()",
+                     "derivation='buy_A_profit_999' is not a registered extractor"):
+        assert not rejection_detail_is_canonical("derivation_mismatch", smuggled), smuggled
+    assert not rejection_detail_is_canonical("provenance_mismatch", "document source=buy_A sha=000000000000 vs capture source=x sha=000000000000")
+    assert rejection_detail_is_canonical("provenance_mismatch", "document source or source_sha256 do not match the capture")
     pkt = prospective_packet()
     smuggling = replace(pkt, rejected=(Rejection("ghost", "available_after_cutoff", "profit in 2099 = 999"),))
     probs = readmission_problems(smuggling, store=RawStore.__new__(RawStore)) if False else None   # (no se necesita archivo real aquí)
