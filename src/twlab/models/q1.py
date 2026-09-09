@@ -66,6 +66,17 @@ class DividendLike:
     par_value: Decimal = Decimal(0)
     ambiguous: bool = False                     # derecho con filas contradictorias o inválidas: invalida etiquetas e intervalos (R13-05)
 
+    def __post_init__(self) -> None:
+        """La forma exacta manda: ``stock_ratio`` se deriva de ella y no puede contradecirla (R14-08)."""
+        if self.kind not in ("cash", "stock"):
+            raise ValueError(f"unknown right kind {self.kind!r}")
+        if self.kind == "stock" and not self.ambiguous and self.par_value > 0:
+            derived = self.stock_per_share / self.par_value
+            if self.stock_ratio == 0:
+                object.__setattr__(self, "stock_ratio", derived)
+            elif self.stock_ratio != derived:
+                raise ValueError(f"stock_ratio {self.stock_ratio} contradicts stock_per_share/par_value = {derived}")
+
 
 def features_from_bars(bars: Sequence[BarLike], cutoff_at: datetime, *, sessions_expected_20: int = 20) -> Optional[dict[str, float]]:
     """Características de un valor en el corte; ``None`` si no hay historial suficiente (121 barras)."""
@@ -276,7 +287,8 @@ def fit_q1(rows: Sequence[TrainingRow], *, trained_at: datetime, min_weeks: int 
             X.append([r.features[k] for k in FEATURE_NAMES])
             y.append(rk)
             # hash exacto (repr de coma flotante sin redondeo, R10-08): cualquier diferencia que cambie un rango cambia el id
-            digest.update(json.dumps([cutoff.isoformat(), r.security_id, [r.features[k] for k in FEATURE_NAMES], r.label]).encode("utf-8"))
+            digest.update(json.dumps([cutoff.isoformat(), r.security_id, [r.features[k] for k in FEATURE_NAMES], r.label,
+                                      to_utc(r.label_known_at).isoformat()]).encode("utf-8"))      # también la historia de disponibilidad (R14-07)
     alpha = float(len(X)) * 0.01
     ridge = RidgeRank(alpha=alpha).fit(X, y)
     lgbm = None

@@ -10,7 +10,7 @@ Laboratorio vivo de inteligencia y evaluación bursátil para todas las acciones
 
 ```bash
 python -m pip install -e ".[dev,model]"
-python -m pytest -q -p no:cacheprovider   # 275 pruebas de aceptación, sin red
+python -m pytest -q -p no:cacheprovider   # 280 pruebas de aceptación, sin red
 python scripts/capture_daily.py           # captura diaria a data/raw (OpenAPI TWSE/TPEx + FinMind), con ingested_at real
 python scripts/build_master.py            # maestro SCD2 y censo desde las capturas → data/store, docs/informes/10_censo_<fecha>.md
 python scripts/fetch_history_sample.py    # muestra estratificada del censo con barras y dividendos de FinMind (red, ~5 min)
@@ -27,13 +27,13 @@ La captura diaria puede programarse en Windows con `scripts/register_daily_captu
 Revisión adversarial con Astra (requiere Codex CLI autenticado; lanzar desde PowerShell 7):
 
 ```powershell
-.\review\run_astra.ps1 -Ronda ronda14_verificacion -Effort high
+.\review\run_astra.ps1 -Ronda ronda15_verificacion -Effort high
 ```
 
 ## Estado (9-09-2026)
 
-- **Núcleo determinista** (`src/twlab/`): calendario oficial versionado (2026 zh; 2021-2026 en) con clasificador de frases catalogadas que rehúsa adivinar, plan semanal del protocolo, maestro SCD2 con identidad símbolo+fecha de alta y universo del tablero principal por defecto, archivo sólo anexado con sellos, paquetes por corte con plan, archivo JSON y readmisión documento a documento (archivo obligatorio, integridad de bytes, re-derivación por extractor) al recuperarlos, validación del contrato de predicción, libro por lotes y propietarios, cesta semanal, exceso emparejado con tolerancia de exposición declarada y bootstrap por bloques dentro de tramos con pesos exactos por longitud. 244 pruebas sintéticas en verde, incluidos los contraejemplos de las rondas 1 a 9 de Astra.
+- **Núcleo determinista** (`src/twlab/`): calendario oficial versionado (2026 zh; 2021-2026 en) con clasificador de frases catalogadas que rehúsa adivinar, plan semanal del protocolo, maestro SCD2 con identidad símbolo+fecha de alta y universo del tablero principal por defecto, archivo sólo anexado con sellos, paquetes por corte con plan, archivo JSON y readmisión documento a documento al recuperarlos (en modo prospectivo con archivo obligatorio, integridad de bytes y re-derivación por extractor; en histórico sólo cuando se aporta archivo y registro de extractores, y si no, el documento queda declarado como no verificado), metadatos de paquete y documento restringidos a catálogos e identificadores, validación del contrato de predicción, libro por lotes y propietarios, cesta semanal, exceso emparejado con tolerancia de exposición declarada y bootstrap por bloques dentro de tramos con pesos exactos por longitud. 244 pruebas sintéticas en verde, incluidos los contraejemplos de las rondas 1 a 9 de Astra.
 - **Datos reales**: 37 endpoints capturados a diario (tarea programada de Windows registrada el 9-09-2026); maestro con 2.348 segmentos y universo simulable por defecto de 1.937 acciones ordinarias del tablero principal (informe 10); muestra archivada de 67 valores TWSE 2021-2025 con identidad de captura comprobada; histórico del universo completo en descarga; demo Q0 de 102 semanas 2024-2025 con paquete, predicción validada, libro y evaluación (informe 11). La demo prueba que la cadena funciona; **no** mide rentabilidad ni ejercita la gestión de cierres sobrevenidos.
 - **Backtest con pronosticadores** (`twlab/backtest.py`, `twlab/models/q1.py`): recorrido semanal con Q0 (momentum), Q1 (ridge + LightGBM sobre rangos de retorno total semanal, entrenado sólo con etiquetas cuya apertura y cierre estaban disponibles al corte, reentrenado cada 4 semanas, con identificador de entrenamiento por hash de filas y configuración) y A1 (aleatorio emparejado); límite de simulación = mín(fin del periodo, último dato). Sobre la muestra 2024-2025 (informe 14) Q1 supera a A1 en +0,08 % semanal neto con IC 95 % [−0,31 %, +0,35 %]: no distinguible de cero, y los costes ilustrativos dejan a los tres en negativo.
 - **No existe todavía**: adaptadores criptográficos de sello (el registro de producción está vacío), extractores de noticias/anuncios, pronosticadores con LLM (L1/L2), política de cierres sobrevenidos, adaptador de lotes menores, maestro histórico completo, módulo de informe estadístico, interfaz.
-- Los bloqueantes que requieren decisión del usuario están en `docs/informes/01_entendimiento_bloqueantes_y_plan.md` §4.2, `docs/informes/11_demo_q0_2024-2025.md` §4 y `docs/informes/19_respuesta_ronda13_astra.md` §4. Última ronda de Astra respondida: 13 (informe 19); 275 pruebas incluyen sus contraejemplos.
+- Los bloqueantes que requieren decisión del usuario están en `docs/informes/01_entendimiento_bloqueantes_y_plan.md` §4.2, `docs/informes/11_demo_q0_2024-2025.md` §4 y `docs/informes/20_respuesta_ronda14_astra.md` §4. Última ronda de Astra respondida: 14 (informe 20); 280 pruebas incluyen sus contraejemplos.

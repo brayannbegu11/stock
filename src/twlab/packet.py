@@ -45,7 +45,7 @@ EVIDENCE_PROSPECTIVE = "prospective_registered"
 EVIDENCE_CLASSES = frozenset({"historical_numeric_temporally_controlled", "historical_current_llm_exploratory",
                               "historical_chronological_model_audited", EVIDENCE_PROSPECTIVE})
 KNOWN_DOCUMENT_KINDS = frozenset({"news", "filing", "announcement", "calendar_event", "price_bar", "price_bar_series", "flow",
-                                  "dividend", "index", "macro", "census", "open", "close", "adjusted"})
+                                  "dividend", "index", "macro", "census"})
 WEEK_STATUSES = frozenset({"valid", "invalid:no_sessions"})
 
 R_AVAILABLE_AFTER_CUTOFF = "available_after_cutoff"
@@ -104,6 +104,12 @@ def is_valid_doc_id(doc_id: Any) -> bool:
     return isinstance(doc_id, str) and _DOC_ID_RE.fullmatch(doc_id) is not None
 
 
+def is_valid_capture_id(value: Any) -> bool:
+    """Identificador de captura del ``RawStore`` (``fuente:conjunto:instante-ISO:hash``): caracteres de identificador más «+»."""
+    import re
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_:.@/+\-]{0,300}", value) is not None
+
+
 def is_valid_calendar_version(value: Any) -> bool:
     import re
     return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_:./+\-]{1,200}@[A-Za-z0-9_:./+\-]{1,100}", value) is not None
@@ -143,6 +149,15 @@ class Document:
             raise ValueError(f"source_id {self.source_id!r} is not an identifier (R13-01)")
         if self.derivation is not None and not is_valid_doc_id(self.derivation):
             raise ValueError("derivation must be an identifier (R13-01)")
+        if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 1:
+            raise ValueError("version must be a positive integer (R14-01)")
+        if self.capture_id is not None and not is_valid_capture_id(self.capture_id):
+            raise ValueError("capture_id must be a capture identifier (R14-01)")
+        if self.source_sha256 is not None and not (isinstance(self.source_sha256, str) and len(self.source_sha256) == 64
+                                                    and all(c in "0123456789abcdef" for c in self.source_sha256)):
+            raise ValueError("source_sha256 must be 64 lowercase hex characters (R14-01)")
+        if not all(is_valid_doc_id(s) for s in self.security_ids):
+            raise ValueError("security_ids must be identifiers (R14-01)")
         ensure_aware(self.available_at, f"{self.doc_id}.available_at")
         for name in ("published_at", "first_seen_at", "scheduled_for"):
             v = getattr(self, name)
@@ -268,7 +283,11 @@ def build_packet(
             rejected.append(Rejection(d.doc_id, R_AVAILABLE_AFTER_CUTOFF,
                                       f"available_at={to_utc(d.available_at).isoformat()} > cutoff={to_utc(cutoff_at).isoformat()}"))
             continue
-        if mode == MODE_PROSPECTIVE:
+        # En prospectivo la procedencia es obligatoria. En histórico, si el constructor recibe archivo y registro de
+        # extractores y el documento declara su derivación, se verifica igual: un payload que no sale de sus bytes
+        # fuente se rechaza también en histórico (R14-02). Sin registro, el documento histórico queda sin verificar.
+        verify = mode == MODE_PROSPECTIVE or (d.derivation is not None and captures is not None and read_bytes is not None and extractors is not None)
+        if verify:
             if d.capture_id is None or d.capture_id not in captures:  # type: ignore[operator]
                 rejected.append(Rejection(d.doc_id, R_NO_CAPTURE_EVIDENCE, "document is not linked to a RawStore capture"))
                 continue
@@ -370,7 +389,9 @@ def readmission_problems(
             problems.append(f"{d.doc_id}: {R_INCONSISTENT_METADATA}")
         if is_after(d.available_at, packet.cutoff_at):
             problems.append(f"{d.doc_id}: {R_AVAILABLE_AFTER_CUTOFF}")
-        if packet.mode != MODE_PROSPECTIVE:
+        # histórico: se verifica cuando hay archivo y registro y el documento declara derivación (R14-02)
+        verify = packet.mode == MODE_PROSPECTIVE or (d.derivation is not None and store is not None and extractors is not None)
+        if not verify:
             continue
         if d.capture_id is None or d.source_sha256 is None or d.derivation is None:
             problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE}")

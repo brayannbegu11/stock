@@ -370,6 +370,8 @@ class TabularForecaster:
         self.dividends = {sec_id: s.events for sec_id, s in market.securities.items()}
 
     def maybe_train(self, cutoff_at: datetime) -> None:
+        if self.market.data_version != self.data_version:
+            raise ValueError("MarketData changed after this forecaster was built (data_version differs); build a new forecaster (R14-06)")
         if self.last_cutoff is not None and cutoff_at < self.last_cutoff:
             raise ValueError(f"cutoffs must be non-decreasing ({cutoff_at.isoformat()} < {self.last_cutoff.isoformat()}); "
                              "a TabularForecaster serves one chronological run (R10-02)")
@@ -452,6 +454,7 @@ class Runner:
         self.ledgers = {n: PaperLedger(ledger_id=n, initial_cash=self.initial, cost_model=costs) for n in self.forecasters}
         self.open_slots: dict[str, list] = {n: [] for n in self.forecasters}
         self.ambiguous_positions: dict[str, set[str]] = {n: set() for n in self.forecasters}
+        self.ambiguous_claims: dict[str, set[str]] = {n: set() for n in self.forecasters}     # derechos no aplicados: incertidumbre permanente
         self.prev_equity = {n: self.initial for n in self.forecasters}
         self.cursor = {n: cfg.start - timedelta(days=1) for n in self.forecasters}
         self.weeks: list[dict] = []
@@ -467,9 +470,9 @@ class Runner:
         """
         out, stale = {}, []
         valued_at = valued_at or session
+        # un derecho ambiguo no aplicado hace incierto el patrimonio para siempre, con o sin la posición (R13-05, R14-03)
+        stale.extend(f"ambiguous_right:{eid}" for eid in sorted(self.ambiguous_claims.get(ledger.ledger_id, ())))
         for sec, pos in ledger.positions.items():
-            if sec in self.ambiguous_positions.get(ledger.ledger_id, ()):
-                stale.append(f"ambiguous_right:{sec}")     # cantidad incierta: ninguna valoración es comparable (R13-05)
             if pos.status.startswith("delisted"):
                 if pos.terminal_price is None:
                     stale.append(f"unresolved_terminal:{sec}")   # valor terminal no resuelto: el cero contable no es un precio (R13-06)
@@ -507,8 +510,10 @@ class Runner:
         for exd, kind, sec, e in sorted(events, key=lambda ev: (ev[0], ev[1])):
             at = taipei(exd, PRE_OPEN)
             if e is not None and e.ambiguous:
-                # el derecho no puede aplicarse: la posición queda con cantidad incierta mientras se mantenga (R13-05)
+                # el derecho no puede aplicarse: desde aquí el patrimonio del libro es incierto (cantidad o efectivo no
+                # registrados) y lo sigue siendo aunque la posición se venda (R13-05, R14-03)
                 self.ambiguous_positions[name].add(sec)
+                self.ambiguous_claims[name].add(e.event_id)
                 self.weeks[-1].setdefault("ambiguous_rights", []).append(f"{name}:{e.event_id}")
                 continue
             try:
@@ -516,8 +521,11 @@ class Runner:
                     pay = taipei(e.pay_date, time(9, 0)) if e.pay_date else None
                     ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "cash_dividend", at, per_share_cash=e.cash_per_share, pay_at=pay))
                 elif kind == "stock":
-                    ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "stock_dividend", at, stock_ratio=e.stock_ratio,
-                                                                  stock_per_share=e.stock_per_share, par_value=e.par_value))
+                    exact = e.par_value > 0
+                    ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "stock_dividend", at,
+                                                                  stock_ratio=None if exact else e.stock_ratio,
+                                                                  stock_per_share=e.stock_per_share if exact else None,
+                                                                  par_value=e.par_value if exact else None))
                 elif kind == "delisting":
                     ledger.apply_corporate_action(CorporateAction(f"{sec}:delisting:{exd}", sec, "delisting", at, terminal_price=None))
                 else:
@@ -684,8 +692,6 @@ class Runner:
             self.open_slots[name] = [(wid, ss) for wid, ss in self.open_slots[name]
                                      if any(s.status in ("filled", "exit_blocked") or (s.status == "exited" and not s.liquidated) for s in ss)]
             close_marks, stale1 = self.marks(exit_s, lg, "close")
-            # un derecho ambiguo sobre una posición tenida esta semana invalida el intervalo aunque la posición ya se haya vendido (R13-05)
-            stale1 += [f"ambiguous_right:{x.split(':', 1)[1]}" for x in record.get("ambiguous_rights", []) if x.startswith(name + ":")]
             try:
                 val = lg.valuation(prices=close_marks, at=plan.exit_at)
                 equity_end, flags = val.total, list(val.flags) + stale0 + stale1
@@ -699,20 +705,23 @@ class Runner:
             chain_return = (equity_end / self.prev_equity[name] - 1) if equity_end is not None and self.prev_equity[name] else None
             invested = sum((s.entry.gross for s in slots if s.entry is not None), D(0))
             costs_twd = _week_costs(slots)
-            pick_returns = {s.security_id: (float(s.gross_pick_return) if s.gross_pick_return is not None else None) for s in slots if s.security_id}
+            amb_secs = self.ambiguous_positions[name]
+            pick_returns = {s.security_id: (float(s.gross_pick_return) if s.gross_pick_return is not None and s.security_id not in amb_secs else None)
+                            for s in slots if s.security_id}
+            basket_ambiguous = any(s.security_id in amb_secs for s in slots if s.security_id)   # una selección con derecho ambiguo invalida la media bruta (R14-05)
             fr = record["forecasters"][name]
             for p in fr["picks"]:
                 p["gross_return"] = pick_returns.get(p["security_id"])
             fr.update({"notional_per_slot": float(notional), "filled": rep.filled_slots, "failed": rep.failed_slots,
                        "exit_blocked": rep.exit_blocked_slots, "fail_reasons": [s.reason for s in slots if s.status == "entry_failed"],
-                       "mean_gross_pick_return": float(rep.mean_gross_pick_return) if rep.mean_gross_pick_return is not None else None,
+                       "mean_gross_pick_return": (float(rep.mean_gross_pick_return) if rep.mean_gross_pick_return is not None and not basket_ambiguous else None),
                        "portfolio_net_return_open_close": float(interval_return) if interval_return is not None else None,
                        "portfolio_net_return_week_over_week": float(chain_return) if chain_return is not None else None,
                        "exposure_at_open": float(exposure), "costs_twd": float(costs_twd),
                        "costs_over_invested": float(costs_twd / invested) if invested else None,
                        "equity_open": float(equity_start) if equity_start is not None else None,
-                       "equity_end": float(equity_end) if equity_end is not None else None, "flags": flags[:6],
-                       "stale_prices": stale0 + stale1, "baskets_in_follow_up": len(self.open_slots[name])})
+                       "equity_end": float(equity_end) if equity_end is not None else None, "flags": list(dict.fromkeys(flags))[:8],
+                       "stale_prices": list(dict.fromkeys(stale0 + stale1)), "baskets_in_follow_up": len(self.open_slots[name])})
             if measurable and rep.filled_slots > 0:
                 intervals[name] = IntervalReturn(label=name, start_at=plan.entry_at, end_at=plan.exit_at, start_price_kind="open",
                                                  end_price_kind="close", value=interval_return.quantize(D("0.0000001")),
@@ -805,6 +814,7 @@ class Runner:
                 "open_positions_at_end": [{"security_id": sec, "status": pos.status, "quantity": str(pos.total_quantity),
                                            "unresolved_fraction": str(pos.unresolved_fraction)} for sec, pos in sorted(self.ledgers[name].positions.items())],
                 "baskets_in_follow_up_at_end": [wid for wid, _ in self.open_slots[name]],
+                "ambiguous_claims": sorted(self.ambiguous_claims[name]),       # derechos no aplicados: el patrimonio es incierto desde entonces
             }
             if hasattr(f, "history"):
                 entry["training_history"] = list(getattr(f, "history"))

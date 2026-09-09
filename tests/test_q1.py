@@ -187,6 +187,23 @@ def test_r10_03_cache_is_keyed_by_calendar_version_too():
     assert len(cache) == 2 and r1[0].label != r2[0].label                   # otra versión del calendario: otra etiqueta, otra clave
 
 
+def test_r14_07_r14_08_manifest_covers_label_availability_and_exact_form_derives_the_ratio():
+    bars = {f"SEC-{i}": synthetic_bars(date(2023, 1, 2), 500, seed=30 + i, drift=0.0004 * (i % 3)) for i in range(6)}
+    cutoffs = [taipei(date(2023, 1, 1) + timedelta(days=7 * k), time(18, 0)) for k in range(120)]
+    now = taipei(date(2025, 3, 2), time(18, 0))
+    rows = q1.build_training_rows(bars, cutoffs, now_cutoff=now, calendar=CAL)
+    shifted = [q1.TrainingRow(r.cutoff_at, r.security_id, r.features, r.label, r.label_known_at + timedelta(days=10)) for r in rows]
+    a = q1.fit_q1(rows, trained_at=now, min_weeks=20, seed=1).training_manifest_id
+    b = q1.fit_q1(shifted, trained_at=now, min_weeks=20, seed=1).training_manifest_id
+    assert a != b                                                              # R14-07: la historia de disponibilidad forma parte del id
+    d = q1.DividendLike("A:stock:2024-01-10:2024", date(2024, 1, 10), "stock", stock_per_share=D(1), par_value=D(10), known_at=taipei(date(2023, 12, 1)))
+    assert d.stock_ratio == D("0.1")                                           # R14-08: la forma exacta deriva el cociente
+    with pytest.raises(ValueError, match="contradicts"):
+        q1.DividendLike("A:stock:2024-01-10:2024", date(2024, 1, 10), "stock", stock_ratio=D(999), stock_per_share=D(1), par_value=D(10))
+    with pytest.raises(ValueError):
+        q1.DividendLike("x", date(2024, 1, 10), "split")
+
+
 def test_ridge_recovers_a_linear_signal():
     import random
     rng = random.Random(0)

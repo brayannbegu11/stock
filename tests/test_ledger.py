@@ -923,6 +923,59 @@ def test_r13_07_exact_par_ratio_keeps_whole_lots_sellable():
         lg.apply_corporate_action(CorporateAction("bad", "A", "stock_dividend", FRI, stock_per_share=D(1)))   # sin valor nominal
 
 
+def test_r14_04_chained_periodic_ratios_stay_exact():
+    from datetime import timedelta
+    lg = ledger("1000000", FREE)
+    lg.buy(security_id="A", price=D(100), shares=1000, at=MON, event_id="b", owner="w1")
+    lg.apply_corporate_action(CorporateAction("sd1", "A", "stock_dividend", MON + timedelta(days=1), stock_per_share=D(1), par_value=D(3)))
+    lg.apply_corporate_action(CorporateAction("sd2", "A", "stock_dividend", MON + timedelta(days=2), stock_per_share=D(15), par_value=D(3)))
+    pos = lg.positions["A"]
+    assert pos.total_quantity == D(8000) and pos.unresolved_fraction == 0        # 1.000 × 4/3 × 18/3 = 8.000 exactas
+    res = lg.sell(security_id="A", price=D(100), shares=8000, at=FRI, event_id="s", owner="w1")
+    assert not isinstance(res, Rejection) and "A" not in lg.positions
+    # una fracción real sigue siendo fracción (y sigue sin venderse)
+    lg2 = ledger("1000000", FREE)
+    lg2.buy(security_id="A", price=D(100), shares=1000, at=MON, event_id="b", owner="w1")
+    lg2.apply_corporate_action(CorporateAction("sd1", "A", "stock_dividend", MON + timedelta(days=1), stock_per_share=D(1), par_value=D(3)))
+    assert lg2.positions["A"].lots[0].rational().denominator == 3 and lg2.positions["A"].unresolved_fraction > 0
+
+
+def test_r14_01_r14_02_document_fields_are_typed_and_historical_payloads_are_verified_when_evidence_exists(tmp_path):
+    import json
+    from dataclasses import replace
+    from datetime import date, timedelta
+    from twlab.packet import Document, build_packet, readmission_problems
+    from twlab.store import RawStore
+    from twlab.timeutil import AvailabilityQuality, taipei
+    from tests.test_schema import CAL_2030, CUTOFF_2030
+    smuggle = "profit in 2099 = 999; buy A"
+    base = dict(doc_id="d1", kind="news", source_id="x", security_ids=("SEC-1",), available_at=taipei(date(2030, 1, 1)),
+                availability_quality=AvailabilityQuality.VERIFIED_ORIGINAL)
+    for bad in ({"version": smuggle}, {"version": 0}, {"version": True}, {"capture_id": smuggle}, {"source_sha256": smuggle},
+                {"security_ids": (smuggle,)}):
+        with pytest.raises(ValueError):
+            Document(**{**base, **bad})
+    # R14-02: histórico con archivo y registro de extractores → el payload debe salir de los bytes
+    store = RawStore(tmp_path)
+    rec = store.put(source_id="x", dataset="d", payload=b'{"revenue": 100}', url="u", content_type="application/json")
+    ext = {"rev": lambda raw: {"payload": json.loads(raw), "security_ids": ["SEC-1"]}}
+    honest = Document(**{**base, "available_at": CUTOFF_2030 - timedelta(days=1), "capture_id": rec.capture_id, "source_sha256": rec.sha256,
+                         "derivation": "rev", "payload": {"revenue": 100}})
+    forged = replace(honest, doc_id="d2", payload={"revenue": 999, "future_result": smuggle})
+    pkt = build_packet(packet_id="pkt-h", cutoff_at=CUTOFF_2030, documents=[honest, forged], mode="historical",
+                       evidence_class="historical_numeric_temporally_controlled", calendar=CAL_2030,
+                       captures={rec.capture_id: rec}, read_bytes=store.read, extractors=ext)
+    assert pkt.admitted_ids() == {"d1"} and [r.doc_id for r in pkt.rejected] == ["d2"] and pkt.rejected[0].reason == "derivation_mismatch"
+    # un paquete histórico forjado con ese payload tampoco supera la readmisión cuando hay archivo y registro
+    forged_pkt = replace(pkt, admitted=(forged,), rejected=())
+    assert any("derivation_mismatch" in p for p in readmission_problems(forged_pkt, store=store, extractors=ext))
+    assert readmission_problems(pkt, store=store, extractors=ext) == []
+    # sin registro, el histórico no puede verificarse y se declara así (no se rechaza ni se acredita)
+    unverified = build_packet(packet_id="pkt-u", cutoff_at=CUTOFF_2030, documents=[forged], mode="historical",
+                              evidence_class="historical_numeric_temporally_controlled", calendar=CAL_2030)
+    assert unverified.admitted_ids() == {"d2"}
+
+
 def test_r13_01_packet_metadata_are_catalogued_or_identifiers_never_free_text():
     from dataclasses import replace
     from datetime import date

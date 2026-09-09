@@ -124,6 +124,18 @@ class Lot:
     quantity: Decimal          # puede tener fracción tras acciones corporativas
     cost_twd: Decimal
     opened_at: datetime
+    exact: Optional["Fraction"] = None   # cantidad racional exacta; ``quantity`` se deriva de ella (R14-04)
+
+    def rational(self) -> "Fraction":
+        from fractions import Fraction
+        if self.exact is None:
+            self.exact = Fraction(self.quantity)
+        return self.exact
+
+    def set_rational(self, value: "Fraction") -> None:
+        """Fija la cantidad exacta; el Decimal es entero exacto cuando la fracción lo es, y sólo aproxima fracciones reales."""
+        self.exact = value
+        self.quantity = D(value.numerator) if value.denominator == 1 else D(value.numerator) / D(value.denominator)
 
 
 @dataclass
@@ -387,7 +399,8 @@ class PaperLedger:
             if take <= 0:
                 continue
             part = q_twd(lot.cost_twd * take / lot.quantity) if lot.quantity else ZERO
-            lot.quantity -= take
+            from fractions import Fraction
+            lot.set_rational(lot.rational() - Fraction(take))
             lot.cost_twd -= part
             basis_sold += part
             remaining -= take
@@ -482,16 +495,17 @@ class PaperLedger:
                           f"{qty}x{action.per_share_cash} payable {when}", action.event_id, owner)
             self._settle(action.effective_at)   # pagadero en este mismo instante: se abona ahora (R03-15)
         elif action.kind in ("stock_dividend", "split"):
+            from fractions import Fraction
             if action.kind == "stock_dividend" and action.stock_per_share is not None:
-                # forma exacta: multiplicar antes de dividir evita inmovilizar lotes por un cociente periódico (R13-07)
+                # forma exacta y racional: encadenar derechos con cocientes periódicos nunca inmoviliza lotes (R13-07, R14-04)
                 par, per = D(action.par_value), D(action.stock_per_share)
+                factor_exact = (Fraction(par) + Fraction(per)) / Fraction(par)
                 factor = (par + per) / par
-                for lot in pos.lots:
-                    lot.quantity = lot.quantity * (par + per) / par
             else:
                 factor = (1 + D(action.stock_ratio)) if action.kind == "stock_dividend" else D(action.split_ratio)
-                for lot in pos.lots:
-                    lot.quantity = lot.quantity * factor
+                factor_exact = Fraction(factor)
+            for lot in pos.lots:
+                lot.set_rational(lot.rational() * factor_exact)
             if action.kind == "split" and pos.last_price is not None:
                 pos.last_price = pos.last_price / D(action.split_ratio)
             if pos.unresolved_fraction > 0:

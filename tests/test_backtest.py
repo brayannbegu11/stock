@@ -241,6 +241,47 @@ def test_r13_02_to_05_contradictory_rights_become_ambiguous_and_invalidate_label
     assert w.get("ambiguous_rights")
 
 
+def test_r14_03_r14_05_r14_08_ambiguity_survives_liquidation_and_voids_gross_returns(tmp_path):
+    def stock_row(per_share):
+        return {"stock_id": "A", "year": "2024", "AnnouncementDate": "2023-12-01", "AnnouncementTime": "8:0:0", "CashEarningsDistribution": 0,
+                "CashStatutorySurplus": 0, "StockEarningsDistribution": per_share, "StockStatutorySurplus": 0, "CashExDividendTradingDate": "",
+                "CashDividendPaymentDate": "", "StockExDividendTradingDate": "2024-01-10"}
+    store, path = make_market(tmp_path, dividends={"A": [stock_row(10.0), stock_row(0)]}, end=date(2024, 3, 29))
+    m = load_market(store, path, CAL)
+
+    class AThenB:
+        name, model_id, version = "Q0", "rule:a_then_b", "t"
+
+        def forecast(self, view, plan, candidates, *, slots):
+            from twlab.backtest import Selection
+            sym = "A" if plan.week_id == "2024-W02" else "B"
+            c = next(c for c in candidates if c.symbol == sym)
+            return [Selection(c.security_id, 1.0, [c.doc_id])], {"training_manifest_id": None}
+    res = Runner(store, m, BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 19), label="t", slots=1), [AThenB(), RandomForecaster(1)]).run()
+    w2, w3 = res["weeks"][0], res["weeks"][1]
+    q2, q3 = w2["forecasters"]["Q0"], w3["forecasters"]["Q0"]
+    # R14-05: la selección con derecho ambiguo no tiene rentabilidad bruta ni media
+    assert q2["picks"][0]["gross_return"] is None and q2["mean_gross_pick_return"] is None
+    # R14-03: vendida la cantidad registrada, la incertidumbre persiste: la semana siguiente (sólo B) tampoco es medible
+    assert any(f.startswith("ambiguous_right:") for f in q3["stale_prices"]) and w3["paired"]["Q0"]["paired"] is False
+    s = res["summary"]["forecasters"]["Q0"]
+    assert s["ambiguous_claims"] and any(f.startswith("ambiguous_right:") for f in s["final_valuation"]["flags"])
+    # la media bruta publicada excluye la semana ambigua (sólo queda la selección limpia de B)
+    assert s["mean_weekly_gross_pick_return"] == pytest.approx(q3["mean_gross_pick_return"])
+    assert not any(w.get("action_errors") for w in res["weeks"])                # R14-08: la forma exacta se aplica sin errores del libro
+
+
+def test_r14_06_forecaster_refuses_a_market_that_changed_underneath(tmp_path):
+    store, path = make_market(tmp_path, end=date(2024, 6, 28))
+    m = load_market(store, path, CAL)
+    f = TabularForecaster(m, min_weeks=10)
+    f.maybe_train(taipei(date(2024, 3, 3), time(18, 0)))
+    sec = next(iter(m.securities.values()))
+    sec.price_capture = archive(store, "TaiwanStockPrice", sec.symbol, price_rows(sec.symbol, date(2023, 1, 2), date(2024, 6, 28), seed=7))
+    with pytest.raises(ValueError, match="changed"):
+        f.maybe_train(taipei(date(2024, 3, 10), time(18, 0)))
+
+
 def test_r13_06_unresolved_delisting_makes_the_interval_unmeasurable(tmp_path):
     store, path = make_market(tmp_path)
     mf = json.loads(path.read_text(encoding="utf-8"))

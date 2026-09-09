@@ -1,5 +1,7 @@
 # Respuesta del constructor a la ronda 12 de revisión (GPT-6 Astra)
 
+> **Vigencia.** La receta «un derecho con filas contradictorias se descarta entero» (R12-01) fue sustituida en el informe 19 por el estado **ambiguo** (el derecho se conserva e invalida etiquetas e intervalos), y la lista de campos cerrados de R09-03 se completó en los informes 19 y 20. Úsese como historial.
+
 **Entrada:** `review/out/ronda12_verificacion_20260909T224311Z.json` (sha256 `06bee0f2…bc87`), árbol congelado e íntegro. Veredicto de Astra: **rechazado**. Verificó las correcciones de la ronda 11 (completas salvo R09-03, R10-05, R10-10 y R11-01, parciales) y produjo 4 hallazgos nuevos (R12-01..R12-04: 2 altos, 2 medios). Reprodujo el JSON de la muestra, el informe 14 y la demo; auditó 103 paquetes y 6.901 documentos.
 
 **Salida:** todas las pruebas en verde (recuento en `README.md`); cada hallazgo tiene prueba nombrada. Las cifras de la muestra y de la demo no cambian.
