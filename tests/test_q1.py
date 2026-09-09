@@ -76,6 +76,72 @@ def test_q1_fits_and_ranks_and_refuses_with_too_little_history():
     assert sorted(scores) != scores or len(set(scores)) > 1
 
 
+def test_r10_01_label_is_known_only_when_open_and_close_are_both_available():
+    entry, exit_ = date(2024, 1, 8), date(2024, 1, 12)
+    open_bar = q1.BarLike(entry, D(50), D(51), D(1), taipei(date(2024, 1, 20), time(13, 30)))     # apertura publicada tarde
+    close_bar = q1.BarLike(exit_, D(99), D(100), D(1), taipei(date(2024, 1, 13), time(13, 30)))
+    lab = q1.weekly_label({entry: open_bar, exit_: close_bar}, entry, exit_)
+    assert lab is not None and lab[0] == pytest.approx(1.0) and lab[1] == open_bar.available_at
+    bars = {"SEC-A": synthetic_bars(date(2023, 1, 2), 300, seed=4)}
+    # sustituimos la apertura del 8-01-2024 por una disponible el 20-01: al corte del 14-01 la etiqueta no está madura
+    late = [q1.BarLike(b.session, b.open, b.close, b.value_twd, taipei(date(2024, 1, 20), time(13, 30))) if b.session == entry else b
+            for b in bars["SEC-A"]]
+    cutoffs = [taipei(date(2024, 1, 7), time(18, 0))]
+    assert q1.build_training_rows({"SEC-A": late}, cutoffs, now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL) == []
+    assert len(q1.build_training_rows({"SEC-A": late}, cutoffs, now_cutoff=taipei(date(2024, 1, 21), time(18, 0)), calendar=CAL)) == 1
+
+
+def test_r10_03_cache_retries_missing_outcomes_and_is_keyed_by_data_version():
+    full = synthetic_bars(date(2023, 1, 2), 300, seed=5)
+    cutoff = taipei(date(2024, 1, 7), time(18, 0))
+    partial = [b for b in full if b.session <= date(2024, 1, 10)]          # aún sin el viernes 12-01
+    cache: dict = {}
+    assert q1.build_training_rows({"A": partial}, [cutoff], now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL, cache=cache) == []
+    assert cache == {}                                                       # nada incompleto se guarda
+    rows = q1.build_training_rows({"A": full}, [cutoff], now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL, cache=cache, data_version="v2")
+    assert len(rows) == 1 and (cutoff, "A", "v2") in cache
+    assert q1.build_training_rows({"A": full}, [cutoff], now_cutoff=taipei(date(2024, 1, 14), time(18, 0)), calendar=CAL, cache=cache, data_version="v3")
+    assert (cutoff, "A", "v3") in cache and (cutoff, "A", "v2") in cache     # otra versión de datos no reutiliza la anterior
+
+
+def test_r10_04_ties_get_average_ranks_so_a_flat_component_cannot_cancel_signal():
+    assert q1._rank01([1.0, 1.0, 1.0]) == [0.5, 0.5, 0.5]
+    assert q1._rank01([3.0, 1.0, 2.0]) == [1.0, 0.0, 0.5]
+    assert q1._rank01([2.0, 1.0, 2.0]) == [0.75, 0.0, 0.75]
+    ridge = q1.RidgeRank(alpha=1.0)
+    ridge.mu, ridge.sd, ridge.w, ridge.b = [0.0] * len(q1.FEATURE_NAMES), [1.0] * len(q1.FEATURE_NAMES), [1.0] + [0.0] * (len(q1.FEATURE_NAMES) - 1), 0.0
+
+    class Flat:
+        def predict(self, X):
+            return [0.0] * len(X)
+    model = q1.Q1Model(trained_at=taipei(date(2024, 1, 7)), n_rows=0, n_weeks=0, first_label_week="", last_label_week="", ridge=ridge, lgbm=Flat())
+    feats = [{k: 0.0 for k in q1.FEATURE_NAMES} | {"ret_5": v} for v in (3.0, 1.0, 2.0)]
+    scores = model.predict(feats)
+    assert scores[0] > scores[2] > scores[1]                                 # el componente plano no borra el orden del informativo
+
+
+def test_r10_08_r10_09_training_manifest_identifies_rows_and_config_and_label_is_total_return():
+    bars = {f"SEC-{i}": synthetic_bars(date(2023, 1, 2), 500, seed=20 + i, drift=0.0004 * (i % 3)) for i in range(6)}
+    cutoffs = [taipei(date(2023, 1, 1) + timedelta(days=7 * k), time(18, 0)) for k in range(120)]
+    now = taipei(date(2025, 3, 2), time(18, 0))
+    rows = q1.build_training_rows(bars, cutoffs, now_cutoff=now, calendar=CAL)
+    m1 = q1.fit_q1(rows, trained_at=now, min_weeks=20, seed=1)
+    m2 = q1.fit_q1(rows, trained_at=now, min_weeks=20, seed=2)                  # otra semilla → otra configuración
+    flipped = [q1.TrainingRow(r.cutoff_at, r.security_id, r.features, -r.label, r.label_known_at) for r in rows]
+    m3 = q1.fit_q1(flipped, trained_at=now, min_weeks=20, seed=1)              # otras etiquetas → otros datos
+    ids = {m.training_manifest_id for m in (m1, m2, m3)}
+    assert len(ids) == 3 and all("|data=" in i and "|cfg=" in i for i in ids)
+    assert m1.first_label_week == q1.label_week_id(rows[0].cutoff_at) and q1.label_week_id(taipei(date(2024, 1, 7), time(18, 0))) == "2024-W02"
+    # etiqueta de retorno total: apertura 100, cierre 50 tras dividendo en acciones 1:1 dentro de la semana → 0 %
+    entry, exit_ = date(2024, 1, 8), date(2024, 1, 12)
+    by = {entry: q1.BarLike(entry, D(100), D(100), D(1), taipei(entry, time(13, 30))), exit_: q1.BarLike(exit_, D(50), D(50), D(1), taipei(exit_, time(13, 30)))}
+    assert q1.weekly_label(by, entry, exit_)[0] == pytest.approx(-0.5)
+    assert q1.weekly_label(by, entry, exit_, [q1.DividendLike(date(2024, 1, 10), stock_ratio=D(1))])[0] == pytest.approx(0.0)
+    assert q1.weekly_label(by, entry, exit_, [q1.DividendLike(date(2024, 1, 10), cash_per_share=D(10))])[0] == pytest.approx(-0.4)
+    # un derecho con fecha ex el propio día de entrada no pertenece al comprador; uno posterior a la salida tampoco
+    assert q1.weekly_label(by, entry, exit_, [q1.DividendLike(entry, cash_per_share=D(10)), q1.DividendLike(date(2024, 1, 15), cash_per_share=D(10))])[0] == pytest.approx(-0.5)
+
+
 def test_ridge_recovers_a_linear_signal():
     import random
     rng = random.Random(0)

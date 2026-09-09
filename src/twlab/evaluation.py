@@ -257,32 +257,23 @@ def block_bootstrap_mean(
     valid_mondays = [m for m, _ in valid]
     starts = _block_starts(valid_mondays, block_length)
     n_segments = len(_segments(valid_mondays))
-    # Ponderación (R08-11, R09-12): cada extracción de un tramo aporta b_s = min(bloque, longitud) observaciones,
-    # así que el tramo se elige con probabilidad proporcional a longitud / b_s para que su fracción esperada en la
-    # muestra remuestreada sea exactamente longitud / n; el bloque se elige uniformemente dentro del tramo. Con un
-    # solo tramo equivale al bootstrap por bloques móviles clásico (con su efecto de borde inherente).
+    # Remuestreo estratificado por tramo (R08-11, R09-12, R10): cada tramo aporta exactamente su longitud en
+    # observaciones, tomadas de bloques uniformes dentro del propio tramo y truncadas a esa longitud. Los pesos
+    # de los tramos son exactos por construcción y ningún bloque cruza un hueco. Con un solo tramo es el
+    # bootstrap por bloques móviles clásico (con su efecto de borde inherente, que se declara).
     segments = _segments(valid_mondays)
     blocks_by_segment = [[(s0, ln) for s0, ln in starts if seg0 <= s0 < seg0 + seg_len] for seg0, seg_len in segments]
-    weights = [seg_len / min(block_length, seg_len) for _, seg_len in segments]
-    cumulative: list[float] = []
-    acc = 0.0
-    for w in weights:
-        acc += w
-        cumulative.append(acc)
-    total_weight = cumulative[-1]
     rng = random.Random(seed)
     means: list[float] = []
     for _ in range(n_boot):
         sample: list[float] = []
-        while len(sample) < n:
-            u = rng.random() * total_weight
-            seg_idx = next((i for i, c in enumerate(cumulative) if u < c), len(cumulative) - 1)
-            blocks = blocks_by_segment[seg_idx]
-            s0, ln = blocks[rng.randrange(len(blocks))]
-            sample.extend(values[s0:s0 + ln])
-        # sin truncar a n: recortar el último bloque quita observaciones sobre todo a los tramos largos y
-        # desplaza el peso hacia los cortos (R09-12); la media de un remuestreo de longitud ≥ n es igual de válida.
-        means.append(sum(sample) / len(sample))
+        for (_, seg_len), blocks in zip(segments, blocks_by_segment):
+            part: list[float] = []
+            while len(part) < seg_len:
+                s0, ln = blocks[rng.randrange(len(blocks))]
+                part.extend(values[s0:s0 + ln])
+            sample.extend(part[:seg_len])
+        means.append(sum(sample) / n)
     resample_mean = sum(means) / len(means)
     means.sort()
     lo = means[int(0.025 * (n_boot - 1))]

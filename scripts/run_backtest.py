@@ -69,7 +69,8 @@ def main() -> int:
         elif n == "A1":
             forecasters.append(RandomForecaster(args.seed))
         elif n == "Q1":
-            forecasters.append(TabularForecaster(market, retrain_every_weeks=args.retrain_every, min_weeks=args.min_train_weeks, seed=args.seed))
+            forecasters.append(TabularForecaster(market, retrain_every_weeks=args.retrain_every, min_weeks=args.min_train_weeks, seed=args.seed,
+                                                 par_value=cfg.par_value))
         else:
             raise SystemExit(f"pronosticador desconocido: {n}")
     if "A1" not in names:

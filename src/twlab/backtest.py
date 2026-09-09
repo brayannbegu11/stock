@@ -72,6 +72,7 @@ class Security:
     bars: list[finmind.Bar]
     dividends: list[finmind.DividendRow]
     price_capture: object
+    dividend_capture: object = None
 
 
 @dataclass
@@ -84,15 +85,34 @@ class MarketData:
     traded_days: set[date]
     dropped_no_regular_price: int
     source_manifest: str
+    bars_before_listing_dropped: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def data_version(self) -> str:
+        """Identifica las capturas que alimentan el mercado (clave de caché de Q1, R10-03)."""
+        import hashlib
+        ids = sorted(f"{s.price_capture.capture_id}|{getattr(s.dividend_capture, 'capture_id', '')}" for s in self.securities.values())
+        return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:16]
+
+
+class ManifestInconsistent(ValueError):
+    pass
 
 
 def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar, *, default_market: str = "TWSE") -> MarketData:
-    """Carga barras y dividendos desde las capturas listadas en un manifiesto (muestra o universo), comprobando identidad."""
+    """Carga barras y dividendos desde las capturas listadas en un manifiesto (muestra o universo).
+
+    Comprueba identidad y coherencia (R08-06, R10-05, R10-06): la captura de precios y la de dividendos
+    deben ser de FinMind y del símbolo; un ``security_id`` o una fecha de alta declarados en el manifiesto
+    deben coincidir con lo reconstruido; las barras anteriores a la fecha de alta se descartan (pertenecen a
+    otro emisor o a otra fuente); los dividendos se leen siempre que exista captura, y el recuento del
+    manifiesto, si existe, debe coincidir con las filas leídas.
+    """
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     listing: dict[str, date] = {}
     delisting: dict[str, date] = {}
     names: dict[str, str] = {}
-    markets: dict[str, str] = {}
     for row in manifest.get("listed", []):
         listing[row["symbol"]] = date.fromisoformat(row["listing_date"])
         names[row["symbol"]] = row.get("name", "")
@@ -105,27 +125,47 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
     by_symbol: dict[str, str] = {}
     by_session: dict[str, dict[date, finmind.Bar]] = {}
     dropped = 0
+    dropped_before_listing = 0
+    warnings: list[str] = []
     for sid, caps in manifest["captures"].items():
         if caps.get("price_rows", 0) <= 0:
             continue
         rec = store.get(caps["price"])
         if rec.source_id != "finmind" or rec.dataset != f"TaiwanStockPrice/{sid}":
-            raise SourceIdentityMismatch(f"{sid}: manifest points to capture {rec.capture_id} ({rec.dataset})")
+            raise SourceIdentityMismatch(f"{sid}: manifest points to capture {rec.capture_id} ({rec.source_id}/{rec.dataset})")
         raw_bars = finmind.bars_from_rows(finmind.rows(store, rec), stock_id=sid)
-        bars = [b for b in raw_bars if b.has_regular_price]
-        dropped += len(raw_bars) - len(bars)
+        if "price_rows" in caps and caps["price_rows"] != len(raw_bars):
+            raise ManifestInconsistent(f"{sid}: manifest declares {caps['price_rows']} price rows, capture has {len(raw_bars)}")
+        market = caps.get("market", default_market)
+        if caps.get("listing_date") and sid in listing and date.fromisoformat(caps["listing_date"]) != listing[sid]:
+            raise ManifestInconsistent(f"{sid}: listing_date {caps['listing_date']} in captures != {listing[sid].isoformat()} in listed")
+        vf = date.fromisoformat(caps["listing_date"]) if caps.get("listing_date") else listing.get(sid, raw_bars[0].session if raw_bars else None)
+        if vf is None:
+            continue
+        sec_id = security_id_for(market, sid, vf)
+        if caps.get("security_id") and caps["security_id"] != sec_id:
+            raise ManifestInconsistent(f"{sid}: manifest security_id {caps['security_id']!r} != reconstructed {sec_id!r}")
+        usable = [b for b in raw_bars if b.has_regular_price]
+        dropped += len(raw_bars) - len(usable)
+        bars = [b for b in usable if b.session >= vf]
+        dropped_before_listing += len(usable) - len(bars)
         if not bars:
             continue
         divs: list[finmind.DividendRow] = []
-        if caps.get("dividend_rows", 0) > 0:
+        drec = None
+        if caps.get("dividend"):
             drec = store.get(caps["dividend"])
-            if drec.dataset != f"TaiwanStockDividend/{sid}":
-                raise SourceIdentityMismatch(f"{sid}: manifest points to dividend capture {drec.capture_id} ({drec.dataset})")
-            divs = finmind.dividends_from_rows(finmind.rows(store, drec), stock_id=sid)
-        market = caps.get("market", markets.get(sid, default_market))
-        vf = date.fromisoformat(caps["listing_date"]) if caps.get("listing_date") else listing.get(sid, bars[0].session)
+            if drec.source_id != "finmind" or drec.dataset != f"TaiwanStockDividend/{sid}":
+                raise SourceIdentityMismatch(f"{sid}: manifest points to dividend capture {drec.capture_id} ({drec.source_id}/{drec.dataset})")
+            try:
+                divs = finmind.dividends_from_rows(finmind.rows(store, drec), stock_id=sid)
+            except ValueError as exc:
+                if caps.get("dividend_rows", 0) >= 0:
+                    raise ManifestInconsistent(f"{sid}: dividend capture unreadable but manifest does not declare failure: {exc}") from exc
+                warnings.append(f"{sid}: dividend capture failed ({exc}); no dividends loaded")
+            if caps.get("dividend_rows", len(divs)) >= 0 and caps.get("dividend_rows", len(divs)) != len(divs):
+                raise ManifestInconsistent(f"{sid}: manifest declares {caps['dividend_rows']} dividend rows, capture has {len(divs)}")
         name = caps.get("name", names.get(sid, ""))
-        sec_id = security_id_for(market, sid, vf)
         sv = SecurityVersion(security_id=sec_id, issuer_id=sec_id, symbol=sid, name_zh=name, market=market, board="main",
                              instrument_type="ordinary_equity", valid_from=vf, valid_to=None, recorded_at=now, source_id=manifest_path.name)
         master.add(sv)
@@ -134,11 +174,12 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
             later = now + timedelta(seconds=1)
             master.close_version(sec_id, valid_to=dl, recorded_at=later, source_id="twse:suspendListing",
                                  terminal=TerminalEvent(sec_id, "delisting", dl, later, "twse:suspendListing"))
-        securities[sec_id] = Security(sid, sec_id, market, name, vf, dl, bars, divs, rec)
+        securities[sec_id] = Security(sid, sec_id, market, name, vf, dl, bars, divs, rec, drec)
         by_symbol[sid] = sec_id
         by_session[sec_id] = {b.session: b for b in bars}
     traded: set[date] = set().union(*[set(m) for m in by_session.values()]) if by_session else set()
-    return MarketData(securities, by_symbol, master, calendar, by_session, traded, dropped, manifest_path.name)
+    return MarketData(securities, by_symbol, master, calendar, by_session, traded, dropped, manifest_path.name,
+                      dropped_before_listing, warnings)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -204,18 +245,32 @@ class TabularForecaster:
     """Q1: características de precio/volumen del paquete y modelo entrenado sólo con etiquetas conocidas al corte."""
     name, model_id, version = "Q1", q1mod.MODEL_ID, "q1_v1"
 
-    def __init__(self, market: MarketData, *, retrain_every_weeks: int = 4, min_weeks: int = 52, seed: int = 20260909) -> None:
+    def __init__(self, market: MarketData, *, retrain_every_weeks: int = 4, min_weeks: int = 52, seed: int = 20260909,
+                 par_value: D = D(10)) -> None:
         self.market = market
         self.retrain_every = retrain_every_weeks
         self.min_weeks = min_weeks
         self.seed = seed
+        self.par_value = par_value
         self.model: Optional[q1mod.Q1Model] = None
         self.trained_for: Optional[datetime] = None
+        self.last_cutoff: Optional[datetime] = None
         self.weeks_since_train = 0
         self.cache: dict = {}
         self.history: list[str] = []
+        self.data_version = market.data_version
+        # derechos para la etiqueta de retorno total (R10-09): efectivo y acciones nuevas por acción (valor nominal declarado)
+        self.dividends = {
+            sec_id: [q1mod.DividendLike(dv.cash_ex_date, cash_per_share=dv.cash_per_share) for dv in s.dividends if dv.cash_ex_date and dv.cash_per_share > 0]
+            + [q1mod.DividendLike(dv.stock_ex_date, stock_ratio=dv.stock_per_share / par_value) for dv in s.dividends if dv.stock_ex_date and dv.stock_per_share > 0]
+            for sec_id, s in market.securities.items()
+        }
 
     def maybe_train(self, cutoff_at: datetime) -> None:
+        if self.last_cutoff is not None and cutoff_at < self.last_cutoff:
+            raise ValueError(f"cutoffs must be non-decreasing ({cutoff_at.isoformat()} < {self.last_cutoff.isoformat()}); "
+                             "a TabularForecaster serves one chronological run (R10-02)")
+        self.last_cutoff = cutoff_at
         if self.model is not None and self.weeks_since_train < self.retrain_every:
             self.weeks_since_train += 1
             return
@@ -226,7 +281,8 @@ class TabularForecaster:
             cutoffs.append(taipei(d, time(18, 0)))
             d += timedelta(days=7)
         bars = {sec_id: s.bars for sec_id, s in self.market.securities.items()}
-        rows = q1mod.build_training_rows(bars, cutoffs, now_cutoff=cutoff_at, calendar=self.market.calendar, cache=self.cache)
+        rows = q1mod.build_training_rows(bars, cutoffs, now_cutoff=cutoff_at, calendar=self.market.calendar,
+                                         dividends_by_security=self.dividends, cache=self.cache, data_version=self.data_version)
         self.model = q1mod.fit_q1(rows, trained_at=cutoff_at, min_weeks=self.min_weeks, seed=self.seed)
         self.trained_for = cutoff_at
         self.weeks_since_train = 1
@@ -427,10 +483,14 @@ class Runner:
         packet, pkt_rec, candidates = self.build_week_packet(plan)
         view = PredictorView(packet)
         entry_s, exit_s = plan.entry_at.date(), plan.exit_at.date()
-        pending = exit_s > self.last_data_day
+        # Límite de simulación (R09-06, R10-07): nunca más allá del final del periodo pedido ni del último dato.
+        # La entrada se ejecuta si su sesión está dentro del límite; la salida sólo si también lo está. Lo que
+        # queda fuera no se intenta (ni se marca bloqueado): queda pendiente para una corrida posterior.
+        bound = min(cfg.end, self.last_data_day)
+        pending_entry, pending_exit = entry_s > bound, exit_s > bound
         record.update(eligible=sum(1 for c in candidates if c.eligible), scored=sum(1 for c in candidates if c.scorable),
                       coverage_reasons=dict(collections.Counter(r.split(":")[0] for c in candidates for r in c.reasons)),
-                      pending_outcome=pending)
+                      pending_outcome=pending_exit)
         picks: dict[str, list[str]] = {}
         for name, f in self.forecasters.items():
             selections, meta = f.forecast(view, plan, candidates, slots=cfg.slots)
@@ -446,8 +506,8 @@ class Runner:
                                                       "name": self.market.securities[p].name} for p in picks[name]],
                                            "forecast_status": obj["status"], "status_reason": obj.get("status_reason"),
                                            "training_manifest_id": meta.get("training_manifest_id"), "validation_problems": problems}
-        if pending:
-            record["note"] = f"pending_outcome: salida prevista {exit_s.isoformat()} posterior al último dato {self.last_data_day.isoformat()}"
+        if pending_entry:
+            record["note"] = f"pending_outcome: entrada prevista {entry_s.isoformat()} posterior al límite {bound.isoformat()}"
             return
         open_prices = {sec: m[entry_s].open for sec, m in self.market.by_session.items() if entry_s in m}
         close_prices = {sec: m[exit_s].close for sec, m in self.market.by_session.items() if exit_s in m}
@@ -471,11 +531,19 @@ class Runner:
             except MissingPrice:
                 positions_value_open = None
             exposure = (positions_value_open / equity_start) if (equity_start and positions_value_open is not None) else D(0)
+            if pending_exit:
+                fr = record["forecasters"][name]
+                fr.update({"notional_per_slot": float(notional), "filled": sum(1 for s in slots if s.status == "filled"),
+                           "failed": sum(1 for s in slots if s.status == "entry_failed"),
+                           "fail_reasons": [s.reason for s in slots if s.status == "entry_failed"],
+                           "equity_open": float(equity_start) if equity_start is not None else None, "exposure_at_open": float(exposure),
+                           "stale_prices": stale0, "note": "entrada ejecutada; salida pendiente"})
+                continue
             self.apply_actions(name, exit_s)
             for wid, ss in self.open_slots[name]:
                 exit_basket(lg, ss, close_prices=close_prices, at=plan.exit_at, week_id=wid)
             self.open_slots[name] = [(wid, ss) for wid, ss in self.open_slots[name]
-                                     if any(s.status == "exit_blocked" or (s.status == "exited" and not s.liquidated) for s in ss)]
+                                     if any(s.status in ("filled", "exit_blocked") or (s.status == "exited" and not s.liquidated) for s in ss)]
             close_marks, stale1 = self.marks(exit_s, lg, "close")
             try:
                 val = lg.valuation(prices=close_marks, at=plan.exit_at)
@@ -510,6 +578,9 @@ class Runner:
                                                  exposure=exposure.quantize(D("0.0001")), week_id=plan.week_id)
             if equity_end is not None:
                 self.prev_equity[name] = equity_end
+        if pending_exit:
+            record["note"] = f"pending_outcome: salida prevista {exit_s.isoformat()} posterior al límite {bound.isoformat()}; entradas ejecutadas"
+            return
         eligible_ids = [c.security_id for c in candidates if c.eligible]
         ew = [float(self.market.by_session[s][exit_s].close / self.market.by_session[s][entry_s].open - 1) for s in eligible_ids
               if entry_s in self.market.by_session[s] and exit_s in self.market.by_session[s]]
@@ -543,11 +614,12 @@ class Runner:
         cfg = self.cfg
         for sunday in _sundays(cfg.start, cfg.end):
             self.run_week(sunday)
-        end_at = taipei(cfg.end, time(23, 59))
-        last_close = self.market.calendar.prev_session(before=min(cfg.end, self.last_data_day) + timedelta(days=1))
+        bound = min(cfg.end, self.last_data_day)
+        end_at = taipei(bound, time(23, 59))
+        last_close = self.market.calendar.prev_session(before=bound + timedelta(days=1))
         final: dict[str, dict] = {}
         for name, lg in self.ledgers.items():
-            self.apply_actions(name, cfg.end)
+            self.apply_actions(name, bound)
             lg.advance_to(end_at)
             prices, stale = self.marks(last_close, lg, "close")
             try:
@@ -566,6 +638,8 @@ class Runner:
             "weeks_pending_outcome": [w["week_id"] for w in self.weeks if w.get("pending_outcome")],
             "weeks_extraordinary_closure_unhandled": [w["week_id"] for w in self.weeks if str(w.get("note", "")).startswith("extraordinary")],
             "bars_without_regular_price_dropped": self.market.dropped_no_regular_price,
+            "bars_before_listing_dropped": self.market.bars_before_listing_dropped, "market_warnings": list(self.market.warnings),
+            "simulation_bound": min(cfg.end, self.last_data_day).isoformat(),
             "universe_ew": {"mean_weekly_gross_open_close": self._mean(operated, lambda w: w["universe_ew_gross_open_close"])},
             "assumptions": {**{k: (str(v) if isinstance(v, D) else (v.isoformat() if isinstance(v, date) else v)) for k, v in asdict(cfg).items()},
                             "costs": asdict(self.costs), "price_availability_lag_hours": 24,

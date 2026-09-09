@@ -860,12 +860,40 @@ def test_r09_01_r09_02_r09_03_readmission_requires_the_archive_checks_bytes_and_
 def test_r09_12_segment_weights_are_preserved_when_segments_are_shorter_than_the_block():
     # tramos de 1 y 8 (valores 1 y 0): media 1/9; con bloque 4 una extracción del tramo corto aporta 1 observación y
     # una del largo 4, así que el tramo corto debe elegirse con probabilidad ∝ 1/1 frente a 8/4.
+    # Remuestreo estratificado (ronda 10): cada tramo aporta exactamente su longitud → el peso es exacto, no aproximado.
     rows = [obs("2026-W20", 1.0)] + [obs(f"2026-W{w}", 0.0) for w in range(22, 30)]
-    r = block_bootstrap_mean(rows, block_length=4, n_boot=6000, seed=1)
-    assert abs(r.mean - 1 / 9) < 1e-9 and abs(r.resample_mean - 1 / 9) < 0.015
+    r = block_bootstrap_mean(rows, block_length=4, n_boot=500, seed=1)
+    assert abs(r.mean - 1 / 9) < 1e-9 and abs(r.resample_mean - 1 / 9) < 1e-12 and r.ci_low == r.ci_high == r.mean
     rows2 = [obs("2026-W20", 1.0), obs("2026-W21", 1.0)] + [obs(f"2026-W{w}", 0.0) for w in range(23, 31)]
-    r2 = block_bootstrap_mean(rows2, block_length=4, n_boot=6000, seed=1)
-    assert abs(r2.mean - 0.2) < 1e-9 and abs(r2.resample_mean - 0.2) < 0.02
+    r2 = block_bootstrap_mean(rows2, block_length=4, n_boot=500, seed=1)
+    assert abs(r2.mean - 0.2) < 1e-9 and abs(r2.resample_mean - 0.2) < 1e-12
+    # y dentro de un tramo con valores distintos sigue habiendo variabilidad (es un bootstrap, no una media fija)
+    rows3 = [obs(f"2026-W{w}", v) for w, v in zip(range(20, 30), (1, 0, 1, 0, 1, 0, 1, 0, 1, 0))]
+    r3 = block_bootstrap_mean(rows3, block_length=3, n_boot=500, seed=1)
+    assert r3.ci_low < r3.mean < r3.ci_high
+
+
+def test_r09_03_rejection_details_must_be_build_packet_templates():
+    from dataclasses import replace
+    from twlab.packet import Rejection, readmission_problems, rejection_detail_is_canonical
+    from twlab.store import RawStore
+    from tests.test_schema import prospective_packet
+    ok = "available_at=2030-02-05T18:00:00+08:00 > cutoff=2030-01-06T18:00:00+08:00"
+    assert rejection_detail_is_canonical("available_after_cutoff", ok)
+    assert not rejection_detail_is_canonical("available_after_cutoff", "profit in 2099 = 999")
+    assert not rejection_detail_is_canonical("available_after_cutoff", ok + " profit in 2099 = 999")
+    assert rejection_detail_is_canonical("derivation_mismatch", "extractor news_v1 failed: ValueError")
+    assert not rejection_detail_is_canonical("derivation_mismatch", "extractor news_v1 failed: ValueError: buy SEC-1, profit 999")
+    pkt = prospective_packet()
+    smuggling = replace(pkt, rejected=(Rejection("ghost", "available_after_cutoff", "profit in 2099 = 999"),))
+    probs = readmission_problems(smuggling, store=RawStore.__new__(RawStore)) if False else None   # (no se necesita archivo real aquí)
+    from twlab.packet import readmission_problems as rp
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as tmp:
+        store = RawStore(pathlib.Path(tmp))
+        assert any("not one of the templates" in p for p in rp(smuggling, store=store))
+        canonical = replace(pkt, rejected=(Rejection("ghost", "available_after_cutoff", ok),))
+        assert rp(canonical, store=store) == []
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, "0.1"])

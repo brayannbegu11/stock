@@ -244,8 +244,8 @@ def build_packet(
                     raise ValueError("extractor must return a mapping with 'payload' and 'security_ids'")
                 derived_payload = canonical_bytes(_thaw(extraction["payload"]))
                 derived_ids = tuple(str(s) for s in extraction["security_ids"])
-            except Exception as exc:
-                rejected.append(Rejection(d.doc_id, R_DERIVATION_MISMATCH, f"extractor {d.derivation} failed: {exc}"))
+            except Exception as exc:                      # sólo la clase: el mensaje podría transportar contenido (R09-03)
+                rejected.append(Rejection(d.doc_id, R_DERIVATION_MISMATCH, f"extractor {d.derivation} failed: {type(exc).__name__}"))
                 continue
             # identidad JSON exacta (true ≠ 1) y entidades derivadas, no declaradas (R04-07, R04-14)
             if derived_payload != canonical_bytes(_thaw(d.payload)):
@@ -374,7 +374,33 @@ def readmission_problems(
         rejected_ids.add(r.doc_id)
         if r.reason not in KNOWN_REJECTION_REASONS:
             problems.append(f"{r.doc_id}: rejection reason {r.reason!r} is not in the admission catalog (R09-03)")
+        elif not rejection_detail_is_canonical(r.reason, r.detail):
+            problems.append(f"{r.doc_id}: rejection detail is not one of the templates build_packet emits for {r.reason!r} (R09-03)")
     return problems
+
+
+_ISO = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+\-]+"
+_ID = r"[A-Za-z0-9_:.@/\-]+"
+_REJECTION_DETAIL_TEMPLATES: dict[str, tuple[str, ...]] = {
+    R_UNKNOWN_AVAILABILITY: (r"availability could not be established",),
+    R_INCONSISTENT_METADATA: (rf"published_at={_ISO} later than available_at={_ISO}", rf"first_seen_at={_ISO} != capture ingested_at={_ISO}"),
+    R_AVAILABLE_AFTER_CUTOFF: (rf"available_at={_ISO} > cutoff={_ISO}",),
+    R_NO_CAPTURE_EVIDENCE: (r"document is not linked to a RawStore capture",),
+    R_SYNTHETIC_CAPTURE: (rf"capture clock_source={_ID}",),
+    R_PROVENANCE_MISMATCH: (rf"document source={_ID} sha=[0-9a-fA-F]{{0,12}}(None)? vs capture source={_ID} sha=[0-9a-f]{{12}}",),
+    R_DERIVATION_MISMATCH: (rf"derivation='?{_ID}'? is not a registered extractor", r"derivation=None is not a registered extractor",
+                            rf"extractor {_ID} failed: [A-Za-z_][A-Za-z0-9_]*",
+                            rf"payload does not equal extractor\({_ID}\) applied to the archived bytes",
+                            r"security_ids \([^)]*\) do not equal extracted \([^)]*\)"),
+    R_NOT_RECEIVED_BEFORE_CUTOFF: (rf"ingested_at={_ISO} > cutoff={_ISO}",),
+}
+
+
+def rejection_detail_is_canonical(reason: str, detail: str) -> bool:
+    """El detalle de un rechazo sólo puede ser una de las plantillas de ``build_packet``: sin texto libre que el
+    predictor pueda leer (R09-03). Las excepciones de extractores se reducen a su clase, nunca a su mensaje."""
+    import re
+    return any(re.fullmatch(p, str(detail)) is not None for p in _REJECTION_DETAIL_TEMPLATES.get(reason, ()))
 
 
 def packet_to_json(packet: Packet) -> bytes:
