@@ -1,0 +1,70 @@
+{
+  "version": "2.0",
+  "research_review_date": "2026-09-09",
+  "status": "research_blueprint_not_implemented",
+  "sources_count": 47,
+  "experiment_records": 13,
+  "validation_performed": [
+    "JSON parse",
+    "YAML parse",
+    "JSON Schema meta-validation",
+    "synthetic invalid-record schema check",
+    "source-reference consistency"
+  ],
+  "financial_data_audited": false,
+  "models_trained": false,
+  "backtests_run": false,
+  "live_jobs_activated": false,
+  "files": [
+    {
+      "name": "CONTRATOS_DATOS.md",
+      "bytes": 8567,
+      "sha256": "d10b42515d6b68f046c87ead6b888773506928d0e31e682a1672fa7dc0149fcc"
+    },
+    {
+      "name": "EXPERIMENTOS.json",
+      "bytes": 5249,
+      "sha256": "ce415afb52e2c70017c498b8979f710ae659ee1d3ea9d989d9e6ea4e289d3208"
+    },
+    {
+      "name": "FUENTES.json",
+      "bytes": 16935,
+      "sha256": "5649f6a1ab1b047a4a7c8181264cc43679a994c121b96d72b22c1841f62834d9"
+    },
+    {
+      "name": "FUENTES.md",
+      "bytes": 10942,
+      "sha256": "75c8e6fdcc6cd100762da251501bb484c7fe6245ad4dd592c544ab329a3896af"
+    },
+    {
+      "name": "INVESTIGACION.md",
+      "bytes": 64907,
+      "sha256": "a753e6d16d07e90fcba9e3cfc11cb7f0c701d2c126673319e2487ce2c88d14c3"
+    },
+    {
+      "name": "LEEME.md",
+      "bytes": 2033,
+      "sha256": "2437905778189d7bd8c47adfa09b4664657a1d15fdf576dd8f79415cc2cb8177"
+    },
+    {
+      "name": "PREDICCION.schema.json",
+      "bytes": 7536,
+      "sha256": "69dcf3be997b6ec545815a11f56344ca4eeb88eafa904ba6ee4d74551715b9d0"
+    },
+    {
+      "name": "PROTOCOLO.yaml",
+      "bytes": 6816,
+      "sha256": "ee7aa4fac3bc2d6a3bf7ed806d39db7389a942755d57a05a3a1bc85c5cf16224"
+    },
+    {
+      "name": "PRUEBAS_ACEPTACION.md",
+      "bytes": 7429,
+      "sha256": "9a5bff2fc9e49ccada1a6f54bbc25da2543a3ed9851fad673dcf367e18940545"
+    },
+    {
+      "name": "TRASPASO_FABLE_ASTRA.md",
+      "bytes": 7090,
+      "sha256": "848419f7cbe464d164ad578ee05d5e5a9982b3881bbe806acb71e92d18eeee08"
+    }
+  ]
+}

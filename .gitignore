@@ -1,0 +1,19 @@
+# secretos y credenciales: nunca en el repo
+.env
+*.key
+secrets/
+# datos capturados (se versionan por manifiesto, no por git)
+data/raw/
+data/store/
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+# revisiones de Astra: se conservan las salidas, no los temporales
+review/out/*.tmp
+# pruebas temporales del revisor (sandbox de Codex)
+review/out/astra_scratch/

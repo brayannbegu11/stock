@@ -1,0 +1,294 @@
+{
+  "ronda": "6",
+  "revisor": "GPT-6 Astra",
+  "resumen": "179 pruebas del constructor y 22 verificaciones adaptadas pasan. La batería nueva produce 16 fallos y 6 controles positivos: 10 hallazgos, 8 altos y 2 medios. Los casos originales tienen correcciones verificables, pero persisten fallos de validación temporal, evaluación y contabilidad. Los ataques funcionales usan explícitamente autoridades de prueba; la mutación del registro se distingue como límite de confianza del proceso. Sólo escribí bajo review/out/astra_scratch/. Evidencia final: r6_final.xml.",
+  "hallazgos": [
+    {
+      "id": "R05-01/verificacion",
+      "severidad": "bloqueante",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/store.py",
+      "linea": 226,
+      "afirmacion": "Corregida la inyección mediante RawStore: rechaza autoridades de producción; ambos consumidores exigen la bandera para autoridades de prueba.",
+      "contraejemplo": "opentimestamps y rfc3161 producen UntrustedVerifier; fixture se rechaza sin bandera y se acepta con ella. El límite del proceso se recoge en R06-01.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k 'production' --basetemp=review/out/astra_scratch/r6_v01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-02/verificacion",
+      "severidad": "bloqueante",
+      "categoria": "identidad",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 158,
+      "afirmacion": "Corregidos los casos originales de captura meteorológica, reutilización y semana discordante; la validación del contenido sigue incompleta.",
+      "contraejemplo": "Las pruebas rechazan weather:rain=0 y reutilizar la captura de 2030-W02 en W03; R06-02 y R06-04 muestran archivos que todavía se evalúan indebidamente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_ledger.py -k r04_01_r05_02 --basetemp=review/out/astra_scratch/r6_v02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-03/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 112,
+      "afirmacion": "Corregido el sello tardío respecto del plazo archivado; falta validar ese plazo contra el protocolo.",
+      "contraejemplo": "La acreditación siete días después del plazo legítimo se rechaza; modificar el plazo archivado todavía permite eludirlo, R06-03.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k evaluation_rejects_late --basetemp=review/out/astra_scratch/r6_v03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-04/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 165,
+      "afirmacion": "Corregido: los rechazos y sus detalles forman parte del hash; la exclusión de created_at está documentada.",
+      "contraejemplo": "Añadir el rechazo con texto '2030-W02 future winner A +50%' invalida el sello anterior.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k seal_covers_rejection --basetemp=review/out/astra_scratch/r6_v04",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-05/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 76,
+      "afirmacion": "Corregida la duplicación después de una compra; la unicidad no cubre cestas vacías o fallidas.",
+      "contraejemplo": "La segunda entrada tras comprar 1.000 acciones se rechaza; las entradas sin compra pueden repetirse, R06-06.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k duplicate_basket",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-06/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 386,
+      "afirmacion": "Corregida la venta parcial con owner explícito y venta posterior mediante exit_basket.",
+      "contraejemplo": "Comprar 2.000 a 100 y vender 1.000 a 110 y 1.000 a 90 devuelve 0%; quedan caminos sin atribución o sin resultado, R06-07/08.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k partial_owner_sale",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-07/verificacion",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 149,
+      "afirmacion": "Corregido: las fracciones de propietarios distintos mantienen la bandera.",
+      "contraejemplo": "Dos lotes de 500,5 acciones conservan fractional_shares_unresolved aunque sumen 1.001.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k fraction_flags",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-08/verificacion",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 459,
+      "afirmacion": "Corregido: fragmentar una compra dentro del mismo propietario no cambia el dividendo.",
+      "contraejemplo": "Con dividendo de 1,2345 TWD, dos compras de 1.000 acciones y una de 2.000 cobran igualmente 2.469 TWD.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k dividend_cash",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-09/verificacion",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/weekly.py",
+      "linea": 58,
+      "afirmacion": "Corregida la ventana contradictoria: una semana sin sesiones admite registro posterior al corte dentro de su semana objetivo.",
+      "contraejemplo": "La adaptación usa el domingo inmediatamente anterior, sin reescribir ingested_at; el registro real posterior al corte se valida. El caso original fuera de la nueva ventana debe rechazarse.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k invalid_prospective_week --basetemp=review/out/astra_scratch/r6_v09",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-10/verificacion",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 155,
+      "afirmacion": "Corregido: la corrida inválida sin archivo permanece en la cobertura sin exigir sello.",
+      "contraejemplo": "Una observación válida sellada y otra inválida sin captura producen n_used=1 y n_invalid_excluded=1.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k invalid_unsealed --basetemp=review/out/astra_scratch/r6_v10",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-11/verificacion",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 106,
+      "afirmacion": "Corregidos el corte intermedio y el estado desconocido originales; la comprobación del plan sigue siendo parcial sin calendar.",
+      "contraejemplo": "Se rechazan jueves 02:00 y valid_typo; otros planes incompatibles se aceptan, R06-05.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda5_adaptada_r6.py -k 'validator_checks_weekly or invalid_week_status'",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R05-12/verificacion",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/07_respuesta_ronda5_astra.md",
+      "linea": 22,
+      "afirmacion": "Parcial: 03-06 incorporan notas de vigencia y el recuento de 179 es correcto; 01 y 07 conservan afirmaciones excesivas.",
+      "contraejemplo": "01:81 mantiene 'ningún registro está sellado'; 07:33 omite los límites del proceso y la excepción de prueba; 07:28 afirma independencia del redondeo. R06-01/10 los refutan; R06-05..09 impiden declarar P3 resuelto.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py -k 'p2_runtime or gross_dividend' --basetemp=review/out/astra_scratch/r6_v12",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-01",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/07_respuesta_ronda5_astra.md",
+      "linea": 33,
+      "afirmacion": "P2 no es exacta como garantía absoluta: el registro es un diccionario mutable y la aceptación con bandera conserva la clase prospective_registered. Debe declarar un proceso y unas importaciones de confianza.",
+      "contraejemplo": "Insertar lambda r,c: True en twlab.seals.PRODUCTION_VERIFIERS['opentimestamps'] y adjuntar ese recibo hace que validate_prediction devuelva [] sin bandera. Una importación alternativa independiente tiene otro diccionario y no modifica el original. Sin alterar el proceso, ambos consumidores sí rechazan fixture por defecto; is_sealed y seal_info aceptan sellos de prueba como API de bajo nivel. Esto exige precisar el modelo de confianza, no prometer Python inmune a monkeypatch.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py -k 'p2_runtime or alternative_import or test_authorities_require' --basetemp=review/out/astra_scratch/r6_p01",
+      "prueba_propuesta": "from twlab import seals\nfrom twlab.schemas import validate_prediction\nfrom tests.test_schema import prospective_packet, prospective_forecast, archive_and_seal\n\ndef test_garantia_absoluta_p2(tmp_path, monkeypatch):\n    p = prospective_packet()\n    o = prospective_forecast(p)\n    s, r = archive_and_seal(tmp_path, o, p)\n    assert validate_prediction(o, p, store=s)\n    monkeypatch.setitem(seals.PRODUCTION_VERIFIERS, 'opentimestamps', lambda r, c: True)\n    s.attach_receipt(r.capture_id, receipt_id=o['independent_timestamp_receipt_id'], authority='opentimestamps', digest=r.sha256, attested_at=r.ingested_at)\n    assert validate_prediction(o, p, store=s)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-02",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 102,
+      "afirmacion": "_archived_forecast acepta objetos que no son predicciones del contrato y ni siquiera contienen packet_hash. Leer JSON y verificar sus bytes no valida una predicción.",
+      "contraejemplo": "Un objeto forecast con sólo forecast_id='f-1', cutoff_at='2030-01-06T18:00:00+08:00', deadline_at='2030-01-07T08:30:00+08:00' y evidence_class se evalúa con n_used=1 y media 0,10. Faltan packet_hash, issued_at, status, ranking, modelo y versión de esquema.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py::test_evaluator_rejects_incomplete_noncanonical_envelope --basetemp=review/out/astra_scratch/r6_p02",
+      "prueba_propuesta": "import pytest\nfrom twlab.evaluation import ObservationError\nfrom review.out.astra_scratch.test_ronda6 import archive_body, evaluate\n\ndef test_evaluador_exige_prediccion_completa(tmp_path):\n    body = {'forecast': {'forecast_id': 'f-1', 'cutoff_at': '2030-01-06T18:00:00+08:00', 'deadline_at': '2030-01-07T08:30:00+08:00', 'evidence_class': 'prospective_registered'}}\n    s, r = archive_body(tmp_path, body)\n    with pytest.raises(ObservationError):\n        evaluate(s, r, '2030-W02', allow_test_authorities=True)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-03",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 112,
+      "afirmacion": "El evaluador permite eliminar o extender el límite de registro mediante el plazo archivado. Tampoco exige corte dominical antes de derivar la semana.",
+      "contraejemplo": "Predicciones canónicas archivadas con reloj real en 2026, corte 03-01-2021 18:00 Taipei y plazo igual al corte o 05-01-2099 08:30 se aceptan para 2021-W01. En el primer caso not_after=None y el supuesto control de semana sin sesiones sólo importa taipei. Un corte jueves 10-01-2030 18:00 también se acepta como 2030-W02.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py -k 'evaluator_cannot or midweek' --basetemp=review/out/astra_scratch/r6_p03",
+      "prueba_propuesta": "import pytest\nfrom twlab.evaluation import ObservationError\nfrom tests.test_schema import prospective_packet, prospective_forecast, archive_and_seal\nfrom review.out.astra_scratch.test_ronda6 import evaluate\n\n@pytest.mark.parametrize('deadline', ['2021-01-03T18:00:00+08:00', '2099-01-05T08:30:00+08:00'])\ndef test_plazo_archivado_no_autoriza_retroactividad(tmp_path, deadline):\n    p = prospective_packet()\n    o = prospective_forecast(p, cutoff_at='2021-01-03T18:00:00+08:00', issued_at='2021-01-03T18:30:00+08:00', deadline_at=deadline)\n    s, r = archive_and_seal(tmp_path, o, p)\n    assert r.ingested_at_dt.year == 2026\n    with pytest.raises(ObservationError):\n        evaluate(s, r, '2021-W01', allow_test_authorities=True)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-04",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 163,
+      "afirmacion": "La validez estadística sigue dependiendo del booleano del llamante: no se contrasta con status de la predicción archivada.",
+      "contraejemplo": "Un registro válido del contrato con status='invalid', ranking=[], motivo no_sessions y semana 2030-W03 entra en la media como +10% al suministrar WeeklyObservation(valid_run=True, value=0.10). El evaluador devuelve n_used=1 en vez de rechazar la contradicción o excluirla.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py::test_evaluator_rejects_archived_invalid_run_marked_valid --basetemp=review/out/astra_scratch/r6_p04",
+      "prueba_propuesta": "import pytest\nfrom twlab.evaluation import ObservationError\nfrom twlab.schemas import validate_prediction\nfrom tests.test_schema import prospective_packet, prospective_forecast, archive_and_seal, CUTOFF_2030_EMPTY\nfrom review.out.astra_scratch.test_ronda6 import evaluate\n\ndef test_corrida_invalida_no_se_convierte_en_observacion_valida(tmp_path):\n    p = prospective_packet(cutoff=CUTOFF_2030_EMPTY)\n    o = prospective_forecast(p, status='invalid', ranking=[], status_reason='no_sessions')\n    s, r = archive_and_seal(tmp_path, o, p)\n    assert validate_prediction(o, p, store=s, allow_test_authorities=True) == []\n    with pytest.raises(ObservationError):\n        evaluate(s, r, p.week_id, allow_test_authorities=True)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-05",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 122,
+      "afirmacion": "_packet_plan_problems deja controles esenciales condicionados a calendar, que es opcional. registration_deadline_at puede extender libremente el plazo del sello.",
+      "contraejemplo": "Sin calendar se aceptan: corte 06-09-2026 con week_id='1900-W01'; entrada, salida y plazo desplazados siete días; invalid:no_sessions conservando entrada y salida regulares. Los tres se rechazan con CAL. Además, para plazo legítimo 07-01-2030 08:30, sustituir registration_deadline_at por 14-01-2030 08:30 permite un sello acreditado ese último día.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py -k 'packet_plan_cannot or registration_deadline_cannot' --basetemp=review/out/astra_scratch/r6_p05",
+      "prueba_propuesta": "from dataclasses import replace\nfrom datetime import timedelta\nfrom twlab.schemas import validate_prediction\nfrom tests.test_schema import prospective_packet, prospective_forecast, archive_and_seal\n\ndef test_plazo_de_registro_no_extiende_semana_valida(tmp_path):\n    p = prospective_packet()\n    p = replace(p, registration_deadline_at=p.deadline_at + timedelta(days=7))\n    o = prospective_forecast(p)\n    s, _ = archive_and_seal(tmp_path, o, p, attested_at=p.registration_deadline_at.isoformat())\n    assert validate_prediction(o, p, store=s, allow_test_authorities=True)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-06",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 76,
+      "afirmacion": "owners_seen sólo se actualiza tras una compra exitosa; no implementa la entrada única de una cesta vacía o completamente fallida.",
+      "contraejemplo": "Con 300.000 TWD, una cesta 2030-W02 vacía o con A sin precio devuelve empty/entry_failed y no reserva su identidad. Una segunda llamada para la misma semana compra 1.000 A a 100. Permite reemplazar un resultado operativo que debía conservarse.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py -k basket_registration",
+      "prueba_propuesta": "import pytest\nfrom decimal import Decimal as D\nfrom tests.test_ledger import ledger, FREE, MON\nfrom twlab.simulation import enter_basket\nfrom review.out.astra_scratch.test_ronda6 import enter\n\n@pytest.mark.parametrize('picks', [[], ['A']])\ndef test_cesta_sin_compra_tambien_reserva_identidad(picks):\n    lg = ledger('300000', FREE)\n    first = enter_basket(lg, picks=picks, slots=1, notional_per_slot=D(100000), open_prices={}, at=MON, week_id='2030-W02')\n    assert first[0].status in ('empty', 'entry_failed')\n    with pytest.raises(ValueError):\n        enter(lg)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-07",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 386,
+      "afirmacion": "sell(owner=None), una operación admitida por la API, consume lotes identificados pero omite sus ingresos en los acumuladores por propietario.",
+      "contraejemplo": "Propietario W compra 2.000 A a 100 y otro propietario compra 1.000. Una venta FIFO sin owner vende 1.000 de W a 110; exit_basket vende sus restantes 1.000 a 90. El retorno correcto es 0%, pero se publica −55%; las 1.000 del otro propietario permanecen intactas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py::test_sale_without_owner_still_attributes_consumed_lots",
+      "prueba_propuesta": "from decimal import Decimal as D\nfrom tests.test_ledger import ledger, FREE, MON, FRI\nfrom twlab.simulation import exit_basket\nfrom review.out.astra_scratch.test_ronda6 import enter\n\ndef test_fifo_atribuye_ingresos_a_los_lotes_consumidos():\n    lg = ledger('400000', FREE)\n    w = enter(lg, amount=200000)\n    other = enter(lg, week='other')\n    lg.sell(security_id='A', price=D(110), shares=1000, at=MON, event_id='fifo')\n    assert lg.positions['A'].owner_quantity(other[0].owner) == D(1000)\n    exit_basket(lg, w, close_prices={'A': D(90)}, at=FRI, week_id='2030-W02')\n    assert w[0].gross_pick_return == D(0)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-08",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 127,
+      "afirmacion": "Una liquidación completa anterior a exit_basket se clasifica como salida bloqueada y pierde su rentabilidad, aunque todos los ingresos estén contabilizados.",
+      "contraejemplo": "Compra de 1.000 A a 100 y venta completa a 110 con owner correcto. El libro cobra 110.000 y cierra la posición; exit_basket devuelve position_not_in_ledger, sale_gross_total=0 y gross_pick_return=None en vez de +10%.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py::test_full_owner_sale_before_exit_is_not_unresolved",
+      "prueba_propuesta": "from decimal import Decimal as D\nfrom tests.test_ledger import ledger, FREE, MON, FRI\nfrom twlab.simulation import exit_basket\nfrom review.out.astra_scratch.test_ronda6 import enter\n\ndef test_liquidacion_previa_conserva_resultado():\n    lg = ledger('300000', FREE)\n    w = enter(lg)\n    lg.sell(security_id='A', price=D(110), shares=1000, at=MON, event_id='full', owner=w[0].owner)\n    exit_basket(lg, w, close_prices={'A': D(110)}, at=FRI, week_id='2030-W02')\n    assert w[0].gross_pick_return == D('.1')\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-09",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 152,
+      "afirmacion": "Una venta con residuo marca el puesto exited; posteriores intentos se omiten incluso cuando acciones corporativas convierten ese residuo en un lote ordinario vendible.",
+      "contraejemplo": "Dos propietarios compran 1.000 A cada uno. Un dividendo en acciones de 50% deja 1.500 por propietario. La primera cesta vende 1.000 y conserva 500, pero queda exited. Un split 2:1 convierte su residuo en 1.000; tras dividendo de 1 TWD y reintento a 30 no vende nada ni actualiza los campos del puesto. Las 3.000 acciones ajenas permanecen intactas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py::test_mixed_actions_residue_can_be_retried_when_round_lot",
+      "prueba_propuesta": "from decimal import Decimal as D\nfrom tests.test_ledger import ledger, FREE, MON, FRI\nfrom twlab.ledger import CorporateAction\nfrom twlab.simulation import exit_basket\nfrom review.out.astra_scratch.test_ronda6 import enter\n\ndef test_residuo_transformado_sigue_reintentable():\n    lg = ledger('400000', FREE)\n    w = enter(lg)\n    other = enter(lg, week='other')\n    lg.apply_corporate_action(CorporateAction('stock', 'A', 'stock_dividend', MON, stock_ratio=D('.5')))\n    exit_basket(lg, w, close_prices={'A': D(60)}, at=FRI, week_id='2030-W02')\n    lg.apply_corporate_action(CorporateAction('split', 'A', 'split', FRI, split_ratio=D(2)))\n    lg.apply_corporate_action(CorporateAction('div', 'A', 'cash_dividend', FRI, per_share_cash=D(1), pay_at=FRI))\n    exit_basket(lg, w, close_prices={'A': D(30)}, at=FRI, week_id='2030-W02')\n    assert lg.positions['A'].owner_quantity(other[0].owner) == D(3000)\n    assert lg.positions['A'].owner_quantity(w[0].owner) == D(0)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R06-10",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/07_respuesta_ronda5_astra.md",
+      "linea": 28,
+      "afirmacion": "La afirmación 'el redondeo a TWD no afecta a la atribución' excede la implementación: los dividendos atribuidos y la rentabilidad bruta usan el efectivo redondeado.",
+      "contraejemplo": "Para 1.000 acciones y dividendo de 1,2345 TWD, ledger.py:459 atribuye 1.234 en vez de 1.234,5. A precio constante, gross_pick_return=0,012340 y no 0,012345. El cobro redondeado puede ser la política elegida; en ese caso debe corregirse la garantía documental y distinguirlo del valor de referencia sin redondear usado en ventas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda6.py::test_gross_dividend_attribution_is_not_rounded_cash",
+      "prueba_propuesta": "from decimal import Decimal as D\nfrom tests.test_ledger import ledger, FREE, MON, FRI\nfrom twlab.ledger import CorporateAction\nfrom twlab.simulation import exit_basket\nfrom review.out.astra_scratch.test_ronda6 import enter\n\ndef test_promesa_documental_de_atribucion_sin_redondeo():\n    lg = ledger('200000', FREE)\n    w = enter(lg)\n    lg.apply_corporate_action(CorporateAction('div', 'A', 'cash_dividend', MON, per_share_cash=D('1.2345'), pay_at=FRI))\n    exit_basket(lg, w, close_prices={'A': D(100)}, at=FRI, week_id='2030-W02')\n    assert w[0].gross_pick_return == D('.012345')\n",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Documentarás P2 como garantía de los consumidores por defecto dentro de un proceso de confianza, distinguiendo autoridades de prueba, API de bajo nivel y mutación del entorno de importación?",
+    "¿Cómo recuperará el evaluador el paquete y calendario acreditados para validar esquema, estado, corte y plazo sin confiar en campos declarados por el archivo o la observación?",
+    "¿Qué registro persistirá la identidad de todas las cestas, incluidas vacías y fallidas, y cómo derivará sus resultados de todos los flujos y residuos del libro?"
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Las pruebas sostienen la derivación de contenido e identidades y la incorporación de rechazos al hash. Mantener explícita la excepción de created_at y pendientes el catálogo de extractores reales y las pruebas original/corrección sobre capturas."
+    },
+    {
+      "id": "P2",
+      "posicion": "rechazo",
+      "argumento": "Rechazo la formulación absoluta de 07 §3. La prohibición de inyectar verificadores de producción mediante RawStore sí está comprobada. La afirmación defendible es: con código y proceso de confianza sin alterar, registro de producción vacío y allow_test_authorities=False, ambos consumidores rechazan sellos de prueba. Con True aceptan registros que conservan la etiqueta prospective_registered; monkeypatch queda fuera de esa garantía. Además deben resolverse R06-02..05 antes de habilitar producción."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Los contraejemplos originales y el control de varios valores con splits, dividendos y flujos separados pasan. No está sostenido declarar resueltas la unicidad general, todas las ventas ni los reintentos de residuos: corregir R06-05..09 y precisar la política de redondeo de R06-10. El plazo de semanas sin sesiones sigue siendo una enmienda pendiente de congelamiento."
+    }
+  ],
+  "veredicto": "rechazado"
+}

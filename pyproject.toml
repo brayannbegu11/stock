@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twlab"
+version = "0.1.0"
+description = "Laboratorio de inteligencia y evaluación bursátil para TWSE/TPEx con control temporal estricto (carteras simuladas; sin órdenes reales)."
+requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.2",
+  "pyarrow>=15",
+  "duckdb>=1.0",
+  "numpy>=1.26",
+  "requests>=2.31",
+  "pydantic>=2.5",
+  "pyyaml>=6",
+  "jsonschema>=4.20",
+  "exchange_calendars>=4.5",
+]
+
+[project.optional-dependencies]
+model = ["lightgbm>=4.3", "scikit-learn>=1.4"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

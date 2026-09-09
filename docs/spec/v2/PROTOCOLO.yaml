@@ -1,0 +1,187 @@
+version: "2.0"
+review_date: "2026-09-09"
+status: "research_specification_not_executed"
+purpose: "private_research_and_paper_portfolios"
+real_orders_enabled: false
+broker_connections_enabled: false
+
+scope:
+  primary_markets: [TWSE, TPEX]
+  instrument_type: "ordinary_equity"
+  sectors: "all"
+  fixed_company_list: false
+  primary_theme_filter: null
+  international_context: true
+  international_paper_portfolios: "later_separate_experiment"
+  emerging_market_catalog: true
+  emerging_market_simulation: "blocked_until_separate_adapter_validation"
+  track_board_and_listing_history: true
+  include_delisted_in_historical_master: true
+  primary_currency: TWD
+  primary_timezone: Asia/Taipei
+  reader_language: zh-Hant
+  project_documentation_language: es
+
+coverage:
+  distinguish: [catalog, numerical_scoring, deep_document_review, simulation_eligibility]
+  census_target: "all_in_scope_securities_as_of_each_date"
+  price_feature_history_sessions_proposed: 120
+  new_listings_remain_visible: true
+  no_news_is_not_negative_signal: true
+  deep_review_sampling_control_required: true
+  report_coverage_by: [date, market, board, sector, language, source]
+
+weekly_experiment:
+  primary: true
+  information_cutoff:
+    weekday: Sunday
+    local_time: "18:00"
+    timezone: Asia/Taipei
+  forecast_deadline:
+    session: "first_actual_session_of_following_calendar_week"
+    local_time: "08:30"
+  entry: "first_valid_regular_open_after_deadline"
+  target_exit: "last_actual_regular_close_of_same_calendar_week"
+  five_sessions_assumed: false
+  selection_slots: 5
+  weight_per_filled_slot: 0.20
+  fill_unavailable_slots_with_cash: true
+  force_minimum_picks: false
+  exposure_matched_comparator: true
+  second_week_monthly_replication: "week_whose_monday_is_second_monday_of_month"
+  late_forecast_policy: "no_new_positions_keep_existing_ledger"
+  statistical_unit: "week"
+
+daily_challenger:
+  enabled: false
+  activation_requires: "separate_registered_experiment"
+  information_cutoff_local: "08:00"
+  forecast_deadline_local: "08:30"
+  horizon: "five_actual_trading_sessions"
+  may_overwrite_weekly_prediction: false
+  labels_overlap: true
+
+history:
+  primary_start: "2021-01-01"
+  primary_end: "2025-12-31"
+  warmup_start_proposed: "2020-01-01"
+  longer_history: "allowed_if_data_quality_audited_and_preregistered"
+  development: ["2021-01-01", "2023-12-31"]
+  validation: ["2024-01-01", "2024-12-31"]
+  holdout_proposed: ["2025-01-01", "2025-12-31"]
+  holdout_requires_not_previously_used: true
+  data_2026_before_first_forecast_is_prospective: false
+  current_llm_history_label: "exploratory_possible_training_contamination"
+  clean_numeric_track_excludes_current_llm_features: true
+
+training:
+  shared_cross_sectional_model: true
+  first_candidates: [regularized_linear, lightgbm]
+  main_target: "forward_weekly_total_return_minus_matched_universe_return"
+  portfolio_execution_evaluated_separately: true
+  temporal_validation: "walk_forward_nested"
+  random_row_split_allowed: false
+  preprocessing_fit_on_training_only: true
+  calibration_fit_on_separate_past_window: true
+  purge_overlapping_outcomes: true
+  purge_length: "derived_from_actual_label_end_times"
+  retraining_cadence_proposed: monthly
+  use_only_mature_labels: true
+  new_model_shadow_required: true
+  automatic_unreviewed_promotion: false
+  adapter_training_initial_purpose: "fact_and_event_extraction_not_hindsight_picks"
+
+models:
+  builder:
+    provider: Anthropic
+    requested_model: claude-fable-5-1
+  reviewer:
+    provider: OpenAI
+    requested_model: gpt-6-astra
+  predictor_comparison: "independent_same_packet"
+  immutable_model_revisions: null
+  must_record_requested_and_returned_model: true
+  provider_documents_recheck_before_use: true
+  repeated_calls_until_desirable_answer: false
+  permitted_format_repair_retries: 1
+  frontier_model_weights_finetuning_assumed: false
+
+point_in_time:
+  preserve_raw_versions: true
+  immutable_prediction_archive: true
+  independent_timestamp_evidence_required: true
+  historical_predictor_open_web: false
+  outcome_store_access_for_predictor: false
+  preserve_actual_ingested_at: true
+  require_original_availability_evidence: true
+  date_without_time_policy_proposed: "admit_next_session_unless_earlier_time_verified"
+  availability_quality: [verified_original, verified_version, conservative_inference, unknown]
+  unknown_availability_admitted_to_primary: false
+  live_first_seen_before_cutoff_required: true
+
+benchmarks:
+  main: "same_numeric_model_without_text_features"
+  additional:
+    - momentum_20_sessions
+    - eligible_universe_equal_weight
+    - formosa_total_return_subject_to_series_validation
+    - random_liquidity_and_sector_matched
+    - news_attention_without_llm
+    - independent_fable
+    - independent_astra
+    - theme_first_no_fixed_theme
+  match_entry_exit_interval: true
+  do_not_use_prior_close_as_open: true
+
+simulation:
+  signal_only_fractional_output_labeled: true
+  execution_feasible_output_requires_lots: true
+  single_cash_and_positions_ledger: true
+  unsettled_cash_policy: null
+  notional_twd: null
+  participation_cap: null
+  liquidity_eligibility_rule: null
+  stuck_positions_remain_in_ledger: true
+  no_price_does_not_mean_zero_return: true
+  delisting_terminal_valuation_policy: null
+  corporate_action_bookkeeping: "exactly_once"
+  quote_adjustment_method_validation_required: true
+  ordinary_stock_sale_tax_current_reference: 0.003
+  verify_tax_by_instrument_and_date: true
+  illustrative_commission_per_side: 0.001425
+  contracted_commission_per_side: null
+  illustrative_slippage_bps_per_side: [5, 10, 25]
+  central_slippage_scenario: null
+  cash_interest_policy_proposed: "zero_for_base_case_disclose"
+
+statistics:
+  main_metric: "mean_weekly_net_excess_hybrid_minus_numeric_exposure_matched"
+  confidence_method: "paired_week_block_bootstrap"
+  bootstrap_block_length: null
+  additional_block_lengths_for_sensitivity: null
+  random_pick_trajectories_proposed: 10000
+  random_seed_proposed: 20260909
+  register_all_trials: true
+  multiplicity_review_required: true
+  twelve_weeks_mean_technical_pilot_not_predictive_proof: true
+  sequential_review_plan: null
+
+updates:
+  polling_minutes_example: 15
+  polling_requires_provider_permission: true
+  price_refresh: "after_actual_provider_availability_not_assumed_at_market_close"
+  source_and_rules_review: "monthly_and_on_relevant_announcements"
+  forecast_revisions_are_new_records: true
+  critical_stale_data_policy: "block_or_declared_degradation"
+
+blocking_decisions:
+  data_provider_and_license: null
+  versioned_news_coverage: null
+  budget_cap_usd: null
+  notional_and_capacity_rule: null
+  applicable_commission_and_central_costs: null
+  unresolved_event_policy: null
+  verified_benchmark_series: null
+  statistical_review_plan: null
+  protocol_freeze_id: null
+  prospective_first_forecast_at: null

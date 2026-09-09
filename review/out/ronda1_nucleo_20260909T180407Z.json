@@ -1,0 +1,388 @@
+{
+  "ronda": "01",
+  "revisor": "GPT-6 Astra — revisor independiente y adversarial",
+  "resumen": "Rechazado. La captura oficial contradice la interpretación del calendario: se eliminaron tres días de negociación, no tres festivos. También reproduje filtración temporal, alteración de paquetes sin cambiar su hash, evasión del aislamiento, pérdida de historia del maestro y errores contables. Ejecuté el comando solicitado: falló antes de recolectar pruebas porque el entorno de solo lectura impide crear temporales. La ejecución alternativa con captura desactivada terminó con 71 passed, 4 errors; los cuatro errores son de preparación de tmp_path en test_store.py, no fallos de sus aserciones. Al cierre había 75 casos, incluido test_catalog.py, incorporado durante la revisión. Ejecuté además 23 pruebas adversariales mediante un recolector de pytest en memoria: 23 failed, demostrando los contraejemplos detallados. No modifiqué archivos. Las pruebas propuestas importan utilidades existentes de tests/ cuando corresponde.",
+  "hallazgos": [
+    {
+      "id": "R01-01",
+      "severidad": "bloqueante",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/calendar.py",
+      "linea": 133,
+      "afirmacion": "El adaptador interpreta todas las filas del calendario como cierres. La muestra incluye expresamente días de inicio y último día de negociación. Los tests codifican la misma interpretación equivocada y los informes 01/02 atribuyen falsamente el error a exchange_calendars.",
+      "contraejemplo": "La captura identifica 1150102 como 國曆新年開始交易日, 1150211 como 農曆春節前最後交易日 y 1150223 como 農曆春節後開始交易日. El código devuelve is_session=False para los tres. Produce 240 sesiones, frente a 243 al conservar estos días de negociación de la propia muestra. La semana del 09-02 tiene tres sesiones según la captura, no dos. Un documento sin hora del 10-02 se retrasa hasta el 24-02, omitiendo la sesión del 11-02.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_calendar_trading_markers_are_sessions():\n    from datetime import date\n    from twlab.calendar import load_twse_reference_calendar_2026\n    c = load_twse_reference_calendar_2026()\n    days = [date(2026, 1, 2), date(2026, 2, 11), date(2026, 2, 23)]\n    actual = [c.is_session(d) for d in days]\n    assert actual == [True, True, True], (actual, len(c.sessions), c.week_sessions(date(2026, 2, 9)))\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-02",
+      "severidad": "bloqueante",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 110,
+      "afirmacion": "El paquete prospectivo confía en available_at y first_seen_at suministrados por el llamante, sin vincularlos a una captura real ni comprobar contradicciones con published_at. La preservación de ingested_at en RawStore no protege este camino: Document no exige una referencia a ese registro.",
+      "contraejemplo": "Un documento publicado el 07-09-2026 a las 10:00 +08:00 entra en un paquete con corte el 06-09 a las 17:00 simplemente asignando available_at y first_seen_at al corte y declarando verified_original. Se admitió con payload revenue=999. La prueba demuestra aceptación de metadatos contradictorios; no demuestra que una captura real haya sido alterada.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_future_publication_cannot_be_backdated():\n    from datetime import datetime\n    from twlab.packet import Document, build_packet\n    from twlab.timeutil import AvailabilityQuality as Q\n    old = datetime.fromisoformat('2026-09-06T17:00:00+08:00')\n    future = datetime.fromisoformat('2026-09-07T10:00:00+08:00')\n    d = Document('late', 'filing', 'test', ('A',), old, Q.VERIFIED_ORIGINAL,\n                 published_at=future, first_seen_at=old, payload={'revenue': 999})\n    p = build_packet(packet_id='p', cutoff_at=old, documents=[d], mode='prospective',\n                     evidence_class='prospective_registered', now=future)\n    assert not p.admitted, p.admitted_ids()\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-03",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 105,
+      "afirmacion": "Exigir timestamps conscientes de zona no basta: comparar directamente dos datetime con la misma ZoneInfo puede ordenar por hora local e ignorar fold durante el cambio de horario. La API admite cortes en cualquier zona consciente; debe comparar instantes normalizados a UTC.",
+      "contraejemplo": "Nueva York, 01-11-2026: corte 01:30 fold=0 equivale a 05:30 UTC; documento 01:15 fold=1 equivale a 06:15 UTC. El documento es 45 minutos posterior, pero entra. Este caso no afecta al corte fijo expresado en Taipei; sí al contrato general aceptado por build_packet.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_dst_fold_does_not_admit_future():\n    from datetime import datetime\n    from zoneinfo import ZoneInfo\n    from twlab.packet import Document, build_packet\n    from twlab.timeutil import AvailabilityQuality as Q\n    ny = ZoneInfo('America/New_York')\n    cutoff = datetime(2026, 11, 1, 1, 30, tzinfo=ny, fold=0)\n    future = datetime(2026, 11, 1, 1, 15, tzinfo=ny, fold=1)\n    assert future.timestamp() > cutoff.timestamp()\n    d = Document('future', 'news', 's', (), future, Q.VERIFIED_ORIGINAL)\n    p = build_packet(packet_id='p', cutoff_at=cutoff, documents=[d], mode='historical',\n                     evidence_class='historical_current_llm_exploratory')\n    assert not p.admitted, p.admitted_ids()\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-04",
+      "severidad": "bloqueante",
+      "categoria": "contrato",
+      "archivo": "src/twlab/packet.py",
+      "linea": 78,
+      "afirmacion": "El contenido entregado puede modificarse sin cambiar packet_hash: payload sigue siendo mutable y el hash utiliza un manifiesto calculado anteriormente. Además, content_hash omite fuente, identidades y metadatos temporales. No garantiza paquetes idénticos ni integridad de la evidencia temporal.",
+      "contraejemplo": "Después de construir un paquete, añadí future_close=999 al payload admitido. packet_hash permaneció exactamente c1c724929906a0cf3c6f01faeff675854a3aa58187610ecdef7550a87a3a09ab.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_packet_hash_covers_delivered_payload():\n    from tests.test_schema import packet\n    p = packet()\n    before = p.packet_hash()\n    p.admitted[0].payload['future_close'] = 999\n    assert p.packet_hash() != before, (before, p.packet_hash())\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-05",
+      "severidad": "bloqueante",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 160,
+      "afirmacion": "GuardedWorkspace no implementa el aislamiento por permisos exigido: guarda los resultados dentro del objeto accesible al predictor y permite modificar role. El test PIT-11 comprueba únicamente una llamada disciplinada al método.",
+      "contraejemplo": "Creé el workspace como predictor, asigné role='evaluator' y outcomes() entregó future_return=0.99 sin AccessDenied. También existe acceso directo al atributo _outcomes. La solución requiere separar capacidades/procesos y no entregar resultados al predictor.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_predictor_cannot_promote_itself():\n    import pytest\n    from tests.test_schema import packet\n    from twlab.packet import GuardedWorkspace, AccessDenied\n    w = GuardedWorkspace(packet=packet(), outcomes={'future_return': 0.99}, role='predictor')\n    w.role = 'evaluator'\n    with pytest.raises(AccessDenied):\n        w.outcomes()\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-06",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/master.py",
+      "linea": 143,
+      "afirmacion": "Se admiten segmentos solapados sin rechazarlos ni cerrar el anterior. Al cerrar el segmento más reciente, universe y resolve_symbol pueden resucitar el segmento antiguo. El problema debe impedirse al insertar o resolverse con reglas explícitas de vigencia.",
+      "contraejemplo": "A tiene símbolo 1111 desde 2020 sin cierre; se añade A/2222 desde 2022 y se cierra este último en 2023. En 2024 universe vuelve a incluir A/1111 y resolve_symbol('1111') devuelve el segmento de 2020. Si otro emisor reutiliza 1111, el segmento resucitado también introduce una ambigüedad falsa.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_closed_segment_does_not_resurrect_previous_one():\n    from datetime import date\n    from tests.test_master import sv, R\n    from twlab.master import SecurityMaster\n    m = SecurityMaster()\n    m.add(sv(security_id='A', symbol='1111', valid_from=date(2020, 1, 1)))\n    m.add(sv(security_id='A', symbol='2222', valid_from=date(2022, 1, 1), recorded_at=R(2022, 1, 1)))\n    m.close_version('A', valid_to=date(2023, 1, 1), recorded_at=R(2022, 12, 1), source_id='s')\n    assert m.universe(as_of=date(2024, 1, 1)) == [], m.resolve_symbol('1111', as_of=date(2024, 1, 1))\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-07",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/master.py",
+      "linea": 93,
+      "afirmacion": "Los eventos terminales no son versionados: una revisión sobrescribe la anterior en _terminal. terminal_event(known_at=...) deja de reconstruir lo que se sabía antes de la revisión.",
+      "contraejemplo": "El 01-09 se registra retirada efectiva el 10-09; el 05-09 se cambia al 20-09. Consultar known_at=03-09 devuelve None en lugar del anuncio original efectivo el 10-09.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_terminal_event_versions_survive():\n    from datetime import date\n    from tests.test_master import sv, R\n    from twlab.master import SecurityMaster, TerminalEvent\n    m = SecurityMaster()\n    m.add(sv(security_id='A', symbol='1111', valid_from=date(2020, 1, 1)))\n    for day, end in [(1, 10), (5, 20)]:\n        ev = TerminalEvent('A', 'delisting', date(2026, 9, end), R(2026, 9, day), 's')\n        m.close_version('A', valid_to=ev.effective, recorded_at=ev.recorded_at, source_id='s', terminal=ev)\n    ev = m.terminal_event('A', known_at=R(2026, 9, 3))\n    assert ev is not None and ev.effective == date(2026, 9, 10), ev\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-08",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/master.py",
+      "linea": 170,
+      "afirmacion": "classify_coverage ignora mercado, tablero y tipo de instrumento al conceder elegibilidad. El bloqueo explícito de ESB del protocolo puede eludirse con historial suficiente y liquidity_ok=True.",
+      "contraejemplo": "Un valor ESB/emerging con 500 sesiones, mínimo 120 y liquidez aceptada devuelve simulation_eligible=True y reasons=(). No existe prueba de un adaptador ESB separado.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_esb_cannot_be_execution_eligible():\n    from datetime import date\n    from tests.test_master import sv\n    from twlab.master import classify_coverage\n    v = sv(security_id='E', symbol='9999', market='ESB', board='emerging', valid_from=date(2020, 1, 1))\n    c = classify_coverage(v, price_history_sessions=500, min_history_sessions=120, liquidity_ok=True)\n    assert not c.simulation_eligible, c\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-09",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 96,
+      "afirmacion": "exit_basket vende las acciones originales de entrada, sin ajustar la cantidad del puesto por acciones corporativas. También calcula gross_pick_return con precios nominales sin incorporar el split.",
+      "contraejemplo": "Compra de 1.000 acciones a 100 TWD, split 2:1 y cierre a 50. Se venden solo 1.000 de las 2.000 acciones, quedan 1.000 abiertas y el puesto figura exited. El efectivo es 50.000 en lugar de 100.000 y la rentabilidad bruta de selección se informa como -50%, aunque el patrimonio total no perdió valor.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_split_exit_sells_adjusted_position():\n    from tests.test_ledger import MON, FRI, D, ledger\n    from twlab.ledger import CostModel, CorporateAction\n    from twlab.simulation import enter_basket, exit_basket, basket_report\n    lg = ledger('100000', CostModel(D(0), sell_tax=D(0)))\n    slots = enter_basket(lg, picks=['A'], slots=5, notional_per_slot=D('100000'),\n                         open_prices={'A': D(100)}, at=MON, week_id='w')\n    lg.apply_corporate_action(CorporateAction('split', 'A', 'split', MON, split_ratio=D(2)))\n    exit_basket(lg, slots, close_prices={'A': D(50)}, at=FRI, week_id='w')\n    rep = basket_report('w', slots, equity_start=D(100000),\n                        equity_end=lg.valuation(prices={'A': D(50)}, at=FRI).total)\n    assert not lg.positions and lg.cash == D(100000), (lg.cash, lg.positions, rep.mean_gross_pick_return)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-10",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 89,
+      "afirmacion": "Una salida bloqueada deja de ser procesable por exit_basket, incluso después de reanudarse la negociación. Conservar la posición es correcto; perder su mecanismo de resolución no lo es.",
+      "contraejemplo": "Una cesta compra 1.000 acciones; la salida durante suspensión cambia el puesto a exit_blocked. Después de mark_resumed y una nueva llamada con precio válido, siguen las 1.000 acciones y el estado exit_blocked porque solo se procesan puestos filled.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_blocked_exit_can_resume():\n    from tests.test_ledger import MON, FRI, D, ledger\n    from twlab.ledger import CostModel\n    from twlab.simulation import enter_basket, exit_basket\n    lg = ledger('100000', CostModel(D(0), sell_tax=D(0)))\n    slots = enter_basket(lg, picks=['A'], slots=1, notional_per_slot=D(100000),\n                         open_prices={'A': D(100)}, at=MON, week_id='w')\n    lg.mark_suspended('A', at=FRI)\n    exit_basket(lg, slots, close_prices={'A': D(100)}, at=FRI, week_id='w')\n    lg.mark_resumed('A', at=FRI)\n    exit_basket(lg, slots, close_prices={'A': D(100)}, at=FRI, week_id='w')\n    assert not lg.positions, (slots[0].status, lg.positions['A'].shares)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-11",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 230,
+      "afirmacion": "El identificador de una acción corporativa se consume antes de validar y aplicar el evento. Un error impide reintentar la misma acción corregida aunque nunca se haya contabilizado. Los dividendos en acciones no soportados deben bloquear la simulación afectada hasta disponer de tratamiento explícito; no deben omitirse para continuar la evaluación.",
+      "contraejemplo": "cash_dividend con event_id='div' y per_share_cash ausente genera ValueError. Reintentar 'div' con 2 TWD por acción genera DuplicateCorporateAction y no paga los 2.000 TWD correspondientes. El mismo consumo prematuro ocurre antes de rechazar un kind desconocido.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_failed_corporate_action_does_not_consume_id():\n    import pytest\n    from tests.test_ledger import MON, FRI, D, ledger\n    from twlab.ledger import CorporateAction\n    lg = ledger()\n    lg.buy(security_id='A', price=D(100), shares=1000, at=MON, event_id='b')\n    with pytest.raises(ValueError):\n        lg.apply_corporate_action(CorporateAction('div', 'A', 'cash_dividend', FRI))\n    cash = lg.cash\n    lg.apply_corporate_action(CorporateAction('div', 'A', 'cash_dividend', FRI, per_share_cash=D(2)))\n    assert lg.cash == cash + D(2000)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-12",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 238,
+      "afirmacion": "Los dividendos se asignan a las acciones presentes al llamar al método, sin comprobar propiedad en la fecha correspondiente ni orden temporal. CorporateAction tampoco separa derechos y pago, necesarios para conservar derechos tras una venta y evitar reutilizar anticipadamente efectivo.",
+      "contraejemplo": "Compré 1.000 acciones el lunes 07-09-2026 y después apliqué un dividendo efectivo el domingo anterior de 2,5 TWD por acción. El efectivo subió de 899.857 a 902.357 TWD: cobró un tenedor que todavía no había comprado en la fecha del evento.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_action_before_purchase_cannot_pay_new_holder():\n    from datetime import timedelta\n    from tests.test_ledger import MON, D, ledger\n    from twlab.ledger import CorporateAction\n    lg = ledger()\n    lg.buy(security_id='A', price=D(100), shares=1000, at=MON, event_id='b')\n    cash = lg.cash\n    try:\n        lg.apply_corporate_action(CorporateAction('old-div', 'A', 'cash_dividend', MON - timedelta(days=1),\n                                                per_share_cash=D('2.5')))\n    except ValueError:\n        return\n    assert lg.cash == cash, (cash, lg.cash)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-13",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 202,
+      "afirmacion": "La comisión de venta usa el importe después del deslizamiento, pero el impuesto usa el importe previo. Si el deslizamiento modifica el precio ejecutado, como presupone la fórmula de comisión, ambos deben partir del importe bruto realmente ejecutado antes de comisiones e impuestos.",
+      "contraejemplo": "Venta de 1.000 acciones a referencia 100 TWD con 25 pb: importe ejecutado modelado 99.750; comisión calculada sobre 99.750, impuesto calculado sobre 100.000. El impuesto informado es 300 TWD, frente a round_half_up(99.750 × 0,003)=299. Es una inconsistencia interna del modelo; debe documentarse otra interpretación si el deslizamiento se pretende tratar como gasto separado.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_sale_tax_uses_simulated_consideration():\n    from tests.test_ledger import MON, FRI, D, ledger\n    from twlab.ledger import CostModel, q_twd\n    lg = ledger(costs=CostModel(D('0.001425'), slippage_bps_per_side=25))\n    lg.buy(security_id='A', price=D(100), shares=1000, at=MON, event_id='b')\n    f = lg.sell(security_id='A', price=D(100), shares=1000, at=FRI, event_id='s')\n    assert f.tax == q_twd((f.gross - f.slippage_cost) * D('0.003')), f\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-14",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 209,
+      "afirmacion": "El efectivo se redondea sobre el total sin redondear, mientras Fill informa componentes redondeados individualmente. Sus importes no concilian y no se registra una diferencia de redondeo.",
+      "contraejemplo": "Venta de 100.000 TWD sin deslizamiento: gross=100.000, commission=143, tax=300 y cash_delta=99.558. Los componentes informados suman un neto de 99.557. La fricción de 585 TWD del test existente oculta esta discrepancia entre eventos y efectivo.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_fill_cash_reconciles_with_components():\n    from tests.test_ledger import MON, FRI, D, ledger\n    lg = ledger()\n    lg.buy(security_id='A', price=D(100), shares=1000, at=MON, event_id='b')\n    f = lg.sell(security_id='A', price=D(100), shares=1000, at=FRI, event_id='s')\n    assert f.cash_delta == f.gross - f.slippage_cost - f.commission - f.tax, f\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-15",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 205,
+      "afirmacion": "Una venta parcial reduce shares pero mantiene íntegro cost_twd. La base de coste de la posición restante queda inflada y no se registra la parte realizada.",
+      "contraejemplo": "Sin costes, comprar 2.000 acciones a 100 cuesta 200.000 TWD. Vender 1.000 a 110 deja 1.000 acciones con cost_twd=200.000 en lugar de 100.000. La valoración por mercado sigue funcionando, pero cualquier resultado basado en esa base de coste será incorrecto.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_partial_sale_reduces_cost_basis():\n    from tests.test_ledger import MON, FRI, D, ledger\n    from twlab.ledger import CostModel\n    lg = ledger(costs=CostModel(D(0), sell_tax=D(0)))\n    lg.buy(security_id='A', price=D(100), shares=2000, at=MON, event_id='b')\n    lg.sell(security_id='A', price=D(110), shares=1000, at=FRI, event_id='s')\n    assert lg.positions['A'].cost_twd == D(100000), lg.positions['A'].cost_twd\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-16",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 164,
+      "afirmacion": "El libro no valida que los precios sean positivos antes de operar. Un precio negativo crea efectivo mediante una compra. Deben validarse también finitud y dominios de cantidades, ratios y costes antes de modificar el estado.",
+      "contraejemplo": "Con 1.000.000 TWD, comprar 1.000 acciones a -100 produce un Fill y aumenta el efectivo a 1.100.143 TWD. La comisión también resulta negativa.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_negative_price_cannot_create_cash():\n    from tests.test_ledger import MON, D, ledger\n    from twlab.ledger import Rejection\n    lg = ledger()\n    try:\n        f = lg.buy(security_id='A', price=D(-100), shares=1000, at=MON, event_id='b')\n    except ValueError:\n        return\n    assert isinstance(f, Rejection), (f, lg.cash)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-17",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 197,
+      "afirmacion": "Las ventas omiten la restricción de lotes aplicada a las compras. Se ejecutan lotes menores con el mismo precio de la sesión ordinaria, sin adaptador ni identificación de una simulación no ejecutable.",
+      "contraejemplo": "Tras comprar un lote de 1.000 acciones, sell(shares=1, price=100) devuelve Fill y abona 100 TWD. La prueba existente solo rechaza compras de lotes menores. Los residuos de acciones corporativas también alcanzan este camino.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_odd_lot_sale_requires_separate_execution():\n    from tests.test_ledger import MON, FRI, D, ledger\n    from twlab.ledger import Rejection\n    lg = ledger()\n    lg.buy(security_id='A', price=D(100), shares=1000, at=MON, event_id='b')\n    f = lg.sell(security_id='A', price=D(100), shares=1, at=FRI, event_id='s')\n    assert isinstance(f, Rejection), f\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-18",
+      "severidad": "bloqueante",
+      "categoria": "contrato",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 44,
+      "afirmacion": "La validación no comprueba orden temporal, plazo de emisión ni igualdad del corte con el paquete. Una predicción posterior al horizonte sigue siendo selected y válida. El esquema valida formatos de fecha, no esas relaciones; falta una barrera operativa antes de simular.",
+      "contraejemplo": "Con el paquete cortado el domingo 06-09-2026 a las 18:00, una predicción declara corte 01-09, deadline 07-09 a las 08:30 e issued_at 12-09 a las 10:00, después del cierre semanal. validate_prediction devuelve [].",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_late_forecast_or_wrong_packet_cutoff_rejected():\n    from tests.test_schema import base, packet\n    from twlab.schemas import validate_prediction\n    obj = base(issued_at='2026-09-12T10:00:00+08:00', cutoff_at='2026-09-01T18:00:00+08:00')\n    assert validate_prediction(obj, packet()), 'late selected forecast validated'\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-19",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 47,
+      "afirmacion": "No se exige unicidad de security_id ni de rank. Una selección repetida puede ocupar los cinco puestos y concentrar la cesta en un solo valor. maxItems=20 no es por sí solo un error, pues la investigación contempla una variante de veinte emisores; falta vincular límites y selección al experimento registrado.",
+      "contraejemplo": "Cinco copias de SEC-1 con rank=1 pasan validate_prediction. enter_basket tampoco deduplica picks y puede comprar repetidamente el mismo valor.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_duplicate_ranking_rejected():\n    from copy import deepcopy\n    from tests.test_schema import base, packet\n    from twlab.schemas import validate_prediction\n    obj = base()\n    obj['ranking'] = [deepcopy(obj['ranking'][0]) for _ in range(5)]\n    assert validate_prediction(obj, packet()), 'five identical securities with rank=1 accepted'\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-20",
+      "severidad": "bloqueante",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/store.py",
+      "linea": 50,
+      "afirmacion": "prospectively_sealed equivale a dos cadenas no vacías, sin verificar recibo, autoridad, hash ni instante acreditado. Incluso los registros con reloj injected pueden declararse sellados. El esquema de predicción presenta el mismo problema al aceptar un identificador arbitrario.",
+      "contraejemplo": "Un CaptureRecord sintético fechado en 2021, con hash de ceros, clock_source='injected', receipt_id='inventado' y receipt_authority='yo' devuelve prospectively_sealed=True. No existe prueba temporal independiente.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_fake_receipt_cannot_seal_injected_capture():\n    from twlab.store import CaptureRecord\n    r = CaptureRecord('id', 's', 'd', 'none', '0'*64, 0, '2021-01-01T00:00:00+00:00',\n                      'u', 200, 'application/json', 'injected',\n                      receipt_id='inventado', receipt_authority='yo')\n    assert not r.prospectively_sealed, r.prospectively_sealed\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-21",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 25,
+      "afirmacion": "evaluation.py proporciona primitivas, pero no implementa la métrica principal validada: IntervalReturn carece de exposición, moneda, procedencia neta, semana y vínculo a predicción sellada. El bootstrap conserva bloques de posiciones del array solo si el llamante ya entregó semanas ordenadas y emparejadas; no garantiza STA-01. Tampoco hay controles para contaminación de reserva, registro de ensayos, cobertura de semanas inválidas, pérdidas absolutas, afirmaciones tras doce semanas o ventaja solo bruta de STA-02..STA-07.",
+      "contraejemplo": "H1 con exposición 100% y retorno 10%, frente a Q1 con exposición 20% y retorno 2%, produce exceso 8% sin rechazo. Además ejecuté el bootstrap con 40 retornos semanales alternos ±2% y con esos mismos retornos repetidos cinco veces por semana: ambos arrays se aceptan con block_length=2, aunque el segundo ya no expresa bloques de dos semanas. La prueba propuesta exige ampliar el contrato; no presupone que el algoritmo de bloques sea incorrecto cuando recibe datos semanales válidos.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_main_comparison_rejects_unmatched_exposure():\n    import pytest\n    from tests.test_ledger import MON, FRI, D\n    from twlab.evaluation import IntervalReturn, paired_excess, IntervalMismatch\n    a = IntervalReturn('H1 exposure=100%', MON, FRI, 'open', 'close', D('0.10'))\n    b = IntervalReturn('Q1 exposure=20%', MON, FRI, 'open', 'close', D('0.02'))\n    with pytest.raises(IntervalMismatch):\n        paired_excess(a, b)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-22",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 40,
+      "afirmacion": "TXT-07 solo está cubierto sintácticamente: una cadena cualquiera como calibration_model_id permite presentar calibrated_probability sin comprobar existencia, entrenamiento pasado o validación del calibrador.",
+      "contraejemplo": "Asignar calibrated_probability=0.9 y calibration_model_id='inventado' devuelve [] con el paquete existente. Esto no prueba que se haya publicado una probabilidad falsa; demuestra que el validador usado como barrera no la distingue.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_unverified_calibration_id_is_not_validated_probability():\n    from tests.test_schema import base, packet\n    from twlab.schemas import validate_prediction\n    o = base()\n    o['ranking'][0]['calibrated_probability'] = 0.9\n    o['ranking'][0]['calibration_model_id'] = 'inventado'\n    assert validate_prediction(o, packet()), 'unverified 90% probability accepted'\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-23",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 279,
+      "afirmacion": "La presencia de un precio en el mapping evita la rama que marca la suspensión. valuation puede devolver una valoración sin ninguna bandera para una posición suspendida; el mapping tampoco acredita la fecha del precio.",
+      "contraejemplo": "Posición de 1.000 acciones suspendida, con prices={'A':100}: positions_value=100.000, flags=() y unresolved=(). Con el mismo último precio pero mapping vacío aparece suspended_stale_price. El estado informado depende de cómo se pase el mismo precio.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "def test_suspension_remains_flagged_with_supplied_price():\n    from tests.test_ledger import MON, FRI, D, ledger\n    lg = ledger()\n    lg.buy(security_id='A', price=D(100), shares=1000, at=MON, event_id='b')\n    lg.mark_suspended('A', at=FRI)\n    v = lg.valuation(prices={'A': D(100)}, at=FRI)\n    assert v.flags or v.unresolved, v\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-24",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "docs/informes/02_auditoria_fuentes_entrega_A.md",
+      "linea": 63,
+      "afirmacion": "Un plazo legal de publicación no acredita disponibilidad del valor concreto ni de su revisión. Clasificar ingresos históricos sin create_time como conservative_inference a partir del día 10/15 puede introducir publicaciones tardías o cifras corregidas después. La presencia de hora en otros endpoints tampoco acredita por sí sola que el cuerpo capturado sea la versión original.",
+      "contraejemplo": "Caso sintético: ingresos de agosto publicados el 14-09-2026, o corregidos el 01-10. Imputar disponibilidad desde la sesión posterior al día 10 los admite al corte dominical del 13-09, antes de la publicación o de la revisión. Las muestras descritas no excluyen ninguno de esos casos. No reproduje una filtración mediante adaptador real porque ese adaptador no existe todavía.",
+      "comando_reproduccion": null,
+      "prueba_propuesta": "Crear dos versiones sintéticas de un ingreso con publicación original 2026-09-14 y corrección 2026-10-01, ambas con período agosto y create_time histórico ausente. El adaptador debe conservar disponibilidad unknown mientras no haya evidencia por versión y excluir ambas del corte 2026-09-13T18:00:00+08:00. Añadir una muestra primaria archivada que contenga original y corrección antes de promover la fuente.",
+      "estado_verificacion": "hipotesis"
+    },
+    {
+      "id": "R01-25",
+      "severidad": "media",
+      "categoria": "unidades",
+      "archivo": "docs/informes/01_entendimiento_bloqueantes_y_plan.md",
+      "linea": 31,
+      "afirmacion": "La comparación citada no verifica equivalencia entre fuentes: usa empresas y períodos diferentes. Los tests de timeutil validan formatos temporales y el nuevo test_catalog verifica etiquetas de unidad declaradas, sin normalizar dos observaciones equivalentes. La afirmación de verificación excede esa evidencia.",
+      "contraejemplo": "Se contraponen TSMC diciembre de 2020, 117.364.912.000 TWD, y 台泥 julio de 2026, 13.744.103 miles. La segunda cantidad normalizada es 13.744.103.000 TWD y corresponde a otra observación. Esto no demuestra que las unidades declaradas sean falsas; demuestra que ese par no las valida.",
+      "comando_reproduccion": "python -B -c \"print(13744103 * 1000, 117364912000)\"",
+      "prueba_propuesta": "Archivar observaciones de ambos proveedores para el mismo security_id, mes, alcance consolidado/individual y versión. Comprobar igualdad tras multiplicar por 1.000 la cifra oficial, conservando valores originales y procedencia. Añadir casos negativos, nulos y porcentajes; no sustituir esa prueba por comprobar que units contiene la cadena TWD_thousands.",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Qué revisión y manifiesto de archivos se congelarán para la siguiente ronda? El árbol figura sin seguimiento en Git y test_catalog.py apareció durante esta revisión.",
+    "¿Cómo se vincularán first_seen_at, available_at y cada versión documental a una captura inmutable verificable, incluyendo revisiones y recibos temporales que acrediten existencia antes del plazo?",
+    "¿Dónde se representarán el calendario conocido al corte y el efectivo, con anuncios de cierres extraordinarios y horarios por sesión? La clase actual solo ofrece horarios constantes y recorded_at sin consultas históricas; el cargador fija además una hora de captura sin recibo.",
+    "¿Qué política separará derechos de dividendos, fecha de pago, fracciones, dividendos en acciones y resolución de retiradas? Los eventos no soportados deben bloquear las simulaciones afectadas y conservar sus posiciones.",
+    "¿Qué componente rechazará evaluaciones sin predicción sellada y verificará exposición, costes, semanas inválidas, reserva y registro de ensayos para STA-01..STA-07?",
+    "¿Dónde están las muestras de auditoría con hashes, horas reales de captura y originales/correcciones? El informe sitúa los crudos en un scratchpad y no permite contrastar todas sus conclusiones desde el repositorio."
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "T1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Mantener la política conservadora y registrar sensibilidad. El ejemplo del viernes es correcto, pero no justifica un retraso semanal sistemático de todos los ingresos: una fecha del lunes pasa al martes y puede entrar en el siguiente corte dominical ordinario. Corregir primero el calendario y no usar plazos legales como evidencia de disponibilidad."
+    },
+    {
+      "id": "T2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Definir semanas sin sesiones es necesario. La semana del 16-02 sigue siendo un caso válido; la del 09-02 tiene tres sesiones según la captura. No abrir/cerrar operaciones no significa detener dividendos, pagos u otros eventos del libro. Conservar el registro operativo y declarar su tratamiento estadístico."
+    },
+    {
+      "id": "T3",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La falta de cuota debe registrarse como fallo operativo, no como abstención. Adelantar una corrida solo es compatible con el experimento si conserva el corte y el paquete exigidos; no autoriza reemisión retrospectiva ni exposición nueva después del plazo."
+    },
+    {
+      "id": "T4",
+      "posicion": "acepto",
+      "argumento": "No asumir adaptación de pesos de modelos frontera ya está establecido en el protocolo. Acepto esa restricción de diseño; no considero que la frase del informe constituya una nueva verificación independiente de capacidades actuales del proveedor."
+    },
+    {
+      "id": "A1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La captura prospectiva con reloj real es necesaria. Una captura diaria de instantáneas no garantiza conservar anuncios o revisiones que desaparezcan entre capturas. Congelar frecuencia por fuente, medir pérdidas y errores y documentar permisos; la estimación de volumen no demuestra cobertura."
+    },
+    {
+      "id": "A2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Es razonable priorizar anuncios oficiales y desarrollar A-C sin una licencia periodística completa. No aceptar automáticamente verified_original por existir campos de hora ni afirmar que todas las noticias son copias de menor garantía. Exigir evidencia de versión y declarar la cobertura documental pendiente."
+    },
+    {
+      "id": "A3",
+      "posicion": "rechazo",
+      "argumento": "Rechazo el cambio tal como está fundamentado e implementado: las tres supuestas discrepancias son días de negociación explícitos en la muestra oficial. La fuente oficial puede seguir siendo autoridad, pero debe interpretarse correctamente; retirar las conclusiones sobre 240 sesiones y corregir los tests que imponen el error."
+    },
+    {
+      "id": "A4",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Capturar índices de rentabilidad total es útil. La existencia de unas filas solo resuelve descubrimiento de la fuente, no continuidad histórica, revisiones ni equivalencia apertura-cierre. Mantener bloqueada la declaración de referencia validada hasta probar esos extremos."
+    },
+    {
+      "id": "A5",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Añadir contratos y pruebas de unidades es necesario. La comparación entre TSMC y 台泥 no verifica equivalencia; exigir observaciones emparejadas por identidad, período, alcance y versión, además de conversiones ejecutadas."
+    },
+    {
+      "id": "A6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "El esquema reproducible de hallazgos está justificado por los invariantes del proyecto. Una tasa externa de alucinación no demuestra la tasa de error de esta revisión ni que un esfuerzo concreto la resuelva; conservar pruebas ejecutadas y distinguir hipótesis."
+    },
+    {
+      "id": "A7",
+      "posicion": "acepto",
+      "argumento": "Aplazar modelos hasta validar datos, identidad, calendario y libro respeta el orden de construcción. Los contraejemplos de esta ronda impiden considerar superada esa condición."
+    },
+    {
+      "id": "A8",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Registrar la regla antes del congelamiento, corrigiendo el caso factual de febrero. Añadir pruebas de cero, una y dos sesiones sintéticas, cierres extraordinarios y conservación de eventos contables durante semanas sin negociación."
+    },
+    {
+      "id": "A9",
+      "posicion": "rechazo",
+      "argumento": "No está demostrado que las fuentes gratuitas hayan resuelto lo demás. Acotar la muestra a tres campos elimina casos exigidos por INVESTIGACION §6.3: revisiones, dividendos, splits, suspensiones y otros eventos. Se puede priorizar la petición, pero no retirar esos requisitos ni afirmar ahorro sobre cobertura todavía no validada."
+    },
+    {
+      "id": "A10",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "El sello independiente es obligatorio, pero almacenar su nombre no lo implementa. Verificar criptográficamente recibo, hash e instante acreditado; distinguir solicitud pendiente de sello verificable y exigir que la evidencia temporal satisfaga el plazo. No clasificar registros injected como capturas prospectivas reales."
+    }
+  ],
+  "veredicto": "rechazado"
+}

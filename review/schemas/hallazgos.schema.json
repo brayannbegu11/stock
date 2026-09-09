@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Informe de revisión adversarial",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ronda", "revisor", "resumen", "hallazgos", "preguntas_al_constructor", "cambios_del_plan_evaluados", "veredicto"],
+  "properties": {
+    "ronda": {"type": "string"},
+    "revisor": {"type": "string"},
+    "resumen": {"type": "string"},
+    "hallazgos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severidad", "categoria", "archivo", "linea", "afirmacion", "contraejemplo", "comando_reproduccion", "prueba_propuesta", "estado_verificacion"],
+        "properties": {
+          "id": {"type": "string"},
+          "severidad": {"type": "string", "enum": ["bloqueante", "alta", "media", "baja"]},
+          "categoria": {"type": "string", "enum": ["tiempo", "identidad", "unidades", "contabilidad", "estadistica", "seguridad", "contrato", "datos", "especificacion", "otro"]},
+          "archivo": {"type": "string"},
+          "linea": {"type": ["integer", "null"]},
+          "afirmacion": {"type": "string"},
+          "contraejemplo": {"type": "string"},
+          "comando_reproduccion": {"type": ["string", "null"]},
+          "prueba_propuesta": {"type": ["string", "null"]},
+          "estado_verificacion": {"type": "string", "enum": ["reproducido", "no_reproducido", "hipotesis"]}
+        }
+      }
+    },
+    "preguntas_al_constructor": {"type": "array", "items": {"type": "string"}},
+    "cambios_del_plan_evaluados": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "posicion", "argumento"],
+        "properties": {
+          "id": {"type": "string"},
+          "posicion": {"type": "string", "enum": ["acepto", "acepto_con_condiciones", "rechazo"]},
+          "argumento": {"type": "string"}
+        }
+      }
+    },
+    "veredicto": {"type": "string", "enum": ["aprobado", "aprobado_con_cambios", "rechazado"]}
+  }
+}

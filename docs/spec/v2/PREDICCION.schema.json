@@ -1,0 +1,359 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taiwan-ai-research:forecast:v2",
+  "title": "Predicción archivada, separada de resultados",
+  "description": "Contrato propuesto. Validación sintáctica no verifica disponibilidad real, timestamps, licencias o predicción.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "forecast_id",
+    "experiment_id",
+    "protocol_version",
+    "packet_id",
+    "cutoff_at",
+    "issued_at",
+    "deadline_at",
+    "timezone",
+    "evidence_class",
+    "model",
+    "coverage",
+    "status",
+    "ranking",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "forecast_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocol_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "packet_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cutoff_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "deadline_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timezone": {
+      "const": "Asia/Taipei"
+    },
+    "evidence_class": {
+      "enum": [
+        "historical_numeric_temporally_controlled",
+        "historical_current_llm_exploratory",
+        "historical_chronological_model_audited",
+        "prospective_registered"
+      ]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_id",
+        "returned_id",
+        "revision_id",
+        "prompt_or_feature_version",
+        "training_manifest_id"
+      ],
+      "properties": {
+        "requested_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "returned_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt_or_feature_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "training_manifest_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_count",
+        "scored_count",
+        "deep_review_count",
+        "eligible_count",
+        "missing_critical_sources"
+      ],
+      "properties": {
+        "catalog_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scored_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deep_review_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eligible_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing_critical_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "selected",
+        "abstained",
+        "invalid"
+      ]
+    },
+    "status_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ranking": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "security_id",
+          "ticker_as_of",
+          "market",
+          "rank",
+          "score",
+          "score_definition",
+          "document_ids",
+          "feature_ids",
+          "impact_hypothesis",
+          "counterargument",
+          "calibrated_probability",
+          "calibration_model_id"
+        ],
+        "properties": {
+          "security_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ticker_as_of": {
+            "type": "string",
+            "minLength": 1
+          },
+          "market": {
+            "enum": [
+              "TWSE",
+              "TPEX"
+            ]
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "score_definition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "document_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "feature_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "impact_hypothesis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "counterargument": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "calibrated_probability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "calibration_model_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "calibrated_probability": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "calibrated_probability"
+              ]
+            },
+            "then": {
+              "properties": {
+                "calibration_model_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "themes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "raw_response_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "independent_timestamp_receipt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "selected"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "ranking": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "abstained",
+              "invalid"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status_reason"
+        ],
+        "properties": {
+          "ranking": {
+            "maxItems": 0
+          },
+          "status_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "evidence_class": {
+            "const": "prospective_registered"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "independent_timestamp_receipt_id"
+        ],
+        "properties": {
+          "independent_timestamp_receipt_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,529 @@
+{
+  "ronda": "2",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado. Pasan las 111 pruebas del constructor y 17 contraejemplos originales ejecutados sin modificaciones. La batería adicional contiene 25 pruebas fallidas y 2 comprobaciones satisfactorias, conservadas en review/out/astra_scratch/. R01-02/04/06/09/12/18/20/21/22 quedan parcialmente corregidos y se desarrollan, respectivamente, en R02-01..09; los restantes tienen entrada de verificación. R01-24/25 se cierran únicamente como rectificaciones documentales, sin certificar adaptadores pendientes. Los 37 crudos coinciden con sus hashes, pero RawStore no puede leer su manifiesto. Los 48 archivos legibles del manifiesto inicial permanecen idénticos; .pytest_cache/README.md no permitió lectura.",
+  "hallazgos": [
+    {
+      "id": "R01-01/verificacion",
+      "severidad": "baja",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/calendar.py",
+      "linea": 43,
+      "afirmacion": "Corregido el contraejemplo original: las pruebas conservan los tres días de negociación y verifican 243 sesiones.",
+      "contraejemplo": "02-01, 11-02 y 23-02 de 2026 devuelven True; la semana del 09-02 tiene tres sesiones.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_calendar.py",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-03/verificacion",
+      "severidad": "baja",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 176,
+      "afirmacion": "Corregido: las comparaciones UTC rechazan el documento posterior durante el cambio de horario.",
+      "contraejemplo": "Nueva York, 01-11-2026: 01:15 fold=1 queda excluido del corte 01:30 fold=0.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_originales_r01.py -k dst_fold",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-05/verificacion",
+      "severidad": "baja",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 232,
+      "afirmacion": "Corregido el acceso mediante el objeto: PredictorView no recibe resultados ni permite cambiar role; esto no certifica permisos de procesos todavía inexistentes.",
+      "contraejemplo": "La fábrica rechaza outcomes para predictor; asignar role falla y outcomes() registra AccessDenied.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_packet.py -k r01_05",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-07/verificacion",
+      "severidad": "baja",
+      "categoria": "identidad",
+      "archivo": "src/twlab/master.py",
+      "linea": 186,
+      "afirmacion": "Corregido: los eventos terminales conservan ambas versiones y responden según known_at.",
+      "contraejemplo": "Tras revisar el 05-09 la retirada del 10-09 al 20-09, known_at=03-09 conserva la retirada del 10-09.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_originales_r01.py -k terminal_event",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-08/verificacion",
+      "severidad": "baja",
+      "categoria": "contrato",
+      "archivo": "src/twlab/master.py",
+      "linea": 208,
+      "afirmacion": "Corregido: ESB y los instrumentos distintos de acciones ordinarias quedan fuera de elegibilidad.",
+      "contraejemplo": "ESB/emerging con 500 sesiones, mínimo 120 y liquidity_ok=True sigue siendo no elegible.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_master.py -k r01_08",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-10/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 99,
+      "afirmacion": "Corregido: exit_blocked vuelve a procesarse después de la reanudación.",
+      "contraejemplo": "La cesta de 1.000 acciones pasa de salida bloqueada a exited y liquida su posición tras mark_resumed.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_originales_r01.py -k blocked_exit",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-11/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 330,
+      "afirmacion": "Corregido el contraejemplo original: la validación del dividendo precede al consumo del identificador.",
+      "contraejemplo": "Tras rechazar div sin importe, reintentar div con 2 TWD por acción contabiliza 2.000 TWD.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_originales_r01.py -k failed_corporate_action",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-13/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 301,
+      "afirmacion": "Corregido: impuesto y comisión utilizan el importe ejecutado.",
+      "contraejemplo": "Venta de 100.000 TWD con 25 pb: executed=99.750, impuesto=299 y comisión=142.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_originales_r01.py -k sale_tax",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-14/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 299,
+      "afirmacion": "Corregido: los componentes redondeados concilian exactamente con efectivo; el cambio floor/half_up está documentado.",
+      "contraejemplo": "Sin deslizamiento: 100.000−142−300=99.558; fricción completa de 584 TWD con floor o 586 con half_up.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_ledger.py -k 'r01_14 or round_trip'",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-15/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 303,
+      "afirmacion": "Corregido: la venta parcial reduce proporcionalmente la base y registra el resultado realizado.",
+      "contraejemplo": "Comprar 2.000 a 100 y vender 1.000 a 110 sin costes deja base de 100.000 y realized_pnl=10.000.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_ledger.py -k r01_15",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-16/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 256,
+      "afirmacion": "Corregido el contraejemplo original: precios negativos o NaN y cantidades inválidas se rechazan antes de modificar la compra.",
+      "contraejemplo": "Comprar 1.000 acciones a −100 genera LedgerError y mantiene efectivo y eventos intactos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_ledger.py -k r01_16",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-17/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 295,
+      "afirmacion": "Corregido: las ventas ordinarias también exigen múltiplos del lote.",
+      "contraejemplo": "Tras comprar 1.000 acciones, vender una devuelve odd_lot_requires_separate_mechanism.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_originales_r01.py -k odd_lot",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-19/verificacion",
+      "severidad": "baja",
+      "categoria": "identidad",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 100,
+      "afirmacion": "Corregido: valores y rangos duplicados se rechazan; enter_basket también rechaza picks repetidos.",
+      "contraejemplo": "Cinco copias de SEC-1/rank=1 generan problemas; dos picks A generan ValueError.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_schema.py tests/test_ledger.py -k r01_19",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-23/verificacion",
+      "severidad": "baja",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 418,
+      "afirmacion": "Corregido: una posición suspendida conserva su bandera aunque se suministre precio.",
+      "contraejemplo": "1.000 acciones suspendidas con prices={'A':100} producen la bandera A:suspended.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_originales_r01.py -k suspension",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-24/verificacion",
+      "severidad": "baja",
+      "categoria": "datos",
+      "archivo": "docs/informes/02_auditoria_fuentes_entrega_A.md",
+      "linea": 63,
+      "afirmacion": "Corregida la política documental: el plazo legal no acredita publicación; la exclusión genérica de versiones unknown pasa, pero el adaptador sigue pendiente.",
+      "contraejemplo": "Dos versiones de ingresos con valores 100 y 999, ambas unknown, quedan excluidas; no se ha probado su clasificación desde una fuente real.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k r01_24",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R01-25/verificacion",
+      "severidad": "baja",
+      "categoria": "unidades",
+      "archivo": "docs/informes/01_entendimiento_bloqueantes_y_plan.md",
+      "linea": 31,
+      "afirmacion": "Corregida la afirmación documental: se retira la equivalencia entre observaciones no emparejadas; la normalización entre proveedores sigue sin prueba.",
+      "contraejemplo": "13.744.103×1.000=13.744.103.000, distinto de 117.364.912.000; el informe reconoce emisor y período diferentes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k r01_25",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-01",
+      "severidad": "bloqueante",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 185,
+      "afirmacion": "Verificación R01-02: parcial. Se rechazan published_at contradictorio y first_seen inventado, pero capture_id sólo selecciona un registro: no acredita que el documento proceda de esos bytes, fuente o versión.",
+      "contraejemplo": "Una captura real source_id='weather', dataset='rain', payload={\"rain\":0} permite admitir un documento source_id='test', payload={\"revenue\":999} como prospective_registered. La prueba del constructor sólo cubre ausencia del identificador, reloj sintético y discrepancia de first_seen.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k capture_from_other_source --basetemp=review/out/astra_scratch/repro",
+      "prueba_propuesta": "def test_capture_from_other_source_cannot_attest_document(tmp_path):\n    from tests.test_packet import doc\n    from twlab.store import RawStore\n    from twlab.packet import build_packet\n    r = RawStore(tmp_path).put(source_id='weather', dataset='rain', payload=b'{\"rain\":0}', url='u')\n    d = doc('revenue', r.ingested_at_dt, capture_id=r.capture_id, payload={'revenue': 999})\n    p = build_packet(packet_id='p', cutoff_at=r.ingested_at_dt, documents=[d], mode='prospective', evidence_class='prospective_registered', captures={r.capture_id:r})\n    assert not p.admitted\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-02",
+      "severidad": "bloqueante",
+      "categoria": "contrato",
+      "archivo": "src/twlab/packet.py",
+      "linea": 140,
+      "afirmacion": "Verificación R01-04: parcial. La mutación del payload queda impedida, pero manifest colapsa doc_id repetidos y omite contenido efectivamente entregado.",
+      "contraejemplo": "El paquete con documentos same/value=1 y same/value=999 tiene dos documentos; el paquete con sólo same/value=999 tiene uno. Ambos producen hash 72a225707c4e00a6833d0a83f0b4422096038d66588e2ee926a28ea5fe587889. La prueba nombrada sólo usa identificadores únicos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k packet_duplicate_ids",
+      "prueba_propuesta": "def test_packet_duplicate_ids_cannot_hide_delivered_content():\n    from tests.test_packet import doc, build\n    from tests.test_ledger import MON, FRI\n    a = doc('same', MON, payload={'value':1})\n    b = doc('same', MON, payload={'value':999})\n    assert build([a,b], FRI).packet_hash() != build([b], FRI).packet_hash()\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-03",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/master.py",
+      "linea": 85,
+      "afirmacion": "Verificación R01-06: parcial. add comprueba solapes contra la vista más reciente, pero permite introducirlos en consultas históricas.",
+      "contraejemplo": "A/1111 está abierto desde 2020; su cierre efectivo en 2022 se registra en 2022. Se admite A/2222 desde 2022 con recorded_at=2021. Para known_at=junio de 2021 ambos segmentos cubren enero de 2023. El test sólo comprueba inserción solapada contra la vista actual.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k historical_overlap",
+      "prueba_propuesta": "def test_master_no_historical_overlap():\n    from datetime import date\n    from tests.test_master import sv, R\n    from twlab.master import SecurityMaster\n    m = SecurityMaster()\n    m.add(sv(security_id='A', symbol='1111', valid_from=date(2020,1,1)))\n    m.close_version('A', valid_to=date(2022,1,1), recorded_at=R(2022,1,1), source_id='s')\n    m.add(sv(security_id='A', symbol='2222', valid_from=date(2022,1,1), recorded_at=R(2021,1,1)))\n    assert sum(v.covers(date(2023,1,1)) for v in m._effective(R(2021,6,1))) <= 1\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-04",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/simulation.py",
+      "linea": 31,
+      "afirmacion": "Verificación R01-09: parcial. El split 2:1 pasa, pero la nueva restricción de lotes convierte salidas parciales en rendimientos completos de selección.",
+      "contraejemplo": "1.000 acciones a 100, split 1,1 y precio final 100/1,1: se venden 1.000, quedan 100, el puesto figura exited y gross_pick_return=-0,09091. No hubo ese descenso económico; la prueba del constructor sólo cubre un split que produce lotes completos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k partial_split",
+      "prueba_propuesta": "def test_partial_split_exit_is_not_complete_return():\n    from tests.test_ledger import MON, FRI, FREE, D, ledger\n    from twlab.ledger import CorporateAction\n    from twlab.simulation import enter_basket, exit_basket\n    lg = ledger('100000', FREE)\n    s = enter_basket(lg, picks=['A'], slots=1, notional_per_slot=D(100000), open_prices={'A':D(100)}, at=MON, week_id='w')\n    lg.apply_corporate_action(CorporateAction('split','A','split',MON,split_ratio=D('1.1')))\n    exit_basket(lg,s,close_prices={'A':D(100)/D('1.1')},at=FRI,week_id='w')\n    assert s[0].gross_pick_return in (None,D(0))\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-05",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 370,
+      "afirmacion": "Verificación R01-12: parcial. Se rechaza el dividendo anterior a la compra y se separan derechos cuando hay pay_at; si falta, se inventa un pago inmediato utilizable.",
+      "contraejemplo": "Con 1.000 acciones y 900.000 TWD disponibles, declarar 2,5 TWD por acción sin fecha de pago eleva inmediatamente el efectivo disponible a 902.500. Una nota en Position no impide financiar compras con ese dinero; la prueba nueva sólo separa el pago cuando recibe fecha explícita.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k missing_payment_date",
+      "prueba_propuesta": "def test_missing_payment_date_never_creates_spendable_cash():\n    from tests.test_ledger import MON, FRI, FREE, D, ledger\n    from twlab.ledger import CorporateAction\n    lg=ledger(costs=FREE)\n    lg.buy(security_id='A',price=D(100),shares=1000,at=MON,event_id='b')\n    before=lg.cash\n    lg.apply_corporate_action(CorporateAction('div','A','cash_dividend',FRI,per_share_cash=D('2.5')))\n    assert lg.available_cash()==before\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-06",
+      "severidad": "bloqueante",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 89,
+      "afirmacion": "Verificación R01-18: parcial. La prueba original pasa, pero el plazo sigue controlado por la propia predicción y no por el calendario/protocolo. Tampoco se cumple el cutoff < issued_at anunciado.",
+      "contraejemplo": "Con corte 06-09-2026 18:00, issued_at=12-09 10:00 y deadline_at=13-09 08:30, validate_prediction devuelve [], aunque el horizonte semanal terminó el 11-09. También acepta issued_at exactamente igual al corte. El test nombrado mantiene el deadline correcto y omite la igualdad.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k 'extend_its_own_deadline or cutoff_strictly'",
+      "prueba_propuesta": "def test_selected_cannot_extend_its_own_deadline():\n    from tests.test_schema import base, packet\n    from twlab.schemas import validate_prediction\n    o=base(issued_at='2026-09-12T10:00:00+08:00',deadline_at='2026-09-13T08:30:00+08:00')\n    assert validate_prediction(o,packet())\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-07",
+      "severidad": "bloqueante",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/store.py",
+      "linea": 70,
+      "afirmacion": "Verificación R01-20: parcial. Se rechazan capturas injected, pero status='verified' sigue siendo una declaración fabricable. schemas.py acepta recibos arbitrarios y evidencia incompatible; evaluation.py permite evaluar prospectivas sin sello por defecto.",
+      "contraejemplo": "Una captura real con receipt={status:'verified', digest:sha256, attested_at:'not-a-date', authority:'yo'} devuelve prospectively_sealed=True sin ejecutar verificador. Una predicción prospective_registered con recibo 'inventado' y paquete histórico valida con []. WeeklyObservation(sealed=False, evidence_class='prospective_registered') produce un bootstrap. La prueba de recibos usa un callback que sólo compara hashes; la de esquema exige únicamente una cadena.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k 'verified_receipt_state or registered_prediction_requires or unsealed_prospective' --basetemp=review/out/astra_scratch/repro",
+      "prueba_propuesta": "def test_registered_prediction_requires_verified_receipt():\n    from tests.test_schema import base, packet\n    from twlab.schemas import validate_prediction\n    o=base(evidence_class='prospective_registered',independent_timestamp_receipt_id='inventado')\n    assert validate_prediction(o,packet())\n\ndef test_unsealed_prospective_evaluation_is_rejected():\n    import pytest\n    from twlab.evaluation import WeeklyObservation, block_bootstrap_mean, ObservationError\n    o=WeeklyObservation('2026-W37','f','prospective_registered',False,True,.1)\n    with pytest.raises(ObservationError):\n        block_bootstrap_mean([o],block_length=1,n_boot=10,seed=1)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-08",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 90,
+      "afirmacion": "Verificación R01-21: parcial. Se rechazan exposiciones distintas y cadenas semanales duplicadas, pero no se valida la unidad semanal y se comprimen los huecos antes del bootstrap. STA-02/03/05/06/07 permanecen pendientes, como reconoce el informe.",
+      "contraejemplo": "Cinco observaciones con week_id='2026-09-07'..'2026-09-11' se aceptan como cinco semanas. Con W30 válida, W31 inválida y W32 válida, block_length=2 une W30 y W32 y devuelve un intervalo degenerado para +0,1/−0,1. Los tests sólo rechazan cadenas idénticas y comprueban el contador de inválidas con bloque 1.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k 'daily_rows or two_week_blocks'",
+      "prueba_propuesta": "def test_daily_rows_are_not_five_weeks():\n    import pytest\n    from twlab.evaluation import WeeklyObservation, block_bootstrap_mean, ObservationError\n    rows=[WeeklyObservation(f'2026-09-{d:02d}',f'f-{d}','prospective_registered',True,True,.1) for d in range(7,12)]\n    with pytest.raises(ObservationError):\n        block_bootstrap_mean(rows,block_length=1,n_boot=10,seed=1)\n\ndef test_blocks_do_not_bridge_invalid_weeks():\n    import pytest\n    from twlab.evaluation import WeeklyObservation, block_bootstrap_mean, ObservationError\n    rows=[WeeklyObservation('2026-W30','a','prospective_registered',True,True,.1),WeeklyObservation('2026-W31','b','prospective_registered',True,False,None),WeeklyObservation('2026-W32','c','prospective_registered',True,True,-.1)]\n    with pytest.raises(ObservationError):\n        block_bootstrap_mean(rows,block_length=2,n_boot=10,seed=1)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-09",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 116,
+      "afirmacion": "Verificación R01-22: parcial. La lista permitida rechaza identificadores desconocidos, pero no constituye el registro de calibradores evaluados y temporalmente admisibles que afirma el informe.",
+      "contraejemplo": "Añadir 'trained-2027' a known_calibrators permite validar probabilidad 0,9 para septiembre de 2026 sin aportar calibrador, ventana de entrenamiento ni evaluación. El nombre no demuestra entrenamiento futuro: el fallo demostrado es que no existe ningún campo o comprobación para distinguirlo. El propio test acepta 'inventado' al incluirlo en el conjunto.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k known_calibrator",
+      "prueba_propuesta": "def test_known_calibrator_requires_temporal_evidence():\n    from tests.test_schema import base, packet\n    from twlab.schemas import validate_prediction\n    o=base()\n    o['ranking'][0].update(calibrated_probability=.9,calibration_model_id='trained-2027')\n    assert validate_prediction(o,packet(),known_calibrators=frozenset({'trained-2027'}))\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-10",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/packet.py",
+      "linea": 199,
+      "afirmacion": "La combinación de congelación y enlace prospectivo introduce una regresión: replace vuelve a copiar un payload que contiene MappingProxyType y falla.",
+      "contraejemplo": "Un documento válido con payload={'nested':{'value':1}} y captura real llega a replace(d, first_seen_at=ingested) y lanza TypeError: cannot pickle 'mappingproxy' object. El test de inmutabilidad usa modo histórico; los prospectivos usan payload vacío.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k prospective_nested --basetemp=review/out/astra_scratch/repro",
+      "prueba_propuesta": "def test_prospective_nested_payload_survives(tmp_path):\n    from tests.test_packet import doc\n    from twlab.store import RawStore\n    from twlab.packet import build_packet\n    r=RawStore(tmp_path).put(source_id='test',dataset='d',payload=b'{\"nested\":{\"value\":1}}',url='u')\n    d=doc('d',r.ingested_at_dt,capture_id=r.capture_id,payload={'nested':{'value':1}})\n    p=build_packet(packet_id='p',cutoff_at=r.ingested_at_dt,documents=[d],mode='prospective',evidence_class='prospective_registered',captures={r.capture_id:r})\n    assert p.admitted_ids()=={'d'}\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-11",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "src/twlab/store.py",
+      "linea": 140,
+      "afirmacion": "El cambio de esquema de recibos rompe la lectura del archivo real existente. Los informes 02 §6 y 03 §3.6 afirman que RawStore.verify() verifica unos manifiestos incompatibles con CaptureRecord.",
+      "contraejemplo": "data/raw/manifest.jsonl contiene receipt_id y receipt_authority; CaptureRecord ya no acepta esos argumentos. RawStore.captures() lanza TypeError antes de recuperar registros. Una comprobación independiente sí confirmó los hashes de los 37 crudos: el defecto es de compatibilidad, no corrupción de sus bytes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k real_archive",
+      "prueba_propuesta": "def test_real_archive_is_readable():\n    from pathlib import Path\n    from twlab.store import RawStore\n    store=RawStore(Path('data/raw'))\n    assert store.captures()\n    assert store.verify()==[]\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-12",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/master.py",
+      "linea": 127,
+      "afirmacion": "change_segment no es atómico, contradiciendo expresamente el informe 03: cierra el segmento anterior antes de validar el nuevo.",
+      "contraejemplo": "A/1111 abierto desde 2020; se intenta añadir A/2222 con valid_from=2022 y valid_to=2021. La operación falla, pero queda anexado el cierre del segmento anterior en 2022 y cambia el universo.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k change_segment_is_atomic",
+      "prueba_propuesta": "def test_change_segment_is_atomic():\n    import pytest\n    from datetime import date\n    from tests.test_master import sv,R\n    from twlab.master import SecurityMaster\n    m=SecurityMaster()\n    m.add(sv(security_id='A',symbol='1111',valid_from=date(2020,1,1)))\n    before=m.versions_of('A')\n    new=sv(security_id='A',symbol='2222',valid_from=date(2022,1,1),valid_to=date(2021,1,1))\n    with pytest.raises(ValueError):\n        m.change_segment('A',new=new,recorded_at=R(2022,1,1),source_id='s')\n    assert m.versions_of('A')==before\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-13",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 380,
+      "afirmacion": "Los contrasplits redondean el incremento negativo hacia cero y descartan su fracción negativa, creando acciones.",
+      "contraejemplo": "1.000 acciones con split_ratio=0,0005 deben convertirse en 0,5 acciones o derechos pendientes equivalentes. El libro produce shares=1 y unresolved_fraction=0; el último precio pasa de 100 a 200.000 TWD.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k reverse_split",
+      "prueba_propuesta": "def test_reverse_split_preserves_quantity():\n    from tests.test_ledger import MON,FRI,FREE,D,ledger\n    from twlab.ledger import CorporateAction\n    lg=ledger(costs=FREE)\n    lg.buy(security_id='A',price=D(100),shares=1000,at=MON,event_id='b')\n    lg.apply_corporate_action(CorporateAction('rs','A','split',FRI,split_ratio=D('0.0005')))\n    p=lg.positions['A']\n    assert D(p.shares)+p.unresolved_fraction==D('0.5')\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-14",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 308,
+      "afirmacion": "Vender todas las acciones enteras retira de las posiciones activas los derechos fraccionarios todavía pendientes y elimina sus banderas de valoración.",
+      "contraejemplo": "1.000 acciones reciben un dividendo en acciones de ratio 0,0005: quedan 1.000 enteras y 0,5 pendientes. Al vender las 1.000, la fracción acaba en closed y valuation devuelve flags=(), unresolved=(). No existe resolución del derecho.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k fraction_remains",
+      "prueba_propuesta": "def test_fraction_remains_pending_after_sale():\n    from tests.test_ledger import MON,FRI,FREE,D,ledger\n    from twlab.ledger import CorporateAction\n    lg=ledger(costs=FREE)\n    lg.buy(security_id='A',price=D(100),shares=1000,at=MON,event_id='b')\n    lg.apply_corporate_action(CorporateAction('sd','A','stock_dividend',FRI,stock_ratio=D('0.0005')))\n    lg.sell(security_id='A',price=D(100),shares=1000,at=FRI,event_id='s')\n    v=lg.valuation(prices={},at=FRI)\n    assert v.flags or v.unresolved\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-15",
+      "severidad": "bloqueante",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 425,
+      "afirmacion": "valuation modifica last_price sin comprobar ni avanzar el reloj del libro; permite introducir un precio futuro en una valoración pasada.",
+      "contraejemplo": "Compra el lunes 07-09 a 100; valoración del viernes 11-09 a 999; suspensión fechada el martes 08-09, aceptada. La valoración del martes sin precio usa 999 y devuelve positions_value=999.000, en lugar del último precio conocido de 100.000.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k future_valuation",
+      "prueba_propuesta": "def test_future_valuation_cannot_rewrite_past_price():\n    from datetime import timedelta\n    from tests.test_ledger import MON,FRI,FREE,D,ledger\n    from twlab.ledger import LedgerError\n    lg=ledger(costs=FREE)\n    lg.buy(security_id='A',price=D(100),shares=1000,at=MON,event_id='b')\n    lg.valuation(prices={'A':D(999)},at=FRI)\n    try:\n        lg.mark_suspended('A',at=MON+timedelta(days=1))\n    except LedgerError:\n        return\n    assert lg.valuation(prices={},at=MON+timedelta(days=1)).positions_value==D(100000)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-16",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 235,
+      "afirmacion": "Los cobros vencidos se registran por orden de declaración, no por fecha de pago, rompiendo el orden cronológico prometido del diario.",
+      "contraejemplo": "Dividendo d1 declarado el lunes con pago viernes; d2 declarado martes con pago jueves. Al avanzar al lunes siguiente, se registra primero el pago del viernes y después el del jueves.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k payments_are_logged",
+      "prueba_propuesta": "def test_receivable_payments_are_chronological():\n    from datetime import timedelta\n    from tests.test_ledger import MON,FREE,D,ledger\n    from twlab.ledger import CorporateAction\n    lg=ledger(costs=FREE)\n    lg.buy(security_id='A',price=D(100),shares=1000,at=MON,event_id='b')\n    for eid,e,p in [('d1',0,4),('d2',1,3)]:\n        lg.apply_corporate_action(CorporateAction(eid,'A','cash_dividend',MON+timedelta(days=e),per_share_cash=D(1),pay_at=MON+timedelta(days=p)))\n    lg.mark_suspended('A',at=MON+timedelta(days=7))\n    assert [e.at for e in lg.events]==sorted(e.at for e in lg.events)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-17",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 399,
+      "afirmacion": "Los pagos sólo se procesan al ejecutar otra operación o cambio de estado. Una valoración posterior al vencimiento conserva el efectivo como pendiente; no existe una operación pública específica para avanzar pagos.",
+      "contraejemplo": "Dividendo de 1.000 TWD declarado el lunes y pagadero el viernes: valuation del viernes devuelve cash=900.000 y receivables=1.000. El test del constructor fuerza una venta posterior para cobrar; no prueba semanas sin negociación como afirma el informe 03.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k due_receivable",
+      "prueba_propuesta": "def test_due_receivable_is_paid_without_trading():\n    from tests.test_ledger import MON,FRI,FREE,D,ledger\n    from twlab.ledger import CorporateAction\n    lg=ledger(costs=FREE)\n    lg.buy(security_id='A',price=D(100),shares=1000,at=MON,event_id='b')\n    lg.apply_corporate_action(CorporateAction('div','A','cash_dividend',MON,per_share_cash=D(1),pay_at=FRI))\n    v=lg.valuation(prices={'A':D(100)},at=FRI)\n    assert v.receivables==0 and v.cash==D(901000)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-18",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/calendar.py",
+      "linea": 197,
+      "afirmacion": "CalendarStore almacena y devuelve referencias a calendarios mutables: una edición modifica retrospectivamente la versión conocida sin anexar revisión.",
+      "contraejemplo": "Se registra calendario con apertura 09:00; después cal.OPEN=time(12) cambia a 12:00 la apertura devuelta por la misma consulta histórica. El test de versionado construye objetos separados y no comprueba esta mutación.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k mutable_alias",
+      "prueba_propuesta": "def test_calendar_store_does_not_retain_mutable_alias():\n    from datetime import date,time\n    from tests.test_master import R\n    from tests.test_ledger import MON\n    from twlab.calendar import TradingCalendar,CalendarStore\n    c=TradingCalendar(start=date(2026,1,1),end=date(2026,12,31),closures=[],source_id='t',recorded_at=R(2026,1,1))\n    s=CalendarStore(); s.add(c)\n    d=date(2026,9,7)\n    before=s.as_known_at(MON).session_open(d)\n    c.OPEN=time(12)\n    assert s.as_known_at(MON).session_open(d)==before\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-19",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/calendar.py",
+      "linea": 47,
+      "afirmacion": "El clasificador acepta como inequívocos textos contradictorios o con negación. La política de detener filas desconocidas no protege esos casos.",
+      "contraejemplo": "Name='國曆新年開始交易日', Description='颱風休市' devuelve session_marker pese al cierre indicado. Description='不休市，正常交易' devuelve closure por contener 休市. Son casos sintéticos; no afirmo que aparezcan en la captura de 2026.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k 'conflicting_calendar or negated_closure'",
+      "prueba_propuesta": "def test_conflicting_calendar_row_requires_review():\n    from twlab.calendar import classify_holiday_row,ROW_SESSION_MARKER\n    row={'Date':'1150102','Name':'國曆新年開始交易日','Description':'颱風休市'}\n    assert classify_holiday_row(row)!=ROW_SESSION_MARKER\n\ndef test_negated_closure_requires_review():\n    from twlab.calendar import classify_holiday_row,ROW_UNKNOWN\n    row={'Date':'1150102','Name':'公告','Description':'不休市，正常交易'}\n    assert classify_holiday_row(row)==ROW_UNKNOWN\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-20",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/schemas.py",
+      "linea": 106,
+      "afirmacion": "El validador continúa las comprobaciones semánticas sobre campos cuyo tipo ya rechazó JSON Schema y lanza excepciones en lugar de devolver problemas.",
+      "contraejemplo": "ranking[0].security_id=[] produce TypeError: unhashable type: 'list' en sid in seen_sec. Una respuesta malformada puede interrumpir el procesamiento operativo en vez de quedar clasificada como inválida.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda2.py -k unhashable",
+      "prueba_propuesta": "def test_invalid_security_type_returns_problems():\n    from tests.test_schema import base,packet\n    from twlab.schemas import validate_prediction\n    o=base(); o['ranking'][0]['security_id']=[]\n    assert validate_prediction(o,packet())\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R02-21",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/03_respuesta_ronda1_astra.md",
+      "linea": 53,
+      "afirmacion": "Los informes no reflejan de forma consistente el alcance comprobado ni todas las posiciones finales declaradas.",
+      "contraejemplo": "03 afirma pruebas sintéticas de 0/1/2 sesiones, pero test_calendar.py sólo verifica semanas de cero y tres sesiones, horario parcial y cierre versionado. 01 A2 aún promueve verified_original por hora y califica las noticias como copias; 01 A6 conserva la tasa externa como fundamento que 03 retira. 01 §8 declara todos los reproducibles corregidos y 03 afirma atomicidad, desmentidas por las pruebas de esta ronda.",
+      "comando_reproduccion": "rg -n 'A2|A6|0/1/2|atómicamente|todos los reproducibles' docs/informes/01_entendimiento_bloqueantes_y_plan.md docs/informes/03_respuesta_ronda1_astra.md; rg -n '^def test|week_sessions' tests/test_calendar.py",
+      "prueba_propuesta": "Añadir casos explícitos de semanas con una y dos sesiones, un caso sin negociación que procese pagos y referencias exactas a sus pruebas. Sincronizar A2/A6 y las afirmaciones de cierre con los resultados reproducidos; distinguir modelo de recibos de verificación criptográfica operativa.",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Qué componente autorizado vinculará cada versión documental a los bytes capturados y a su transformación, en lugar de aceptar cualquier capture_id?",
+    "¿Qué registro verificable fijará hash de predicción, paquete, instante acreditado y deadline derivado del protocolo antes de permitir simulación o evaluación?",
+    "¿Qué política explícita conservará y resolverá fracciones, pagos sin fecha y pagos durante semanas sin operaciones?"
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "T1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La reformulación distingue correctamente fecha de publicación y plazo legal. Mantener unknown hasta acreditar cada versión; la prueba del adaptador original/revisión sigue pendiente."
+    },
+    {
+      "id": "T2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Acepto conservar invalid:no_sessions y continuar eventos contables. Faltan congelamiento, pruebas de una/dos sesiones y procesamiento público de pagos sin operaciones; el bootstrap tampoco debe comprimir esas semanas silenciosamente."
+    },
+    {
+      "id": "T3",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La falta de cuota debe seguir siendo fallo operativo. El adelanto exige el mismo corte y paquete; el plazo debe provenir del protocolo, no de la respuesta del modelo."
+    },
+    {
+      "id": "T4",
+      "posicion": "acepto",
+      "argumento": "Se mantiene la restricción de diseño de no asumir adaptación de pesos de modelos frontera; esta ronda no verifica capacidades actuales de proveedores."
+    },
+    {
+      "id": "A1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Los 37 crudos tienen hashes correctos. Corregir primero la incompatibilidad de manifiestos y mantener frecuencia por fuente, pérdidas entre capturas y permisos como condiciones pendientes."
+    },
+    {
+      "id": "A2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Acepto priorizar anuncios oficiales. Un hash de una captura actual no prueba disponibilidad histórica de su versión original; falta el enlace verificable y debe corregirse la redacción contradictoria de 01 A2."
+    },
+    {
+      "id": "A3",
+      "posicion": "acepto",
+      "argumento": "Acepto su retirada: la captura clasificada produce 243 sesiones y coincide con XTAI en 2026. Esa coincidencia no valida las nuevas ramas de clasificación ni CalendarStore."
+    },
+    {
+      "id": "A4",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Capturar las series es compatible con mantener verified_benchmark_series bloqueado. Continuidad, revisiones y equivalencia apertura-cierre siguen sin demostrarse."
+    },
+    {
+      "id": "A5",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La rectificación documental es suficiente para retirar la falsa equivalencia, pero no sustituye la prueba emparejada de identidad, período, alcance y versión."
+    },
+    {
+      "id": "A6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Mantener pruebas reproducibles y distinción de hipótesis; eliminar de 01 A6 el fundamento externo que 03 declara retirado."
+    },
+    {
+      "id": "A7",
+      "posicion": "acepto",
+      "argumento": "Mantener aplazados los modelos hasta validar datos y núcleo. Los fallos reproducidos impiden dar por superada esa condición."
+    },
+    {
+      "id": "A8",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Registrar la regla antes del congelamiento; las pruebas anunciadas de una/dos sesiones no existen y los pagos sin negociación no están resueltos."
+    },
+    {
+      "id": "A9",
+      "posicion": "acepto",
+      "argumento": "Acepto retirar el recorte de la muestra TEJ y conservar todos los casos de INVESTIGACION §6.3. Priorizar timestamps no elimina los demás requisitos."
+    },
+    {
+      "id": "A10",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Acepto el requisito y que el adaptador criptográfico figure pendiente. La implementación actual no satisface la condición: permite sellos declarativos, predicciones con recibos inventados y evaluación sin sello. Debe bloquear esos caminos hasta verificar contenido, autoridad e instante respecto del plazo."
+    }
+  ],
+  "veredicto": "rechazado"
+}
