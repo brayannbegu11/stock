@@ -13,6 +13,8 @@ from twlab.backtest import (
 )
 from twlab.calendar import TradingCalendar
 from twlab.ledger import OutOfOrderEvent
+from twlab.timeutil import taipei as _taipei
+from datetime import time
 from twlab.sources.finmind import SourceIdentityMismatch
 from twlab.store import RawStore
 from twlab.timeutil import taipei
@@ -155,6 +157,82 @@ def test_r11_03_r11_04_forecasters_must_share_market_and_par_value_with_the_runn
     other = load_market(store, path, CAL)
     with pytest.raises(ValueError, match="different MarketData"):
         Runner(store, m, BacktestConfig(start=date(2024, 1, 1), end=date(2024, 3, 29), label="t"), [TabularForecaster(other, min_weeks=10), RandomForecaster(1)])
+
+
+def test_r12_01_conflicting_rights_are_discarded_for_ledger_and_labels_alike(tmp_path):
+    ex = date(2024, 1, 10)
+    rows = dividend_rows("A", ex_date=ex, cash=2.0, pay=date(2024, 2, 1)) + dividend_rows("A", ex_date=ex, cash=10.0, pay=date(2024, 2, 1))
+    store, path = make_market(tmp_path, dividends={"A": rows})
+    m = load_market(store, path, CAL)
+    a = m.securities[m.by_symbol["A"]]
+    assert a.events == [] and any("different values" in w for w in m.warnings)
+    # una fila inválida (pago antes de la fecha ex) invalida el evento entero aunque otra fila sea válida
+    rows2 = dividend_rows("A", ex_date=ex, cash=10.0, pay=date(2024, 1, 9)) + dividend_rows("A", ex_date=ex, cash=2.0, pay=date(2024, 2, 1))
+    store2, path2 = make_market(tmp_path / "b", dividends={"A": rows2})
+    m2 = load_market(store2, path2, CAL)
+    assert m2.securities[m2.by_symbol["A"]].events == [] and any("pay_before_ex" in w for w in m2.warnings)
+    # filas idénticas repetidas: un solo evento, con la identidad del libro, compartido por Q1 y el coordinador
+    rows3 = dividend_rows("A", ex_date=ex, cash=2.0, pay=date(2024, 2, 1)) * 2
+    store3, path3 = make_market(tmp_path / "c", dividends={"A": rows3})
+    m3 = load_market(store3, path3, CAL)
+    ev = m3.securities[m3.by_symbol["A"]].events
+    assert len(ev) == 1 and ev[0].event_id.endswith(":cash:2024-01-10:2024") and ev[0].pay_date == date(2024, 2, 1)
+    f = TabularForecaster(m3, min_weeks=10)
+    assert f.dividends[m3.by_symbol["A"]] is ev
+    # R11-01: fecha de anuncio sin hora → apertura de la sesión siguiente (política del protocolo), calidad conservative_inference
+    rows4 = dividend_rows("A", ex_date=ex, cash=2.0, pay=date(2024, 2, 1))
+    rows4[0]["AnnouncementTime"] = ""
+    rows4[0]["AnnouncementDate"] = "2023-12-01"                                  # viernes
+    store4, path4 = make_market(tmp_path / "d", dividends={"A": rows4})
+    ev4 = load_market(store4, path4, CAL).securities["TWSE:A@2023-01-02"].events[0]
+    assert ev4.known_at == taipei(date(2023, 12, 4), time(9, 0)) and ev4.known_quality == "conservative_inference"
+
+
+def test_r12_02_valuation_after_a_right_without_a_later_price_is_flagged(tmp_path):
+    closed_week = TradingCalendar(start=CAL.start, end=CAL.end, closures=[date(2024, 1, d) for d in range(15, 20)],
+                                  source_id="synthetic", recorded_at=CAL.recorded_at, version="closed-W03")
+    def stock_row(year, ex, per_share):
+        return {"stock_id": "A", "year": year, "AnnouncementDate": "2023-11-01", "AnnouncementTime": "8:0:0",
+                "CashEarningsDistribution": 0, "CashStatutorySurplus": 0, "StockEarningsDistribution": per_share, "StockStatutorySurplus": 0,
+                "CashExDividendTradingDate": "", "CashDividendPaymentDate": "", "StockExDividendTradingDate": ex}
+    # 5 % en acciones el 10-01 deja un lote suelto tras la salida del 12-01 (n×1.000 acciones → n×50 sueltas);
+    # 1:1 el 15-01 (semana cerrada) lo duplica sin que exista precio posterior al derecho
+    stock_div = [stock_row("2022", "2024-01-10", 0.5), stock_row("2023", "2024-01-15", 10.0)]
+    store, path = make_market(tmp_path, dividends={"A": stock_div}, end=date(2024, 3, 29))
+    m = load_market(store, path, closed_week)
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 16), label="t", slots=1)
+
+    class OnlyA:
+        name, model_id, version = "Q0", "rule:only_a", "t"
+
+        def forecast(self, view, plan, candidates, *, slots):
+            from twlab.backtest import Selection
+            a = next(c for c in candidates if c.symbol == "A")
+            return [Selection(a.security_id, 1.0, [a.doc_id])], {"training_manifest_id": None}
+    res = Runner(store, m, cfg, [OnlyA(), RandomForecaster(1)]).run()
+    fv = res["summary"]["forecasters"]["Q0"]["final_valuation"]
+    assert any(fl.startswith("price_predates_right:TWSE:A@2023-01-02:2024-01-15") for fl in fv["flags"]), fv["flags"]
+
+
+def test_r12_03_degenerate_bootstrap_serialises_without_nan(tmp_path):
+    store, path = make_market(tmp_path, end=date(2024, 3, 29))
+    m = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 12), label="t", block_length=1)   # una sola semana operada
+    res = Runner(store, m, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    pe = res["summary"]["forecasters"]["Q0"]["paired_excess_vs_baseline"]
+    assert pe["degenerate"] and pe["ci95"] is None and pe["n_fixed_observations"] == 1
+    json.dumps(res, default=str, allow_nan=False)                                # no lanza
+
+
+def test_r10_05_delisting_date_declared_in_captures_is_used(tmp_path):
+    store, path = make_market(tmp_path, overrides={"A": {"delisting_date": "2024-02-15"}})
+    m = load_market(store, path, CAL)
+    assert m.securities[m.by_symbol["A"]].delisting_date == date(2024, 2, 15)
+    mf = json.loads(path.read_text(encoding="utf-8"))
+    mf["delisted"].append({"symbol": "A", "name": "A", "delisting_date": "2024-03-01"})
+    path.write_text(json.dumps(mf), encoding="utf-8")
+    with pytest.raises(ManifestInconsistent):
+        load_market(store, path, CAL)
 
 
 def test_r11_05_markdown_report_keeps_uncertainty_states():

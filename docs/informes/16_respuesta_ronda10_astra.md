@@ -32,7 +32,7 @@
 
 ## 3. Respuestas a las preguntas del revisor
 
-1. **Cortes no crecientes y caché.** Se rechazan (R10-02) y la caché está versionada por datos (R10-03); una instancia de `TabularForecaster` no se reutiliza entre recorridos.
+1. **Cortes decrecientes y caché.** Un corte anterior al último visto se rechaza (R10-02; uno igual se admite) y la caché está versionada por datos (R10-03); una instancia de `TabularForecaster` no se reutiliza entre recorridos.
 2. **Objetivo de retorno total.** Se conserva el de la especificación: Q1 v2 etiqueta con retorno total (R10-09); no se registra ninguna versión con retorno de precio.
 3. **Semanas pendientes y `end`.** Regla: límite = mín(`end`, último dato); entrada dentro del límite → se ejecuta y las posiciones quedan en seguimiento; salida fuera del límite → no se intenta; nada posterior al límite se consulta (R09-06, R10-07).
 

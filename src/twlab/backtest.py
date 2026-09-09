@@ -33,7 +33,7 @@ from .simulation import basket_report, enter_basket, exit_basket
 from .sources import finmind
 from .sources.finmind import SourceIdentityMismatch
 from .store import RawStore
-from .timeutil import TAIPEI, AvailabilityQuality, taipei
+from .timeutil import TAIPEI, AvailabilityQuality, derive_available_at, taipei
 from .weekly import WeekPlan, plan_week
 
 EVIDENCE = "historical_numeric_temporally_controlled"
@@ -73,6 +73,7 @@ class Security:
     dividends: list[finmind.DividendRow]
     price_capture: object
     dividend_capture: object = None
+    events: list = field(default_factory=list)          # derechos validados (q1.DividendLike): libro y etiquetas usan esta lista
 
 
 @dataclass
@@ -87,6 +88,7 @@ class MarketData:
     source_manifest: str
     bars_before_listing_dropped: int = 0
     warnings: list[str] = field(default_factory=list)
+    par_value: D = D(10)                       # valor nominal con el que se convirtieron los dividendos en acciones (R11-03)
 
     @property
     def data_version(self) -> str:
@@ -100,7 +102,8 @@ class ManifestInconsistent(ValueError):
     pass
 
 
-def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar, *, default_market: str = "TWSE") -> MarketData:
+def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar, *, default_market: str = "TWSE",
+                par_value: D = D(10)) -> MarketData:
     """Carga barras y dividendos desde las capturas listadas en un manifiesto (muestra o universo).
 
     Comprueba identidad y coherencia (R08-06, R10-05, R10-06): la captura de precios y la de dividendos
@@ -194,16 +197,23 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
                              instrument_type="ordinary_equity", valid_from=vf, valid_to=None, recorded_at=now, source_id=manifest_path.name)
         master.add(sv)
         dl = delisting.get(sid)
+        if caps.get("delisting_date"):                        # una retirada declarada en captures cuenta, y no puede contradecir delisted (R10-05)
+            cdl = date.fromisoformat(caps["delisting_date"])
+            if dl and cdl != dl:
+                raise ManifestInconsistent(f"{sid}: delisting_date in captures != delisted")
+            dl = cdl
         if dl:
             later = now + timedelta(seconds=1)
             master.close_version(sec_id, valid_to=dl, recorded_at=later, source_id="twse:suspendListing",
                                  terminal=TerminalEvent(sec_id, "delisting", dl, later, "twse:suspendListing"))
-        securities[sec_id] = Security(sid, sec_id, market, name, vf, dl, bars, divs, rec, drec)
+        events, problems = validated_dividend_events(sec_id, divs, par_value, calendar)
+        warnings.extend(problems)
+        securities[sec_id] = Security(sid, sec_id, market, name, vf, dl, bars, divs, rec, drec, events)
         by_symbol[sid] = sec_id
         by_session[sec_id] = {b.session: b for b in bars}
     traded: set[date] = set().union(*[set(m) for m in by_session.values()]) if by_session else set()
     return MarketData(securities, by_symbol, master, calendar, by_session, traded, dropped, manifest_path.name,
-                      dropped_before_listing, warnings)
+                      dropped_before_listing, warnings, par_value)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -265,38 +275,69 @@ class RandomForecaster:
         return [Selection(c.security_id, 0.0, [c.doc_id], []) for c in picks], {"training_manifest_id": None}
 
 
-def dividend_known_at(dv: finmind.DividendRow) -> Optional[datetime]:
+def dividend_known_at(dv: finmind.DividendRow, calendar: TradingCalendar) -> tuple[Optional[datetime], str]:
+    """Instante en que el derecho era público, con la política del protocolo (R11-01, ronda 12).
+
+    Hora de anuncio publicada → ese instante (``verified_original`` en cuanto a anuncio; FinMind no acredita
+    versiones posteriores de importes o fechas, y así se declara). Sólo fecha → apertura de la primera sesión
+    posterior (``derive_available_at``, ``conservative_inference``). Sin anuncio → desconocido.
+    """
     if dv.announced_at is not None:
-        return dv.announced_at
+        return dv.announced_at, AvailabilityQuality.VERIFIED_ORIGINAL.value
     if dv.announced_date is not None:
-        return taipei(dv.announced_date + timedelta(days=1), time(0, 0))
-    return None
+        try:
+            av = derive_available_at(dv.announced_date, calendar=calendar)
+        except Exception:
+            return None, AvailabilityQuality.UNKNOWN.value
+        return av.available_at, av.quality.value
+    return None, AvailabilityQuality.UNKNOWN.value
 
 
-def dividend_events(sec_id: str, rows: Sequence[finmind.DividendRow], par_value: D) -> list[q1mod.DividendLike]:
-    """Los mismos eventos, con los mismos ``event_id``, que ``Runner.apply_actions`` aplica al libro."""
-    out: list[q1mod.DividendLike] = []
+def validated_dividend_events(sec_id: str, rows: Sequence[finmind.DividendRow], par_value: D,
+                              calendar: TradingCalendar) -> tuple[list[q1mod.DividendLike], list[str]]:
+    """La **única** lista de derechos que consumen el libro y las etiquetas de Q1 (R12-01).
+
+    Un ``event_id`` (``{valor}:{cash|stock}:{fecha ex}:{periodo}``) con filas de valores distintos, o con una
+    fila que el libro rechazaría (pago anterior a la fecha ex), se descarta por completo y se informa: ni el
+    libro ni las etiquetas lo aplican. Las filas idénticas repetidas cuentan una vez.
+    """
+    candidates: dict[str, list] = {}
+    problems: list[str] = []
     for dv in rows:
+        known_at, quality = dividend_known_at(dv, calendar)
         if dv.cash_ex_date and dv.cash_per_share > 0:
-            out.append(q1mod.DividendLike(f"{sec_id}:cash:{dv.cash_ex_date}:{dv.period}", dv.cash_ex_date, "cash",
-                                          cash_per_share=dv.cash_per_share, known_at=dividend_known_at(dv)))
+            eid = f"{sec_id}:cash:{dv.cash_ex_date}:{dv.period}"
+            if dv.cash_pay_date and dv.cash_pay_date < dv.cash_ex_date:
+                candidates.setdefault(eid, []).append("invalid:pay_before_ex")
+            else:
+                candidates.setdefault(eid, []).append(q1mod.DividendLike(eid, dv.cash_ex_date, "cash", cash_per_share=dv.cash_per_share,
+                                                                         known_at=known_at, pay_date=dv.cash_pay_date, known_quality=quality))
         if dv.stock_ex_date and dv.stock_per_share > 0:
-            out.append(q1mod.DividendLike(f"{sec_id}:stock:{dv.stock_ex_date}:{dv.period}", dv.stock_ex_date, "stock",
-                                          stock_ratio=dv.stock_per_share / par_value, known_at=dividend_known_at(dv)))
-    return out
+            eid = f"{sec_id}:stock:{dv.stock_ex_date}:{dv.period}"
+            candidates.setdefault(eid, []).append(q1mod.DividendLike(eid, dv.stock_ex_date, "stock", stock_ratio=dv.stock_per_share / par_value,
+                                                                     known_at=known_at, pay_date=None, known_quality=quality))
+    events: list[q1mod.DividendLike] = []
+    for eid, cands in candidates.items():
+        invalid = [c for c in cands if isinstance(c, str)]
+        distinct = {c for c in cands if not isinstance(c, str)}
+        if invalid or len(distinct) > 1:
+            problems.append(f"{eid}: {len(cands)} rows " + ("with an invalid member (" + ", ".join(invalid) + ")" if invalid else "with different values")
+                            + "; event discarded for ledger and labels (R12-01)")
+            continue
+        events.append(next(iter(distinct)))
+    return sorted(events, key=lambda e: (e.ex_date, 0 if e.kind == "cash" else 1)), problems
 
 
 class TabularForecaster:
     """Q1: características de precio/volumen del paquete y modelo entrenado sólo con etiquetas conocidas al corte."""
     name, model_id, version = "Q1", q1mod.MODEL_ID, "q1_v1"
 
-    def __init__(self, market: MarketData, *, retrain_every_weeks: int = 4, min_weeks: int = 52, seed: int = 20260909,
-                 par_value: D = D(10)) -> None:
+    def __init__(self, market: MarketData, *, retrain_every_weeks: int = 4, min_weeks: int = 52, seed: int = 20260909) -> None:
         self.market = market
         self.retrain_every = retrain_every_weeks
         self.min_weeks = min_weeks
         self.seed = seed
-        self.par_value = par_value
+        self.par_value = market.par_value
         self.model: Optional[q1mod.Q1Model] = None
         self.trained_for: Optional[datetime] = None
         self.last_cutoff: Optional[datetime] = None
@@ -304,10 +345,8 @@ class TabularForecaster:
         self.cache: dict = {}
         self.history: list[str] = []
         self.data_version = market.data_version
-        # derechos para la etiqueta de retorno total (R10-09) con la misma identidad de evento que el libro (R11-02) y su
-        # instante de conocimiento (R11-01): hora de anuncio si existe; fecha de anuncio sin hora → día siguiente 00:00
-        # Taipei (una fecha sin hora no es las 00:00); sin anuncio → desconocido, y la etiqueta de esa semana no madura.
-        self.dividends = {sec_id: dividend_events(sec_id, s.dividends, par_value) for sec_id, s in market.securities.items()}
+        # la misma lista validada de derechos que aplica el libro (R12-01): identidad, importes, instante de conocimiento
+        self.dividends = {sec_id: s.events for sec_id, s in market.securities.items()}
 
     def maybe_train(self, cutoff_at: datetime) -> None:
         if self.last_cutoff is not None and cutoff_at < self.last_cutoff:
@@ -384,6 +423,8 @@ class Runner:
             if getattr(f, "par_value", None) is not None and getattr(f, "par_value") != cfg.par_value:
                 raise ValueError(f"forecaster {f.name} converts stock dividends with par_value={getattr(f, 'par_value')} "
                                  f"but the ledger uses {cfg.par_value} (R11-03)")
+        if market.par_value != cfg.par_value:
+            raise ValueError(f"market events were validated with par_value={market.par_value} but the ledger uses {cfg.par_value} (R11-03)")
         costs = CostModel(commission_per_side=cfg.commission_per_side, sell_tax=cfg.sell_tax, slippage_bps_per_side=cfg.slippage_bps)
         self.costs = costs
         self.initial = D(cfg.notional * cfg.slots)
@@ -395,19 +436,32 @@ class Runner:
         self.last_data_day = max(market.traded_days) if market.traded_days else cfg.start
 
     # -- precios y eventos --------------------------------------------------------------------------
-    def marks(self, session: date, ledger: PaperLedger, kind: str) -> tuple[dict[str, D], list[str]]:
+    def marks(self, session: date, ledger: PaperLedger, kind: str, *, valued_at: Optional[date] = None) -> tuple[dict[str, D], list[str]]:
+        """Precios para valorar en ``valued_at`` (por defecto la propia sesión) usando la sesión ``session``.
+
+        Si un valor no tiene precio regular en ``session`` se usa su último cierre con marca ``stale_price``; y si
+        entre la sesión del precio usado y ``valued_at`` hay un derecho aplicado, el precio es anterior al derecho
+        y se marca ``price_predates_right`` (R12-02): esa valoración no es un precio de mercado posterior al evento.
+        """
         out, stale = {}, []
+        valued_at = valued_at or session
         for sec, pos in ledger.positions.items():
             if pos.status.startswith("delisted"):
                 continue
             b = self.market.by_session.get(sec, {}).get(session)
             if b is None:
                 prev = [x for x in self.market.securities[sec].bars if x.session <= session]
-                if prev:
-                    out[sec] = prev[-1].close
-                    stale.append(f"stale_price:{sec}:{prev[-1].session.isoformat()}")
+                if not prev:
+                    continue
+                out[sec] = prev[-1].close
+                price_session = prev[-1].session
+                stale.append(f"stale_price:{sec}:{price_session.isoformat()}")
             else:
                 out[sec] = b.open if kind == "open" else b.close
+                price_session = session
+            for e in self.market.securities[sec].events:
+                if price_session < e.ex_date <= valued_at:
+                    stale.append(f"price_predates_right:{sec}:{e.ex_date.isoformat()}")
         return out, stale
 
     def apply_actions(self, name: str, upto: date) -> int:
@@ -418,23 +472,20 @@ class Runner:
         events = []
         for sec in list(ledger.positions):
             s = self.market.securities[sec]
-            for dv in s.dividends:
-                for kind, exd in (("cash", dv.cash_ex_date), ("stock", dv.stock_ex_date)):
-                    if exd is not None and since < exd <= upto:
-                        events.append((exd, kind, sec, dv))
+            for e in s.events:                               # la lista validada, la misma que usan las etiquetas (R12-01)
+                if since < e.ex_date <= upto:
+                    events.append((e.ex_date, e.kind, sec, e))
             if s.delisting_date and since < s.delisting_date <= upto:
                 events.append((s.delisting_date, "delisting", sec, None))
         n = 0
-        for exd, kind, sec, dv in sorted(events, key=lambda e: (e[0], e[1])):
+        for exd, kind, sec, e in sorted(events, key=lambda ev: (ev[0], ev[1])):
             at = taipei(exd, PRE_OPEN)
             try:
-                if kind == "cash" and dv.cash_per_share > 0:
-                    pay = taipei(dv.cash_pay_date, time(9, 0)) if dv.cash_pay_date else None
-                    ledger.apply_corporate_action(CorporateAction(f"{sec}:cash:{exd}:{dv.period}", sec, "cash_dividend", at,
-                                                                  per_share_cash=dv.cash_per_share, pay_at=pay))
-                elif kind == "stock" and dv.stock_per_share > 0:
-                    ledger.apply_corporate_action(CorporateAction(f"{sec}:stock:{exd}:{dv.period}", sec, "stock_dividend", at,
-                                                                  stock_ratio=dv.stock_per_share / self.cfg.par_value))
+                if kind == "cash":
+                    pay = taipei(e.pay_date, time(9, 0)) if e.pay_date else None
+                    ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "cash_dividend", at, per_share_cash=e.cash_per_share, pay_at=pay))
+                elif kind == "stock":
+                    ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "stock_dividend", at, stock_ratio=e.stock_ratio))
                 elif kind == "delisting":
                     ledger.apply_corporate_action(CorporateAction(f"{sec}:delisting:{exd}", sec, "delisting", at, terminal_price=None))
                 else:
@@ -528,7 +579,7 @@ class Runner:
             for name, lg in self.ledgers.items():
                 self.apply_actions(name, upto)
                 lg.advance_to(taipei(upto, time(23, 59)))
-                prices, stale = self.marks(last_close, lg, "close")
+                prices, stale = self.marks(last_close, lg, "close", valued_at=upto)
                 try:
                     v = lg.valuation(prices=prices, at=taipei(upto, time(23, 59)))
                     record["forecasters"][name] = {"equity_end": float(v.total), "flags": list(v.flags)[:6] + stale}
@@ -677,7 +728,7 @@ class Runner:
         for name, lg in self.ledgers.items():
             self.apply_actions(name, bound)
             lg.advance_to(end_at)
-            prices, stale = self.marks(last_close, lg, "close")
+            prices, stale = self.marks(last_close, lg, "close", valued_at=bound)
             try:
                 v = lg.valuation(prices=prices, at=end_at)
                 final[name] = {"equity": float(v.total), "cash": float(v.cash), "receivables": float(v.receivables),
@@ -727,7 +778,8 @@ class Runner:
                                          w["paired"][name]["excess_net_vs_baseline"]) for w in self.weeks if w["status"] == "valid" and not w.get("pending_outcome")]
                 try:
                     boot = block_bootstrap_mean(obs, block_length=cfg.block_length, n_boot=cfg.n_boot, seed=cfg.seed)
-                    entry["paired_excess_vs_baseline"] = {"baseline": cfg.baseline, "mean": boot.mean, "ci95": [boot.ci_low, boot.ci_high],
+                    entry["paired_excess_vs_baseline"] = {"baseline": cfg.baseline, "mean": boot.mean,
+                                                          "ci95": None if boot.degenerate else [boot.ci_low, boot.ci_high],   # sin NaN en JSON (R12-03)
                                                           "n_used": boot.n_used, "n_excluded": boot.n_invalid_excluded,
                                                           "block_length": boot.block_length, "n_segments": boot.n_segments,
                                                           "resample_mean": boot.resample_mean,

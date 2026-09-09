@@ -60,6 +60,8 @@ class DividendLike:
     cash_per_share: Decimal = Decimal(0)
     stock_ratio: Decimal = Decimal(0)
     known_at: Optional[datetime] = None
+    pay_date: Optional[date] = None             # efectivo: fecha de pago (la usa el libro; nunca anterior a la fecha ex)
+    known_quality: str = "unknown"              # verified_original | conservative_inference | unknown
 
 
 def features_from_bars(bars: Sequence[BarLike], cutoff_at: datetime, *, sessions_expected_20: int = 20) -> Optional[dict[str, float]]:

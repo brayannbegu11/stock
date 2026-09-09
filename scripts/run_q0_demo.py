@@ -45,7 +45,7 @@ def main() -> int:
                          seed=args.seed, slippage_bps=args.slippage_bps, label="Q0")
     result = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(args.seed)]).run()
     out_path = ROOT / "data" / "store" / f"q0_demo_{args.start}_{args.end}.json"
-    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=1, default=str, allow_nan=False), encoding="utf-8")   # sin NaN (R12-03)
     s = result["summary"]
     print(json.dumps({k: v for k, v in s.items() if k != "forecasters"}, ensure_ascii=False, indent=1, default=str))
     for name, e in s["forecasters"].items():

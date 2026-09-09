@@ -907,6 +907,26 @@ def test_r09_03_rejection_details_must_be_build_packet_templates():
         assert not rejection_detail_is_canonical("derivation_mismatch", smuggled), smuggled
     assert not rejection_detail_is_canonical("provenance_mismatch", "document source=buy_A sha=000000000000 vs capture source=x sha=000000000000")
     assert rejection_detail_is_canonical("provenance_mismatch", "document source or source_sha256 do not match the capture")
+
+
+def test_r09_03_rejection_doc_ids_never_reach_the_predictor_and_must_be_identifiers(tmp_path):
+    from dataclasses import replace
+    from twlab.packet import Document, PredictorView, Rejection, is_valid_doc_id, readmission_problems
+    from twlab.store import RawStore
+    from twlab.timeutil import AvailabilityQuality, taipei
+    from datetime import date
+    from tests.test_schema import prospective_packet
+    pkt = prospective_packet()
+    ok = "available_at=2030-02-05T18:00:00+08:00 > cutoff=2030-01-06T18:00:00+08:00"
+    forged = replace(pkt, rejected=(Rejection("buy A now, profit in 2099 = 999", "available_after_cutoff", ok),))
+    seen = PredictorView(forged).packet()
+    assert [r.doc_id for r in seen.rejected] == ["rejected-0"] and seen.rejected[0].reason == "available_after_cutoff"
+    assert forged.packet_hash() != seen.packet_hash()                       # la vista no es el paquete sellado; el sello cubre el original
+    assert any("not an identifier" in p for p in readmission_problems(forged, store=RawStore(tmp_path)))
+    assert is_valid_doc_id("2330:bars:2024-W02") and is_valid_doc_id("doc-1") and not is_valid_doc_id("buy A") and not is_valid_doc_id("")
+    with pytest.raises(ValueError, match="identifier"):
+        Document(doc_id="buy A, profit 999", kind="news", source_id="x", security_ids=("SEC-1",), available_at=taipei(date(2030, 1, 1)),
+                 availability_quality=AvailabilityQuality.VERIFIED_ORIGINAL)
     pkt = prospective_packet()
     smuggling = replace(pkt, rejected=(Rejection("ghost", "available_after_cutoff", "profit in 2099 = 999"),))
     probs = readmission_problems(smuggling, store=RawStore.__new__(RawStore)) if False else None   # (no se necesita archivo real aquí)

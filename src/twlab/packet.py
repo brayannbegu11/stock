@@ -86,6 +86,18 @@ def _jsonable(obj: Any) -> Any:
     raise TypeError(f"not serialisable: {type(obj).__name__}")
 
 
+_DOC_ID_RE = None
+
+
+def is_valid_doc_id(doc_id: Any) -> bool:
+    """Identificador corto sin espacios ni puntuación libre: no es un canal de texto (R09-03)."""
+    global _DOC_ID_RE
+    import re
+    if _DOC_ID_RE is None:
+        _DOC_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_:.@/\-]{0,200}$")
+    return isinstance(doc_id, str) and _DOC_ID_RE.fullmatch(doc_id) is not None
+
+
 def canonical_bytes(obj: Any) -> bytes:
     return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=_jsonable).encode("utf-8")
 
@@ -110,6 +122,8 @@ class Document:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not is_valid_doc_id(self.doc_id):
+            raise ValueError(f"doc_id {self.doc_id!r} is not an identifier (letters, digits, _ : . @ / -; max 200)")
         ensure_aware(self.available_at, f"{self.doc_id}.available_at")
         for name in ("published_at", "first_seen_at", "scheduled_for"):
             v = getattr(self, name)
@@ -364,6 +378,9 @@ def readmission_problems(
             problems.append(f"{d.doc_id}: {R_DERIVATION_MISMATCH} ({exc})")
     rejected_ids: set[str] = set()
     for r in packet.rejected:
+        if not is_valid_doc_id(r.doc_id):
+            problems.append("rejection doc_id is not an identifier (R09-03)")
+            continue
         if r.doc_id in seen:
             problems.append(f"{r.doc_id}: document is both admitted and rejected")
         if r.doc_id in rejected_ids:
@@ -477,7 +494,10 @@ class PredictorView:
         return "predictor"
 
     def packet(self) -> Packet:
-        return self._packet
+        """El paquete tal como lo ve el predictor: los rechazos conservan motivo y detalle (plantillas cerradas) pero
+        pierden su ``doc_id``, que es texto libre y podría transportar contenido (R09-03, ronda 12)."""
+        anonymous = tuple(Rejection(f"rejected-{i}", r.reason, r.detail) for i, r in enumerate(self._packet.rejected))
+        return replace(self._packet, rejected=anonymous)
 
     def outcomes(self) -> Any:
         ev = SecurityEvent(datetime.now(UTC), "predictor", "read_outcomes",

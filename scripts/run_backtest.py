@@ -57,10 +57,12 @@ def main() -> int:
     label = args.label or f"{args.manifest}_{start.isoformat()}_{end.isoformat()}"
     store = RawStore(ROOT / "data" / "raw")
     calendar = load_twse_reference_calendar()
-    market = load_market(store, manifest, calendar)
     cfg = BacktestConfig(start=start, end=end, slots=args.slots, notional=args.notional, sizing=args.sizing,
                          exposure_tolerance=D(args.exposure_tolerance), block_length=args.block_length, seed=args.seed,
                          commission_per_side=D(args.commission), slippage_bps=args.slippage_bps, label=label)
+    market = load_market(store, manifest, calendar, par_value=cfg.par_value)
+    if market.warnings:
+        print("avisos del mercado:", *market.warnings[:20], sep="\n  ")
     names = [n.strip() for n in args.forecasters.split(",") if n.strip()]
     forecasters = []
     for n in names:
@@ -69,15 +71,14 @@ def main() -> int:
         elif n == "A1":
             forecasters.append(RandomForecaster(args.seed))
         elif n == "Q1":
-            forecasters.append(TabularForecaster(market, retrain_every_weeks=args.retrain_every, min_weeks=args.min_train_weeks, seed=args.seed,
-                                                 par_value=cfg.par_value))
+            forecasters.append(TabularForecaster(market, retrain_every_weeks=args.retrain_every, min_weeks=args.min_train_weeks, seed=args.seed))
         else:
             raise SystemExit(f"pronosticador desconocido: {n}")
     if "A1" not in names:
         forecasters.append(RandomForecaster(args.seed))
     result = Runner(store, market, cfg, forecasters).run()
     out = ROOT / "data" / "store" / f"backtest_{label}.json"
-    out.write_text(json.dumps(result, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=1, default=str, allow_nan=False), encoding="utf-8")   # sin NaN (R12-03)
     print(json.dumps({k: v for k, v in result["summary"].items() if k != "forecasters"}, ensure_ascii=False, indent=1, default=str))
     for name, e in result["summary"]["forecasters"].items():
         print(name, json.dumps({k: v for k, v in e.items() if k not in ("final_valuation", "open_positions_at_end", "training_history")},
