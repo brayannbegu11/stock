@@ -119,32 +119,45 @@ def security_versions_from_census(
 @dataclass(frozen=True)
 class DelistingResolution:
     events: tuple[TerminalEvent, ...]      # retiradas que cierran un segmento existente
-    prior_issuer: tuple[str, ...]          # retirada de un emisor anterior que usó el mismo símbolo (UNI-03): no cierra nada
+    prior_issuer: tuple[str, ...]          # retirada anterior al alta de todos los segmentos del símbolo: emisor anterior sin segmento (UNI-03)
     orphan: tuple[str, ...]                # símbolo sin segmento en el maestro (falta la fecha de alta histórica)
-    ambiguous: tuple[str, ...]             # varios segmentos vigentes para el símbolo: no se adivina
+    ambiguous: tuple[str, ...]             # varios segmentos cubren la fecha: no se adivina
+    unresolved: tuple[str, ...] = ()       # hay segmentos pero ninguno cubre la fecha y no hay evidencia de otro emisor (R09-05)
 
 
 def resolve_delistings(rows: Iterable[DelistingRow], master: SecurityMaster, *, market: str, recorded_at: datetime,
                        source_id: str) -> DelistingResolution:
-    """Convierte retiradas por símbolo en eventos terminales sobre identidades del maestro."""
+    """Convierte retiradas por símbolo en eventos terminales sobre identidades del maestro.
+
+    Un segmento cubre la retirada si ``valid_from < fecha ≤ valid_to`` (o abierto). Sin segmento que la
+    cubra: «emisor anterior» sólo si la retirada es anterior al alta de **todos** los segmentos del símbolo;
+    en cualquier otro caso (alta el mismo día, retirada posterior a un segmento ya cerrado) no hay evidencia
+    de otro emisor y la fila queda ``unresolved`` para inspección (R09-05).
+    """
     events: list[TerminalEvent] = []
     prior: list[str] = []
     orphan: list[str] = []
     ambiguous: list[str] = []
+    unresolved: list[str] = []
     for r in rows:
         segs = [v for v in master.segments_of_symbol(r.symbol) if v.market == market]
         if not segs:
             orphan.append(r.symbol)
             continue
-        covering = [v for v in segs if v.valid_from < r.delisting_date and (v.valid_to is None or r.delisting_date <= v.valid_to)]
+        d = r.delisting_date
+        covering = [v for v in segs if v.valid_from < d and (v.valid_to is None or d <= v.valid_to)]
         if len(covering) > 1:
             ambiguous.append(r.symbol)
             continue
-        if not covering:
-            prior.append(f"{r.symbol} (retirada {r.delisting_date.isoformat()} ≤ alta vigente {segs[-1].valid_from.isoformat()})")
+        if covering:
+            events.append(TerminalEvent(covering[0].security_id, "delisting", d, recorded_at, source_id, r.name_zh))
             continue
-        events.append(TerminalEvent(covering[0].security_id, "delisting", r.delisting_date, recorded_at, source_id, r.name_zh))
-    return DelistingResolution(tuple(events), tuple(prior), tuple(orphan), tuple(ambiguous))
+        if all(v.valid_from > d for v in segs):
+            prior.append(f"{r.symbol} (retirada {d.isoformat()} < alta más antigua {segs[0].valid_from.isoformat()})")
+            continue
+        spans = ", ".join(f"[{v.valid_from.isoformat()}, {v.valid_to.isoformat() if v.valid_to else '∞'})" for v in segs)
+        unresolved.append(f"{r.symbol} (retirada {d.isoformat()} sin segmento que la cubra; segmentos: {spans})")
+    return DelistingResolution(tuple(events), tuple(prior), tuple(orphan), tuple(ambiguous), tuple(unresolved))
 
 
 __all__ = ["ORDINARY_EQUITY"]

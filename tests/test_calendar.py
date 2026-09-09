@@ -163,7 +163,9 @@ def test_official_multiyear_calendar_from_legacy_english_endpoint():
     # las filas informativas en inglés son sesiones; «No Trading» y festivos son cierres
     assert classify_holiday_row_en("Market Open") == ROW_SESSION_MARKER
     assert classify_holiday_row_en("Last Trading Day") == ROW_SESSION_MARKER
-    assert classify_holiday_row_en("No Trading / Market opens only for Clearing & Settlement") == ROW_CLOSURE
+    assert classify_holiday_row_en("No Trading. Market opens only for Clearing & Settlement") == ROW_CLOSURE
+    # una redacción no catalogada (aquí con «/») no se adivina aunque se parezca: detiene la carga (R09-04)
+    assert classify_holiday_row_en("No Trading / Market opens only for Clearing & Settlement") == ROW_UNKNOWN
     assert classify_holiday_row_en("Adjusted Holiday/ Chinese New Year’s Eve") == ROW_CLOSURE
     assert classify_holiday_row_en("Bridge closure announced by exchange") == ROW_UNKNOWN
     assert c.is_session(date(2021, 1, 4)) and c.is_session(date(2022, 1, 26)) and not c.is_session(date(2022, 1, 27))

@@ -150,7 +150,7 @@ class BootstrapResult:
 
 def _archived_forecast(
     store: RawStore, capture_id: str, *, packets: Mapping[str, Packet], calendar, known_calibrators,
-    allow_test_authorities: bool,
+    allow_test_authorities: bool, extractors=None,
 ) -> tuple[Optional[dict], str]:
     """Lee la predicción canónica archivada, recupera su paquete y la valida por completo.
 
@@ -170,9 +170,10 @@ def _archived_forecast(
     packet = packets.get(packet_hash)
     if packet is None or packet.packet_hash() != packet_hash or packet.packet_id != forecast.get("packet_id"):
         return None, "accredited packet not found in the packet registry (R07-03)"
-    # El registro no es de confianza: un paquete recuperado vuelve a pasar el filtro de admisión (R08-01).
+    # El registro no es de confianza: un paquete recuperado vuelve a pasar el filtro de admisión, con el archivo
+    # obligatorio, integridad de bytes y re-derivación por extractor registrado (R08-01, R09-01..03).
     from .packet import readmission_problems
-    readmit = readmission_problems(packet, store=store)
+    readmit = readmission_problems(packet, store=store, extractors=extractors)
     if readmit:
         return None, "recovered packet fails readmission: " + "; ".join(readmit[:5])
     receipt = rec.receipt_obj
@@ -199,6 +200,7 @@ def block_bootstrap_mean(
     known_calibrators=None,
     require_sealed: bool = False,
     allow_test_authorities: bool = False,
+    extractors=None,
 ) -> BootstrapResult:
     """Media y percentiles 2,5/97,5 con bootstrap por bloques móviles sobre semanas.
 
@@ -231,7 +233,7 @@ def block_bootstrap_mean(
             used.add(o.seal_capture_id)
             archived, why = _archived_forecast(store, o.seal_capture_id, packets=packets, calendar=calendar,
                                                known_calibrators=known_calibrators,
-                                               allow_test_authorities=allow_test_authorities)
+                                               allow_test_authorities=allow_test_authorities, extractors=extractors)
             if archived is None:
                 raise ObservationError(f"{o.week_id}: archived forecast rejected: {why}")
             if archived["forecast_id"] != o.forecast_id or archived["week_id"] != o.week_id or archived["evidence_class"] != evidence_class:
@@ -255,28 +257,32 @@ def block_bootstrap_mean(
     valid_mondays = [m for m, _ in valid]
     starts = _block_starts(valid_mondays, block_length)
     n_segments = len(_segments(valid_mondays))
-    # Ponderación (R08-11): el tramo se elige con probabilidad proporcional a su longitud y el bloque
-    # uniformemente dentro del tramo; así cada tramo pesa lo que pesa en la muestra, no según cuántos
-    # bloques caben en él. Con un solo tramo equivale al bootstrap por bloques móviles clásico.
+    # Ponderación (R08-11, R09-12): cada extracción de un tramo aporta b_s = min(bloque, longitud) observaciones,
+    # así que el tramo se elige con probabilidad proporcional a longitud / b_s para que su fracción esperada en la
+    # muestra remuestreada sea exactamente longitud / n; el bloque se elige uniformemente dentro del tramo. Con un
+    # solo tramo equivale al bootstrap por bloques móviles clásico (con su efecto de borde inherente).
     segments = _segments(valid_mondays)
     blocks_by_segment = [[(s0, ln) for s0, ln in starts if seg0 <= s0 < seg0 + seg_len] for seg0, seg_len in segments]
-    cumulative: list[int] = []
-    acc = 0
-    for _, seg_len in segments:
-        acc += seg_len
+    weights = [seg_len / min(block_length, seg_len) for _, seg_len in segments]
+    cumulative: list[float] = []
+    acc = 0.0
+    for w in weights:
+        acc += w
         cumulative.append(acc)
+    total_weight = cumulative[-1]
     rng = random.Random(seed)
     means: list[float] = []
     for _ in range(n_boot):
         sample: list[float] = []
         while len(sample) < n:
-            u = rng.randrange(n)
-            seg_idx = next(i for i, c in enumerate(cumulative) if u < c)
+            u = rng.random() * total_weight
+            seg_idx = next((i for i, c in enumerate(cumulative) if u < c), len(cumulative) - 1)
             blocks = blocks_by_segment[seg_idx]
             s0, ln = blocks[rng.randrange(len(blocks))]
             sample.extend(values[s0:s0 + ln])
-        sample = sample[:n]
-        means.append(sum(sample) / n)
+        # sin truncar a n: recortar el último bloque quita observaciones sobre todo a los tramos largos y
+        # desplaza el peso hacia los cortos (R09-12); la media de un remuestreo de longitud ≥ n es igual de válida.
+        means.append(sum(sample) / len(sample))
     resample_mean = sum(means) / len(means)
     means.sort()
     lo = means[int(0.025 * (n_boot - 1))]

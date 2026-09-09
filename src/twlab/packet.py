@@ -287,15 +287,32 @@ def build_packet(
     )
 
 
-def readmission_problems(packet: Packet, *, store: Optional[RawStore] = None) -> list[str]:
-    """Vuelve a aplicar el filtro de admisión a un paquete recuperado de un registro (R08-01).
+KNOWN_REJECTION_REASONS = frozenset({
+    R_AVAILABLE_AFTER_CUTOFF, R_UNKNOWN_AVAILABILITY, R_NOT_RECEIVED_BEFORE_CUTOFF, R_INCONSISTENT_METADATA,
+    R_NO_CAPTURE_EVIDENCE, R_SYNTHETIC_CAPTURE, R_PROVENANCE_MISMATCH, R_DERIVATION_MISMATCH,
+})
+
+
+def readmission_problems(
+    packet: Packet,
+    *,
+    store: Optional[RawStore] = None,
+    extractors: Optional[Mapping[str, Extractor]] = None,
+    read_bytes: Optional[Callable[[CaptureRecord], bytes]] = None,
+) -> list[str]:
+    """Vuelve a aplicar el filtro de admisión a un paquete recuperado de un registro (R08-01, R09-01..03).
 
     El hash acredita bytes, no admisibilidad: un paquete construido a mano puede contener documentos
-    que ``build_packet`` habría rechazado. Se comprueban, por documento admitido, disponibilidad
-    conocida, coherencia de fechas, disponibilidad e ingestión no posteriores al corte y, en modo
-    prospectivo, procedencia contra el archivo (captura existente, hash de origen, reloj del sistema).
+    que ``build_packet`` habría rechazado. Por documento admitido se comprueban disponibilidad
+    conocida, coherencia de fechas y disponibilidad no posterior al corte. En modo prospectivo el
+    archivo es **obligatorio** (sin él la readmisión falla cerrada): captura existente, procedencia,
+    reloj del sistema, ingestión no posterior al corte, integridad de los bytes archivados y
+    re-derivación del *payload* con el extractor registrado (sin registro, el documento no se readmite).
+    Los rechazos recuperados deben ser únicos, con motivo del catálogo y sin colisión con los admitidos.
     """
     problems: list[str] = []
+    if packet.mode == MODE_PROSPECTIVE and store is None:
+        problems.append("archive_required_for_prospective_readmission (R09-02)")
     seen: set[str] = set()
     for d in packet.admitted:
         if d.doc_id in seen:
@@ -307,27 +324,56 @@ def readmission_problems(packet: Packet, *, store: Optional[RawStore] = None) ->
             problems.append(f"{d.doc_id}: {R_INCONSISTENT_METADATA}")
         if is_after(d.available_at, packet.cutoff_at):
             problems.append(f"{d.doc_id}: {R_AVAILABLE_AFTER_CUTOFF}")
-        if packet.mode == MODE_PROSPECTIVE:
-            if d.capture_id is None or d.source_sha256 is None or d.derivation is None:
-                problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE}")
-                continue
-            if d.first_seen_at is None or is_after(d.first_seen_at, packet.cutoff_at):
-                problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
-            if store is not None:
-                try:
-                    rec = store.get(d.capture_id)
-                except KeyError:
-                    problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE} (capture {d.capture_id} not in archive)")
-                    continue
-                if rec.source_id != d.source_id or rec.sha256 != d.source_sha256:
-                    problems.append(f"{d.doc_id}: {R_PROVENANCE_MISMATCH}")
-                if rec.clock_source != "system":
-                    problems.append(f"{d.doc_id}: {R_SYNTHETIC_CAPTURE}")
-                if is_after(rec.ingested_at_dt, packet.cutoff_at) or (d.first_seen_at is not None and to_utc(d.first_seen_at) != to_utc(rec.ingested_at_dt)):
-                    problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
+        if packet.mode != MODE_PROSPECTIVE:
+            continue
+        if d.capture_id is None or d.source_sha256 is None or d.derivation is None:
+            problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE}")
+            continue
+        if d.first_seen_at is None or is_after(d.first_seen_at, packet.cutoff_at):
+            problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
+        if store is None:
+            continue
+        try:
+            rec = store.get(d.capture_id)
+        except KeyError:
+            problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE} (capture {d.capture_id} not in archive)")
+            continue
+        if rec.source_id != d.source_id or rec.sha256 != d.source_sha256:
+            problems.append(f"{d.doc_id}: {R_PROVENANCE_MISMATCH}")
+        if rec.clock_source != "system":
+            problems.append(f"{d.doc_id}: {R_SYNTHETIC_CAPTURE}")
+        if is_after(rec.ingested_at_dt, packet.cutoff_at) or (d.first_seen_at is not None and to_utc(d.first_seen_at) != to_utc(rec.ingested_at_dt)):
+            problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
+        try:                                                    # integridad real de los bytes archivados (R09-01)
+            raw = (read_bytes or store.read)(rec)
+            if hashlib.sha256(raw).hexdigest() != rec.sha256:
+                raise ValueError("archived bytes do not match capture sha256")
+        except Exception as exc:
+            problems.append(f"{d.doc_id}: archived bytes fail integrity: {exc}")
+            continue
+        extractor = (extractors or {}).get(d.derivation)
+        if extractor is None:
+            problems.append(f"{d.doc_id}: {R_DERIVATION_MISMATCH} (extractor {d.derivation!r} not registered; payload cannot be re-derived)")
+            continue
+        try:
+            extraction = extractor(raw)
+            if not isinstance(extraction, Mapping) or "payload" not in extraction or "security_ids" not in extraction:
+                raise ValueError("extractor must return a mapping with 'payload' and 'security_ids'")
+            if canonical_bytes(_thaw(extraction["payload"])) != canonical_bytes(_thaw(d.payload)):
+                raise ValueError("payload does not equal extractor output on the archived bytes")
+            if tuple(str(s) for s in extraction["security_ids"]) != d.security_ids:
+                raise ValueError("security_ids do not equal extracted identities")
+        except Exception as exc:
+            problems.append(f"{d.doc_id}: {R_DERIVATION_MISMATCH} ({exc})")
+    rejected_ids: set[str] = set()
     for r in packet.rejected:
         if r.doc_id in seen:
             problems.append(f"{r.doc_id}: document is both admitted and rejected")
+        if r.doc_id in rejected_ids:
+            problems.append(f"{r.doc_id}: duplicate rejection")
+        rejected_ids.add(r.doc_id)
+        if r.reason not in KNOWN_REJECTION_REASONS:
+            problems.append(f"{r.doc_id}: rejection reason {r.reason!r} is not in the admission catalog (R09-03)")
     return problems
 
 

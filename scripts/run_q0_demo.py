@@ -13,14 +13,16 @@ evaluación funciona de extremo a extremo sin LLM y con control temporal.
 (sesgo de supervivencia), los costes son ilustrativos y varios valores del
 protocolo siguen sin congelar; todo eso se declara en el informe de salida.
 
-Reglas de la demo tras la ronda 8 de Astra: el plan semanal usa el calendario
-oficial conocido al corte (sin cierres inferidos a posteriori); una sesión
-oficial sin negociación en toda la muestra se marca como cierre sobrevenido
-sin gestionar (política del protocolo pendiente); las acciones corporativas se
-procesan sin huecos (también en semanas sin sesiones); una cesta sigue en
-seguimiento mientras conserve cantidad en el libro; los intervalos emparejados
-se miden de apertura del lunes a cierre del viernes sobre el patrimonio valorado
-en ambos instantes, con todas las posiciones arrastradas.
+Reglas de la demo tras las rondas 8 y 9 de Astra: el plan semanal usa las listas
+anuales oficiales (capturadas en 2026; supuesto declarado de que estaban
+publicadas antes de cada corte), sin cierres inferidos; un cierre sobrevenido
+sólo se descubre al llegar a la sesión (entrada fallida o salida bloqueada) y
+la semana se etiqueta después; las acciones corporativas se procesan sin huecos
+hasta el final del periodo; una cesta sigue en seguimiento mientras conserve
+cantidad en el libro; los intervalos emparejados se miden de apertura del lunes
+a cierre del viernes sobre el patrimonio valorado en ambos instantes con la
+contabilidad del libro, y sólo con precios de mercado en ambos extremos; el
+patrimonio final es la valoración del libro al cierre del periodo.
 
 Uso: python scripts/run_q0_demo.py --start 2024-01-01 --end 2025-12-31
 """
@@ -82,7 +84,10 @@ def main() -> int:
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
     store = RawStore(ROOT / "data" / "raw")
     manifest = json.loads((ROOT / "data" / "store" / "sample_universe.json").read_text(encoding="utf-8"))
-    official = load_twse_reference_calendar()          # calendario conocido al corte: lista anual oficial, sin cierres sobrevenidos
+    # Calendario de planificación: listas anuales oficiales 2021-2026 capturadas el 9-09-2026. Supuesto declarado (R09-07):
+    # cada lista anual estaba publicada antes de los cortes de su año; no se dispone de las versiones históricas ni de
+    # sus revisiones, y no incluye cierres sobrevenidos.
+    official = load_twse_reference_calendar()
 
     # ---- datos de la muestra (identidad de cada captura comprobada, R08-06) -------------------------
     bars: dict[str, list[finmind.Bar]] = {}
@@ -155,7 +160,9 @@ def main() -> int:
         """Precios de la sesión (apertura o cierre); si un valor no tiene precio regular ese día, último cierre
         conocido con aviso explícito: no es un precio de mercado."""
         out, stale = {}, []
-        for sec in ledger.positions:
+        for sec, pos in ledger.positions.items():
+            if pos.status.startswith("delisted"):
+                continue                                  # el libro las valora por su estado terminal, no por precio
             sid = sym_of[sec]
             b = by_session.get(sid, {}).get(session)
             if b is None:
@@ -222,24 +229,25 @@ def main() -> int:
             break
         if not plan.is_valid:
             week_end = plan.target_monday + timedelta(days=6)
+            last_close = official.prev_session(before=week_end + timedelta(days=1))
             for name, lg in ledgers.items():
                 apply_actions(name, week_end)             # los derechos no se detienen en una semana sin sesiones (T2)
                 lg.advance_to(taipei(week_end, time(23, 59)))
+                prices, stale = marks(last_close, lg, "close")
+                try:                                      # la curva de patrimonio también se valora en semanas sin sesiones (R09-08)
+                    v = lg.valuation(prices=prices, at=taipei(week_end, time(23, 59)))
+                    record[name] = {"equity_end": float(v.total), "flags": list(v.flags)[:6] + stale, "unresolved": list(v.unresolved)}
+                    prev_equity[name] = v.total
+                except MissingPrice as exc:
+                    record[name] = {"equity_end": None, "flags": [f"missing_price:{exc}"] + stale}
             record["note"] = "invalid:no_sessions (registrado, sin operaciones; eventos procesados)"
             continue
         entry_s, exit_s = plan.entry_at.date(), plan.exit_at.date()
-        if entry_s not in traded_days or exit_s not in traded_days:
-            # sesión oficial sin negociación en toda la muestra: cierre sobrevenido. El protocolo aún no dice cómo se
-            # replanifica (informe 11 §4); la demo no opera y lo declara. No se usa conocimiento posterior al corte.
-            closed = entry_s if entry_s not in traded_days else exit_s
-            for name, lg in ledgers.items():
-                apply_actions(name, exit_s)
-                lg.advance_to(plan.exit_at)
-            record.update(note=f"extraordinary_closure_unhandled:{closed.isoformat()}", paired=False,
-                          unpaired_reason="extraordinary_closure_unhandled", excess_net_q0_minus_a1=None)
-            record["status"] = "valid:not_operated"
-            continue
         last_session = official.prev_session(before=sunday)
+        # Un cierre sobrevenido (sesión oficial sin negociación) sólo se descubre al llegar a esa sesión: el paquete, la
+        # predicción y la reserva de puestos se producen siempre; la entrada falla por falta de apertura o la salida queda
+        # bloqueada por falta de cierre, y la semana se etiqueta después de ocurrir (R09-06). Nada se decide con datos
+        # posteriores al corte.
         # ---- paquete ---------------------------------------------------------------------
         docs = []
         for sid, bs in bars.items():
@@ -334,8 +342,11 @@ def main() -> int:
                                  at=plan.entry_at, week_id=plan.week_id)
             open_slots[name].append((plan.week_id, slots))
             open_marks_after, _ = marks(entry_s, lg, "open")
-            positions_value_open = sum((pos.total_quantity * open_marks_after[sec] for sec, pos in lg.positions.items() if sec in open_marks_after), D(0))
-            exposure = (positions_value_open / equity_start) if equity_start else D(0)
+            try:                                          # exposición con la misma valoración contable que el patrimonio (R09-11)
+                positions_value_open = lg.valuation(prices=open_marks_after, at=plan.entry_at).positions_value
+            except MissingPrice:
+                positions_value_open = None
+            exposure = (positions_value_open / equity_start) if (equity_start and positions_value_open is not None) else D(0)
             apply_actions(name, exit_s)                   # derechos durante la semana, en orden
             for wid, ss in open_slots[name]:
                 exit_basket(lg, ss, close_prices=close_prices, at=plan.exit_at, week_id=wid)
@@ -349,7 +360,9 @@ def main() -> int:
                 flags = list(val.flags) + stale0 + stale1
             except MissingPrice as exc:
                 equity_end, flags = None, [f"missing_price:{exc}"] + stale0 + stale1
-            measurable = equity_start is not None and equity_end is not None and equity_start > 0
+            # un intervalo apertura→cierre sólo es admisible con precios de mercado en ambos extremos (R09-10)
+            measurable = (equity_start is not None and equity_end is not None and equity_start > 0
+                          and positions_value_open is not None and not stale0 and not stale1)
             rep = basket_report(plan.week_id, slots, equity_start=equity_start if measurable else prev_equity[name],
                                 equity_end=equity_end if measurable else prev_equity[name])
             interval_return = (equity_end / equity_start - 1) if measurable else None
@@ -366,7 +379,7 @@ def main() -> int:
                             "costs_over_invested": float(costs_twd / invested) if invested else None,
                             "equity_open": float(equity_start) if equity_start is not None else None,
                             "equity_end": float(equity_end) if equity_end is not None else None, "flags": flags[:6],
-                            "baskets_in_follow_up": len(open_slots[name])}
+                            "stale_prices": stale0 + stale1, "baskets_in_follow_up": len(open_slots[name])}
             if measurable and rep.filled_slots > 0:
                 intervals[name] = IntervalReturn(label=name, start_at=plan.entry_at, end_at=plan.exit_at, start_price_kind="open",
                                                  end_price_kind="close", value=interval_return.quantize(D("0.0000001")),
@@ -378,7 +391,13 @@ def main() -> int:
               if entry_s in by_session[sym_of[s]] and exit_s in by_session[sym_of[s]]]
         record["universe_ew_gross_open_close"] = statistics.fmean(ew) if ew else None
         record["paired"], record["excess_net_q0_minus_a1"], record["unpaired_reason"] = False, None, None
-        if "Q0" in intervals and "A1" in intervals:
+        if entry_s not in traded_days or exit_s not in traded_days:
+            closed = entry_s if entry_s not in traded_days else exit_s      # etiqueta a posteriori; nada se decidió con ella
+            record["note"] = f"extraordinary_closure_unhandled:{closed.isoformat()}"
+            record["unpaired_reason"] = "extraordinary_closure_unhandled"
+        elif any(record[n]["stale_prices"] for n in ledgers):
+            record["unpaired_reason"] = "stale_price_in_interval"
+        elif "Q0" in intervals and "A1" in intervals:
             try:                                  # SIM-12: sólo se restan intervalos estrictamente comparables (con tolerancia de exposición declarada)
                 record["excess_net_q0_minus_a1"] = float(paired_excess(intervals["Q0"], intervals["A1"],
                                                                        exposure_tolerance=D(args.exposure_tolerance)))
@@ -388,9 +407,24 @@ def main() -> int:
         else:
             record["unpaired_reason"] = "missing_interval:" + ",".join(n for n in ("Q0", "A1") if n not in intervals)
 
+    # ---- cola del periodo: eventos hasta `end` y valoración final del libro (R09-08, R09-09) ----------------
+    final: dict[str, dict] = {}
+    end_at = taipei(end, time(23, 59))
+    last_close = official.prev_session(before=end + timedelta(days=1))
+    for name, lg in ledgers.items():
+        apply_actions(name, end)
+        lg.advance_to(end_at)
+        prices, stale = marks(last_close, lg, "close")
+        try:
+            v = lg.valuation(prices=prices, at=end_at)
+            final[name] = {"equity": float(v.total), "cash": float(v.cash), "receivables": float(v.receivables),
+                           "positions_value": float(v.positions_value), "unresolved": list(v.unresolved), "flags": list(v.flags) + stale,
+                           "valued_at": end_at.isoformat(), "prices_session": last_close.isoformat(), "events_processed_through": cursor[name].isoformat()}
+        except MissingPrice as exc:
+            final[name] = {"equity": None, "error": str(exc), "flags": stale, "valued_at": end_at.isoformat()}
+
     # ---- agregados ---------------------------------------------------------------------------
     operated = [w for w in weeks if w["status"] == "valid"]
-    not_operated = [w for w in weeks if w["status"] == "valid:not_operated"]
     paired = [w for w in operated if w["paired"]]
     obs = [WeeklyObservation(w["week_id"], f"Q0-{w['week_id']}", EVIDENCE, None, bool(w.get("paired")), w.get("excess_net_q0_minus_a1"))
            for w in weeks if w["status"].startswith("valid")]
@@ -408,17 +442,22 @@ def main() -> int:
     summary = {
         "period": [args.start, args.end], "sample_size": len(bars), "weeks_total": len(weeks), "weeks_operated": len(operated),
         "weeks_invalid_no_sessions": len([w for w in weeks if w["status"] == "invalid:no_sessions"]),
-        "weeks_extraordinary_closure_unhandled": [w["week_id"] for w in not_operated], "weeks_paired": len(paired),
+        "weeks_extraordinary_closure_unhandled": [w["week_id"] for w in weeks if str(w.get("note", "")).startswith("extraordinary")],
+        "weeks_paired": len(paired),
         "official_sessions_without_trading_in_sample": [d.isoformat() for d in inferred],
         "bars_without_regular_price_dropped": dropped_no_regular_price,
         "Q0": {"mean_weekly_net_return_open_close": mean_of("portfolio_net_return_open_close", "Q0"),
                "mean_weekly_net_return_week_over_week": mean_of("portfolio_net_return_week_over_week", "Q0"),
                "mean_weekly_gross_pick_return": mean_of("mean_gross_pick_return", "Q0"),
-               "final_equity": float(prev_equity["Q0"]), "total_net_return": float(prev_equity["Q0"] / initial - 1),
+               "final_equity": final["Q0"]["equity"],
+               "total_net_return": (final["Q0"]["equity"] / float(initial) - 1) if final["Q0"]["equity"] is not None else None,
+               "final_valuation": final["Q0"],
                "entry_failures": sum(w["Q0"]["failed"] for w in operated), "exit_blocked": sum(w["Q0"]["exit_blocked"] for w in operated)},
         "A1": {"mean_weekly_net_return_open_close": mean_of("portfolio_net_return_open_close", "A1"),
                "mean_weekly_net_return_week_over_week": mean_of("portfolio_net_return_week_over_week", "A1"),
-               "final_equity": float(prev_equity["A1"]), "total_net_return": float(prev_equity["A1"] / initial - 1),
+               "final_equity": final["A1"]["equity"],
+               "total_net_return": (final["A1"]["equity"] / float(initial) - 1) if final["A1"]["equity"] is not None else None,
+               "final_valuation": final["A1"],
                "entry_failures": sum(w["A1"]["failed"] for w in operated), "exit_blocked": sum(w["A1"]["exit_blocked"] for w in operated)},
         "universe_ew": {"mean_weekly_gross_open_close": mean_of("universe_ew_gross_open_close")},
         "paired_excess_q0_minus_a1": {"mean": boot.mean, "ci95": [boot.ci_low, boot.ci_high], "n_used": boot.n_used,

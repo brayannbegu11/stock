@@ -42,36 +42,47 @@ class UnclassifiedCalendarRow(ValueError):
     pass
 
 
-_EN_SESSION_EXACT = ("Market Open", "Last Trading Day", "First Trading Day")
-_EN_CLOSURE_TOKENS = ("No Trading", "Holiday", "New Year", "Chinese New Year", "Peace Memorial", "Children", "Tomb-sweeping",
-                      "Tomb Sweeping", "Labor Day", "Dragon Boat", "Mid-autumn", "Moon Festival", "National Day", "Teacher",
-                      "Restoration Day", "Constitution Day", "Typhoon")
+# Frases completas observadas en el endpoint heredado en inglés (2021-2026). Un texto se clasifica sólo si es
+# exactamente una de estas frases o una combinación de frases de cierre separadas por «/» o «&»; cualquier otra
+# cosa (negaciones, condiciones, anuncios, cierres por tifón redactados de otro modo) es ``unknown`` y detiene
+# la carga para inspección humana (R08-02, R09-04). Sin coincidencia por subcadenas.
+_EN_CLOSURE_PHRASES = frozenset({
+    "adjusted holiday", "chinese new year", "chinese new year's eve", "new year", "new year's day",
+    "no trading. market opens only for clearing & settlement", "no trading market opens only for clearing & settlement",
+    "tomb-sweeping day", "tomb sweeping day", "labor day", "labour day", "mid-autumn", "mid-autumn festival", "moon festival",
+    "peace memorial day", "dragon boat festival", "national day", "children's day", "teacher's day", "teachers' day",
+    "taiwan restoration day", "restoration day", "constitution day",
+})
+_EN_SESSION_PHRASES = frozenset({
+    "market open", "last trading day", "last trading day of the year", "first trading day", "first trading day of the year",
+})
 
 
-_EN_DOUBT_TOKENS = ("cancel", "to be confirmed", "tbc", "tbd", "tentative", "pending", "postpone", "resume", "normal trading",
-                    "subject to", "if ", "unless", "may ", "might ", "not yet", "provisional", "?")
+def _normalize_en(description: str) -> str:
+    t = " ".join(str(description).replace("\n", " ").split()).lower().replace("’", "'").replace("‘", "'")
+    if t.endswith(")") and "(" in t:                       # sufijo de año: «Adjusted Holiday (2021)»
+        head, _, tail = t.rpartition("(")
+        if tail[:-1].strip().isdigit() and len(tail[:-1].strip()) == 4:
+            t = head
+    return t.strip().rstrip(".").strip()
 
 
 def classify_holiday_row_en(description: str) -> str:
     """Clasifica una fila del endpoint histórico en inglés (``rwd/en/holidaySchedule``); ante duda, ``unknown``.
 
-    Reglas (R08-02): una negación, cancelación, condición o anuncio pendiente es ``unknown``;
-    un marcador de sesión al principio combinado con un término de cierre es una contradicción
-    y también ``unknown``; la comparación no distingue mayúsculas.
+    Sólo frases completas del catálogo (o combinaciones de frases de cierre con «/» o «&»); nunca
+    subcadenas. Así «Not a Holiday», «Typhoon warning: trading continues» o «Market Open is not
+    confirmed» son ``unknown`` y detienen la carga (R08-02, R09-04).
     """
-    text = " ".join(str(description).replace("\n", " ").split())
-    low = text.lower()
-    if not low:
+    t = _normalize_en(description)
+    if not t:
         return ROW_UNKNOWN
-    if any(tok in low for tok in _EN_DOUBT_TOKENS):
-        return ROW_UNKNOWN
-    session_marker = any(low.startswith(p.lower()) for p in _EN_SESSION_EXACT)
-    closure = any(tok.lower() in low for tok in _EN_CLOSURE_TOKENS)
-    if session_marker and closure:
-        return ROW_UNKNOWN
-    if session_marker:
+    if t in _EN_CLOSURE_PHRASES:
+        return ROW_CLOSURE
+    if t in _EN_SESSION_PHRASES:
         return ROW_SESSION_MARKER
-    if closure:
+    parts = [p.strip().rstrip(".").strip() for p in t.replace("&", "/").split("/")]
+    if parts and all(p in _EN_CLOSURE_PHRASES for p in parts):
         return ROW_CLOSURE
     return ROW_UNKNOWN
 

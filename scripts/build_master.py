@@ -94,7 +94,7 @@ def main() -> int:
         f"Construido desde las capturas archivadas (`data/raw`, capturas más recientes al {as_of.isoformat()}). "
         "Sólo cubre el censo vigente más las retiradas listadas por TWSE; no es un maestro histórico completo.",
         "",
-        "| Mercado | Filas de censo | Segmentos en el maestro | Acciones ordinarias vigentes | Otros instrumentos / sin clasificar |",
+        "| Mercado | Filas de censo | Segmentos en el maestro | Acciones ordinarias vigentes del tablero principal | Otros (innovación, ETF, DR, sin clasificar…) |",
         "|---|---|---|---|---|",
     ]
     for m in ("TWSE", "TPEX", "ESB"):
@@ -107,7 +107,9 @@ def main() -> int:
         f"- Universo simulable por defecto (TWSE + TPEX, acciones ordinarias, **tablero principal**, vigentes): **{len(universe)}**. "
         f"Tablero de innovación fuera del universo salvo habilitación explícita del protocolo: {len(innovation)} valores.",
         f"- Tableros (mercado, tablero) entre las acciones ordinarias vigentes: {dict(industries)}.",
-        f"- Retiradas con símbolo ambiguo (varios segmentos vigentes): {len(resolution.ambiguous)}.",
+        f"- Retiradas con símbolo ambiguo (varios segmentos cubren la fecha): {len(resolution.ambiguous)}; "
+        f"sin segmento que las cubra y sin evidencia de otro emisor (`unresolved`, R09-05): {len(resolution.unresolved)}."
+        + ("" if not resolution.unresolved else " Ejemplos: " + "; ".join(resolution.unresolved[:5])),
         f"- Clasificación FinMind de los vigentes: {dict(fm_types)} (`absent` = no aparece en `TaiwanStockInfo`).",
         f"- Retiradas TWSE listadas: {len(delistings)}; cerradas en el maestro (existían en el censo vigente): {closed}; "
         f"sin segmento porque no están en el censo vigente ni se conoce su fecha de alta: {orphan_delistings} (pendiente: TEJ o histórico de FinMind).",

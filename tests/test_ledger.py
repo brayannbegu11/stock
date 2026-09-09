@@ -801,6 +801,7 @@ def test_r08_01_recovered_packet_is_readmitted_document_by_document(tmp_path):
     from dataclasses import replace
     from datetime import timedelta
     from twlab.packet import Document, readmission_problems
+    from twlab.store import RawStore
     from twlab.timeutil import AvailabilityQuality
     from tests.test_schema import archive_and_seal, prospective_forecast, prospective_packet
     pkt = prospective_packet()
@@ -813,14 +814,58 @@ def test_r08_01_recovered_packet_is_readmitted_document_by_document(tmp_path):
     # un paquete construido a mano (no por build_packet) con un documento futuro admitido: su hash es válido, su contenido no
     for bad_doc in (future, unknown):
         forged = replace(pkt, admitted=(bad_doc,))
-        problems = readmission_problems(forged)
+        problems = readmission_problems(forged, store=RawStore(tmp_path / "archive"))
         assert problems and all(p.startswith(bad_doc.doc_id) for p in problems)
         o = prospective_forecast(forged)
         o["ranking"][0]["document_ids"] = [bad_doc.doc_id]
         store, rec = archive_and_seal(tmp_path / bad_doc.doc_id, o, forged)
         with pytest.raises(ObservationError, match="readmission"):
             _eval(store, rec, "2030-W02", forged)
-    assert readmission_problems(pkt) == []               # el paquete legítimo pasa
+    assert readmission_problems(pkt, store=RawStore(tmp_path / "empty")) == []      # el paquete legítimo pasa (con archivo)
+
+
+def test_r09_01_r09_02_r09_03_readmission_requires_the_archive_checks_bytes_and_rederives_payloads(tmp_path):
+    import json
+    from dataclasses import replace
+    from datetime import timedelta
+    from twlab.packet import Document, Rejection, readmission_problems
+    from twlab.store import RawStore
+    from twlab.timeutil import AvailabilityQuality
+    from tests.test_schema import prospective_packet
+    pkt = prospective_packet()
+    store = RawStore(tmp_path)
+    rec = store.put(source_id="x", dataset="d", payload=b'{"profit": 1}', url="u", content_type="application/json")
+    doc = Document(doc_id="d1", kind="news", source_id="x", security_ids=("SEC-1",), available_at=pkt.cutoff_at - timedelta(days=1),
+                   availability_quality=AvailabilityQuality.VERIFIED_ORIGINAL, capture_id=rec.capture_id, source_sha256=rec.sha256,
+                   derivation="ext", first_seen_at=rec.ingested_at_dt, payload={"profit": 1})
+    ext = {"ext": lambda raw: {"payload": json.loads(raw), "security_ids": ["SEC-1"]}}
+    good = replace(pkt, admitted=(doc,))
+    assert readmission_problems(good, store=store, extractors=ext) == []
+    # R09-02: sin archivo la readmisión prospectiva falla cerrada, aunque los metadatos cuadren
+    assert any("archive_required" in p for p in readmission_problems(good, extractors=ext))
+    # sin extractor registrado el payload no puede re-derivarse: no se readmite
+    assert any("not registered" in p for p in readmission_problems(good, store=store))
+    # payload que no sale de los bytes archivados
+    bad_payload = replace(good, admitted=(replace(doc, payload={"profit": 999}),))
+    assert any("derivation_mismatch" in p for p in readmission_problems(bad_payload, store=store, extractors=ext))
+    # R09-03: rechazos duplicados o con motivo fuera del catálogo
+    forged_rej = replace(good, rejected=(Rejection("ghost", "invented_reason", "profit in 2099 = 999"), Rejection("ghost", "invented_reason", "x")))
+    probs = readmission_problems(forged_rej, store=store, extractors=ext)
+    assert any("invented_reason" in p for p in probs) and any("duplicate rejection" in p for p in probs)
+    # R09-01: bytes archivados sustituidos conservando el manifiesto
+    (store.root / rec.path).write_bytes(b'{"profit": 999}')
+    assert any("integrity" in p for p in readmission_problems(good, store=store, extractors=ext))
+
+
+def test_r09_12_segment_weights_are_preserved_when_segments_are_shorter_than_the_block():
+    # tramos de 1 y 8 (valores 1 y 0): media 1/9; con bloque 4 una extracción del tramo corto aporta 1 observación y
+    # una del largo 4, así que el tramo corto debe elegirse con probabilidad ∝ 1/1 frente a 8/4.
+    rows = [obs("2026-W20", 1.0)] + [obs(f"2026-W{w}", 0.0) for w in range(22, 30)]
+    r = block_bootstrap_mean(rows, block_length=4, n_boot=6000, seed=1)
+    assert abs(r.mean - 1 / 9) < 1e-9 and abs(r.resample_mean - 1 / 9) < 0.015
+    rows2 = [obs("2026-W20", 1.0), obs("2026-W21", 1.0)] + [obs(f"2026-W{w}", 0.0) for w in range(23, 31)]
+    r2 = block_bootstrap_mean(rows2, block_length=4, n_boot=6000, seed=1)
+    assert abs(r2.mean - 0.2) < 1e-9 and abs(r2.resample_mean - 0.2) < 0.02
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, "0.1"])

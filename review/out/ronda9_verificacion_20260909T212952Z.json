@@ -1,0 +1,348 @@
+{
+  "ronda": "9",
+  "revisor": "GPT-6 Astra",
+  "resumen": "230 pruebas de aceptación y 25 controles adaptados de R08 pasan. Los ataques adicionales producen 26 fallos y 4 controles positivos, agrupados en 13 hallazgos vigentes: 5 altos, 7 medios y 1 bajo. Maestro, informe 10 y JSON de la demo reproducidos byte por byte; 102 paquetes recuperados, sin documentos ni barras posteriores al corte bajo la política declarada. Sólo se escribieron archivos bajo review/out/astra_scratch/. P4 sigue sin sostenerse.",
+  "hallazgos": [
+    {
+      "id": "R08-01/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 290,
+      "afirmacion": "Corregidos los contraejemplos originales; la readmisión completa sigue abierta en R09-01..03.",
+      "contraejemplo": "El evaluador ahora rechaza documentos futuros, unknown y sin captura.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k evaluator_revalidates --basetemp=review/out/astra_scratch/repro_r0801",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-02/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/calendar.py",
+      "linea": 62,
+      "afirmacion": "Corregidas las tres frases originales; otras negaciones y contradicciones siguen pasando, R09-04.",
+      "contraejemplo": "Rechaza «Typhoon closure cancelled; normal trading», «Market Open: No trading due to typhoon» y «Holiday schedule to be confirmed».",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k 'english_ambiguous or calendar_controls' --basetemp=review/out/astra_scratch/repro_r0802",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-03/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/sources/finmind.py",
+      "linea": 169,
+      "afirmacion": "Corregido: una fecha de anuncio sin hora conserva announced_at=None.",
+      "contraejemplo": "AnnouncementDate=2024-01-05 sin AnnouncementTime ya no produce medianoche.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k dividend_without_time --basetemp=review/out/astra_scratch/repro_r0803",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-04/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/sources/finmind.py",
+      "linea": 84,
+      "afirmacion": "Corregido: categorías vacías o desconocidas producen unclassified.",
+      "contraejemplo": "El símbolo 9999 con categoría vacía o NEW_STRUCTURED_PRODUCT queda sin clasificación positiva también en el maestro.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k unknown_instrument --basetemp=review/out/astra_scratch/repro_r0804",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-05/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/master.py",
+      "linea": 31,
+      "afirmacion": "Corregida la colisión original de identidades; quedan límites de resolución en R09-05.",
+      "contraejemplo": "2432 con altas 2000-01-01 y 2023-05-31 obtiene identidades distintas; una retirada en valid_to del segmento antiguo se asigna al antiguo.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py review/out/astra_scratch/test_ronda9_nuevos.py -k 'reused_symbol or roc_control or delisting_valid_to_control' --basetemp=review/out/astra_scratch/repro_r0805",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-06/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 105,
+      "afirmacion": "Corregido: la demo rechaza la captura de otro símbolo y el adaptador exige stock_id.",
+      "contraejemplo": "Un manifiesto de A con captura TaiwanStockPrice/B o una fila stock_id=B solicitada como A levanta SourceIdentityMismatch.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k 'another_security or erase_security_identity' --basetemp=review/out/astra_scratch/repro_r0806",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-07/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/sources/finmind.py",
+      "linea": 134,
+      "afirmacion": "Corregido: las fechas repetidas se rechazan.",
+      "contraejemplo": "Repetir 120 veces la barra A del 2024-01-05 levanta DuplicateSession.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k duplicate_dates --basetemp=review/out/astra_scratch/repro_r0807",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-08/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 343,
+      "afirmacion": "Corregido: la cesta residual permanece en seguimiento y vuelve a venderse cuando alcanza un lote.",
+      "contraejemplo": "El residuo de 500 acciones tras el primer dividendo se convierte en 1.000 con el segundo; ambas carteras terminan sin posiciones.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k retries_residue --basetemp=review/out/astra_scratch/repro_r0808",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-09/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 178,
+      "afirmacion": "Corregidos los huecos originales entre semanas y durante semanas sin sesiones; queda el extremo final, R09-09.",
+      "contraejemplo": "Se procesa la retirada del 17-ene y se reconocen 1.000 TWD pendientes; también pasan los controles de ex-date en sábado y lunes festivo, sin pago inventado.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py review/out/astra_scratch/test_ronda9_nuevos.py -k 'events_in_no_session or weekend_and_holiday_cursor_control' --basetemp=review/out/astra_scratch/repro_r0809",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-10/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 324,
+      "afirmacion": "Corregidos los ejemplos originales de retorno y exposición; quedan precios ausentes y retiradas, R09-10..11.",
+      "contraejemplo": "El salto del residuo de 100 a 200 durante el fin de semana ya no genera retorno apertura→cierre; 1.000 acciones nuevas más 500 arrastradas a 100 producen exposición 1.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k 'pre_entry or exposure_includes' --basetemp=review/out/astra_scratch/repro_r0810",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-11/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 258,
+      "afirmacion": "Corregido el ejemplo de tramos 4 y 8; la ponderación general sigue fallando con tramos cortos, R09-12.",
+      "contraejemplo": "Con bloque 4, semilla 1 y 10.000 réplicas, resample_mean queda a menos de 0,02 de 1/3.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k segmented_bootstrap --basetemp=review/out/astra_scratch/repro_r0811",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-12/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/sources/finmind.py",
+      "linea": 128,
+      "afirmacion": "Corregida la descripción: precio regular ausente no implica volumen cero.",
+      "contraejemplo": "La fila 1203 del 2022-11-17 conserva 48 acciones, 1.606 TWD y 18 operaciones con has_regular_price=False; el informe 11 distingue las 263 filas con volumen.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k real_zero_price --basetemp=review/out/astra_scratch/repro_r0812",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R08-13/verificacion",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "src/twlab/master.py",
+      "linea": 234,
+      "afirmacion": "Corregido: el universo por defecto contiene 1.937 valores y excluye innovación.",
+      "contraejemplo": "El maestro regenerado reproduce el archivado; los 36 valores de innovación requieren boards explícito.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_verificaciones.py -k census_report_innovation --basetemp=review/out/astra_scratch/repro_r0813",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-01",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "src/twlab/packet.py",
+      "linea": 316,
+      "afirmacion": "La readmisión con store compara metadatos, pero no comprueba la integridad de los bytes de origen; el evaluador acepta documentos que build_packet rechaza.",
+      "contraejemplo": "Archivo original {\"profit\":1}, después sustituido por {\"profit\":999} conservando el manifiesto: build_packet rechaza y block_bootstrap_mean acepta la observación prospectiva con autoridad de prueba explícita. También acepta payload=999 sobre bytes intactos con profit=1 y derivation='not-registered'. La re-derivación está declarada pendiente; comprobar los bytes archivados no necesita ese catálogo pendiente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k evaluator_rejects_inadmissible_source --basetemp=review/out/astra_scratch/repro_r0901",
+      "prueba_propuesta": "from review.out.astra_scratch.test_ronda9_nuevos import test_evaluator_rejects_inadmissible_source\n\ndef test_source_integrity_at_evaluation(tmp_path):\n    test_evaluator_rejects_inadmissible_source(tmp_path, 'bytes')\n\n# La prueba importada construye y serializa el paquete, demuestra el rechazo\n# por build_packet, archiva y sella el pronóstico y exige ObservationError.\n# Añadir store.read(rec) y comprobar el hash de origen durante la readmisión.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-02",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 316,
+      "afirmacion": "Sin store, readmission_problems devuelve éxito para procedencia inexistente, reloj inyectado y first_seen_at falsificado.",
+      "contraejemplo": "Con corte 2030-01-06, pasan capture_id='does-not-exist', una captura de reloj inyectado fechada 2024-01-01 y first_seen_at sustituido por 2020-01-01. Los tres controles se rechazan al proporcionar store. El evaluador actual sí proporciona store; el fallo es la certificación incompleta de la API sin archivo.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k readmission_without_store --basetemp=review/out/astra_scratch/repro_r0902",
+      "prueba_propuesta": "from review.out.astra_scratch.test_ronda9_nuevos import packet_with_capture\nfrom twlab.packet import readmission_problems\n\ndef test_prospective_readmission_requires_archive(tmp_path):\n    p, store, _ = packet_with_capture(tmp_path, injected=True)\n    assert readmission_problems(p, store=store)\n    assert readmission_problems(p)\n\n# Exigir store en prospectivo o devolver un resultado explícitamente incompleto.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-03",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/packet.py",
+      "linea": 328,
+      "afirmacion": "Los rechazados recuperados sólo se comprueban contra los admitidos; aceptan duplicados, motivos inventados y detalles sin procedencia.",
+      "contraejemplo": "Un paquete serializado con dos Rejection('ghost','invented_reason','profit in 2099 = 999') obtiene readmission_problems=[] incluso con store. build_packet no puede producir ese motivo ni dos entradas para el mismo doc_id. El predictor recibe también estos campos mediante PredictorView.packet(); que el hash los cubra no acredita su legitimidad.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k rejected_metadata --basetemp=review/out/astra_scratch/repro_r0903",
+      "prueba_propuesta": "from dataclasses import replace\nfrom tests.test_schema import prospective_packet\nfrom twlab.packet import Rejection, readmission_problems\nfrom twlab.store import RawStore\n\ndef test_rejected_entries_are_validated(tmp_path):\n    p = replace(prospective_packet(), rejected=(Rejection('ghost', 'invented_reason', 'profit in 2099 = 999'),) * 2)\n    assert readmission_problems(p, store=RawStore(tmp_path))\n\n# Validar unicidad y motivos; reconstruir o limitar los detalles visibles al predictor.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-04",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/calendar.py",
+      "linea": 74,
+      "afirmacion": "El clasificador sigue adivinando mediante subcadenas y sólo reconoce contradicciones si el marcador de sesión aparece al principio.",
+      "contraejemplo": "«Not a Holiday» y «Typhoon warning: trading continues» producen closure; «Market Open is not confirmed» produce session_marker; «Holiday schedule; Market Open» produce closure. Estas filas pueden cambiar sesiones, plazos y extremos de evaluación. No encontré estos textos en las capturas reales.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k calendar_new_negations --basetemp=review/out/astra_scratch/repro_r0904",
+      "prueba_propuesta": "import pytest\nfrom twlab.calendar import classify_holiday_row_en\n\n@pytest.mark.parametrize('text', ['Not a Holiday', 'Market Open is not confirmed', 'Typhoon warning: trading continues', 'Holiday schedule; Market Open'])\ndef test_calendar_refuses_ambiguous_descriptions(text):\n    assert classify_holiday_row_en(text) == 'unknown'\n\n# Reconocer positivamente las descripciones admitidas y rechazar variaciones no verificadas.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-05",
+      "severidad": "media",
+      "categoria": "identidad",
+      "archivo": "src/twlab/sources/twse.py",
+      "linea": 139,
+      "afirmacion": "Todo evento sin segmento que lo cubra se convierte indebidamente en retirada de un emisor anterior.",
+      "contraejemplo": "Alta A=2024-01-08 y retirada el mismo día: no genera evento y declara prior_issuer. Segmento A=[2024-01-08,2024-01-12), retirada=2024-01-17: declara literalmente «retirada 2024-01-17 ≤ alta vigente 2024-01-08». En ninguno hay evidencia de otro emisor. La retirada exactamente en valid_to sí se resuelve correctamente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k delisting_not_invented --basetemp=review/out/astra_scratch/repro_r0905",
+      "prueba_propuesta": "from datetime import date\nfrom twlab.master import SecurityMaster\nfrom review.out.astra_scratch.test_ronda9_nuevos import segment, resolve\n\ndef test_closed_segment_does_not_prove_prior_issuer():\n    m = SecurityMaster()\n    m.add(segment(date(2024,1,8), date(2024,1,12)))\n    result = resolve(m, date(2024,1,17))\n    assert not result.prior_issuer\n\n# Separar fecha inconsistente, evento posterior a segmento cerrado y posible emisor anterior; no fabricar una identidad resuelta.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-06",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 231,
+      "afirmacion": "La ausencia futura de negociación el viernes elimina retroactivamente el paquete y la entrada del lunes.",
+      "contraejemplo": "En una muestra con apertura normal el lunes 2024-01-08 y OHLC cero sólo el viernes 2024-01-12, W02 pasa a valid:not_operated antes de construir el paquete: no existe packet/Q0/2024-W02 ni se reserva su propietario. El domingo 7 no podía conocerse ese resultado del viernes. La rama también omite reintentos de cestas anteriores. Contradice el comentario «No se usa conocimiento posterior al corte» y P4 del informe 12.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k friday_closure --basetemp=review/out/astra_scratch/repro_r0906",
+      "prueba_propuesta": "from datetime import date\nfrom decimal import Decimal as D\nfrom review.out.astra_scratch.test_ronda9_verificaciones import run_demo\n\ndef test_future_friday_does_not_delete_sunday_packet(tmp_path, monkeypatch):\n    _, ledgers, store = run_demo(tmp_path, monkeypatch, prices=lambda d: D(0) if d == date(2024,1,12) else D(100), end='2024-01-19')\n    assert store.captures(source_id='packet', dataset='Q0/2024-W02')\n    assert '2024-W02:1' in ledgers[0].owners_seen\n\n# Conservar paquete y operaciones ya ocurridas; dejar la salida pendiente cuando no exista una política autorizada.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-07",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/12_respuesta_ronda8_astra.md",
+      "linea": 31,
+      "afirmacion": "La afirmación «sólo el calendario oficial conocido al corte» no está acreditada por el calendario utilizado.",
+      "contraejemplo": "load_twse_reference_calendar devuelve recorded_at=2026-09-10T04:05:00+08:00 y versión captured_2026-09-09_2021-2026. CalendarStore.as_known_at(2024-01-07T18:00+08:00) rechaza esa única versión; la demo la utiliza directamente para 2024-2025. No se aporta evidencia histórica de publicación y revisiones que permita afirmar conocimiento al corte. Esto no demuestra que sus sesiones sean incorrectas; demuestra que la garantía temporal publicada excede la evidencia.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k calendar_known_at_claim --basetemp=review/out/astra_scratch/repro_r0907",
+      "prueba_propuesta": "from datetime import date, time\nfrom twlab.calendar import CalendarStore, load_twse_reference_calendar\nfrom twlab.timeutil import taipei\n\ndef test_claimed_calendar_is_available_in_known_view():\n    calendars = CalendarStore()\n    calendars.add(load_twse_reference_calendar())\n    calendars.as_known_at(taipei(date(2024,1,7), time(18)))\n\n# Aportar evidencia histórica separada o describirlo como reconstrucción con disponibilidad no verificada. No retrofechar recorded_at. Corregir también informe 11, líneas 5 y 20.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-08",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 417,
+      "afirmacion": "final_equity procede de la última semana operada y puede contradecir el libro después de una semana sin operaciones.",
+      "contraejemplo": "Primera semana: efectivo 100.000 TWD y residuo de 500 acciones a 100, patrimonio 150.000. Retirada sin precio terminal el 17-ene durante una semana sin sesiones o extraordinary_closure_unhandled: la posición pasa a delisted_unresolved y el libro vale 100.000, pero summary.Q0.final_equity sigue en 150.000 y total_net_return en +50%. Ambas variantes se ejecutaron.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k final_equity_includes --basetemp=review/out/astra_scratch/repro_r0908",
+      "prueba_propuesta": "from datetime import date, time\nfrom decimal import Decimal as D\nfrom twlab.timeutil import taipei\nfrom review.out.astra_scratch.test_ronda9_verificaciones import run_demo, stock_div\n\ndef test_terminal_equity_after_closed_week(tmp_path, monkeypatch):\n    result, ledgers, _ = run_demo(tmp_path, monkeypatch, dividends=[stock_div('2024-01-10',5)], delisted='2024-01-17', closures=[date(2024,1,d) for d in range(15,20)], end='2024-01-21')\n    value = ledgers[0].valuation(prices={}, at=taipei(date(2024,1,21),time(23,59))).total\n    assert D(str(result['summary']['Q0']['final_equity'])) == value\n\n# Valorar y fechar el patrimonio final después de procesar los eventos, también en ramas sin operaciones.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-09",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 220,
+      "afirmacion": "El cursor no procesa la cola del período solicitado cuando ya no cabe otra semana completa.",
+      "contraejemplo": "Con end=2024-01-21, residuo de 500 acciones y dividendo de 2 TWD efectivo el sábado 20, el procesamiento termina el viernes 19. No crea los 1.000 TWD pendientes; summary.period termina el 21 y las posiciones se presentan como at_end sin indicar ese desfase. Omitir una nueva cesta incompleta no explica omitir eventos de posiciones existentes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k event_at_period_tail --basetemp=review/out/astra_scratch/repro_r0909",
+      "prueba_propuesta": "from decimal import Decimal as D\nfrom review.out.astra_scratch.test_ronda9_verificaciones import run_demo, stock_div\n\ndef test_events_until_requested_end(tmp_path, monkeypatch):\n    _, ledgers, _ = run_demo(tmp_path, monkeypatch, dividends=[stock_div('2024-01-10',5), {'stock_id':'A','year':'2024','CashExDividendTradingDate':'2024-01-20','CashEarningsDistribution':2}], end='2024-01-21')\n    assert sum(r.amount for r in ledgers[0].receivables) == D(1000)\n\n# Procesar hasta end o publicar explícitamente el instante efectivo de cierre del libro y limitar a él las garantías.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-10",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 370,
+      "afirmacion": "Una apertura ausente sustituida por un cierre antiguo se admite como intervalo emparejado de apertura→cierre.",
+      "contraejemplo": "Dos valores A/B, 500 acciones arrastradas de A; A carece de precio el lunes 15-ene, su último cierre es 100 y vuelve a cotizar a 200. B permite operar la semana. La demo marca stale_price para A, calcula equity_open=250.000 y equity_end=300.000, informa +20% y paired=true. La marca existe, pero no afecta a la admisibilidad del intervalo: se usa como apertura un precio que el propio código reconoce que no es de mercado.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k stale_open --basetemp=review/out/astra_scratch/repro_r0910",
+      "prueba_propuesta": "from datetime import date\nfrom decimal import Decimal as D\nfrom review.out.astra_scratch.r9_two_helper import run_two_demo\nfrom review.out.astra_scratch.test_ronda9_verificaciones import stock_div\n\ndef test_unobserved_open_is_not_exact_pair(tmp_path, monkeypatch):\n    result, _, _ = run_two_demo(tmp_path, monkeypatch, dividends=[stock_div('2024-01-10',5)], prices=lambda d: D(0) if d==date(2024,1,15) else D(200) if d>date(2024,1,15) else D(100), end='2024-01-19')\n    assert not result['weeks'][1]['paired']\n\n# Separar valoración provisional de intervalo observado; excluirlo o aplicar una política explícita de incertidumbre compartida.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-11",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "scripts/run_q0_demo.py",
+      "linea": 337,
+      "afirmacion": "La exposición ignora el estado contable de las posiciones y usa una valoración distinta de la aplicada al patrimonio.",
+      "contraejemplo": "A deja 500 acciones residuales y se retira el domingo 14-ene sin precio terminal; B sigue negociándose. El lunes, el libro valora A a cero y equity_open=200.000. Se compran 1.000 B a 100: valor invertido contable 100.000, exposición 0,50. La suma directa añade 500 A × 100 y publica 0,75. Esta exposición alimenta el emparejador y puede cambiar qué semanas entran en la estadística.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py -k delisted_exposure --basetemp=review/out/astra_scratch/repro_r0911",
+      "prueba_propuesta": "from review.out.astra_scratch.r9_two_helper import run_two_demo\nfrom review.out.astra_scratch.test_ronda9_verificaciones import stock_div\n\ndef test_exposure_uses_ledger_valuation_policy(tmp_path, monkeypatch):\n    result, _, _ = run_two_demo(tmp_path, monkeypatch, dividends=[stock_div('2024-01-10',5)], delisted='2024-01-14', end='2024-01-19')\n    week = result['weeks'][1]['Q0']\n    assert week['equity_open'] == 200000\n    assert week['exposure_at_open'] == .5\n\n# Derivar numerador y denominador de la misma política de valoración; informar por separado el riesgo terminal no resuelto.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-12",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/evaluation.py",
+      "linea": 273,
+      "afirmacion": "Elegir tramos proporcionalmente a su longitud no conserva sus pesos cuando las extracciones tienen longitudes diferentes.",
+      "contraejemplo": "Bloque 4, semilla 1, 20.000 réplicas: tramos de longitudes 1 y 8 con valores 1 y 0 tienen media 0,111111, pero resample_mean=0,037667; para 2 y 8, 0,20 frente a 0,12381. Afecta también al calendario real: los tramos de la demo son 53, 1, 37 y 9 semanas. El indicador de la semana aislada 2025-W04 tiene peso original 0,01 y peso remuestreado 0,00249. El JSON es reproducible, pero su bootstrap no cumple la ponderación anunciada.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_nuevos.py review/out/astra_scratch/test_ronda9_informes.py -k 'short_segments or real_bootstrap_singleton' --basetemp=review/out/astra_scratch/repro_r0912",
+      "prueba_propuesta": "from datetime import date, timedelta\nfrom twlab.evaluation import WeeklyObservation, block_bootstrap_mean\n\ndef test_short_segment_weight():\n    days = [date(2024,1,1)+timedelta(weeks=i) for i in [0,2,3,4,5,6,7,8,9]]\n    rows = [WeeklyObservation(f'{d.isocalendar().year}-W{d.isocalendar().week:02}', str(i), 'historical_numeric_temporally_controlled', None, True, float(i==0)) for i,d in enumerate(days)]\n    result = block_bootstrap_mean(rows, block_length=4, n_boot=20000, seed=1)\n    assert abs(result.resample_mean-result.mean) < .02\n\n# Corregir la contribución por número de observaciones extraídas, incluido el truncamiento final; regenerar el intervalo del informe 11.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R09-13",
+      "severidad": "baja",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/10_censo_2026-09-09.md",
+      "linea": 5,
+      "afirmacion": "Persisten recuentos con alcance mal rotulado y una cifra antigua sin aclaración en el informe 09.",
+      "contraejemplo": "La columna «Acciones ordinarias vigentes» muestra TWSE=1.048 y TPEX=889, que son sólo tablero principal; incluyendo innovación son 1.083 y 890. El informe 09, línea 34, sigue remitiendo al informe 10 y al maestro con «universo simulable por defecto 1.973», mientras ambos artefactos actuales dan 1.937. README sí publica 230 pruebas y 1.937 valores, ambos comprobados.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_ronda9_informes.py -k 'report_10 or report_09' --basetemp=review/out/astra_scratch/repro_r0913",
+      "prueba_propuesta": "Las pruebas completas test_report_10_equities_header_matches_all_boards y test_report_09_current_default_count están en review/out/astra_scratch/test_ronda9_informes.py y fallaron. Rotular la columna «acciones ordinarias vigentes del tablero principal» y marcar 1.973 como cifra anterior a R08-13 o actualizarla. En 01 §8, README y 12, distinguir los contraejemplos originales que pasan de las garantías generales que siguen abiertas.",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Harás obligatorio el archivo para readmisión prospectiva y comprobarás sus bytes antes de devolver éxito, independientemente del catálogo de extractores pendiente?",
+    "¿Cómo conservarás paquete, entrada y posiciones ya existentes cuando el cierre extraordinario sólo se conoce después de operar?",
+    "¿Qué instante representa exactamente final_equity y cómo se distinguirán valoración provisional, exposición contable y riesgo terminal no resuelto?",
+    "¿Qué regla de remuestreo conservará el peso de 2025-W04 y de cualquier tramo más corto que block_length?"
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "rechazo",
+      "argumento": "La frase «mismo filtro de build_packet» sigue siendo falsa: reproducidos documentos rechazados por construcción y aceptados por evaluación, incluso con bytes de origen alterados. Reconozco que la re-derivación está declarada pendiente; esa declaración no subsana la omisión de integridad ni valida rejected. Los tres contraejemplos originales de R08-01 sí quedaron corregidos."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Mantener vacío y de sólo lectura el registro de producción, sin habilitar evidencia prospectiva hasta completar verificadores criptográficos y readmisión. Los ataques al evaluador usaron autoridad de prueba explícita; no demuestran un sello de producción válido. Se verificaron serialización, recuperación e integridad relativa de los 102 paquetes reales."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Acepto las tres garantías acotadas del motor: reloj de salidas, actualización de reintentos y conservación FIFO de fracciones. Los controles originales y las 230 pruebas pasan. El coordinador conserva ahora las cestas residuales y procesa eventos entre semanas; esas correcciones no cubren la rama de cierre extraordinario, el extremo final del período ni la valoración agregada."
+    },
+    {
+      "id": "P4",
+      "posicion": "rechazo",
+      "argumento": "La formulación vigente todavía excede lo demostrado. La demo usa una reconstrucción del calendario capturada en 2026 sin evidencia de sus versiones conocidas en 2024-2025; además, la ausencia de barras del viernes suprime retrospectivamente el paquete y la entrada del lunes. La contabilidad y los intervalos tienen los contraejemplos R09-08..11. Sí se reprodujeron byte por byte los artefactos y se verificaron 102 paquetes, ausencia de barras futuras bajo la política de 24 h, 100 semanas emparejadas y las cifras publicadas. La muestra real no ejercita cierres extraordinarios en sus extremos, pero sí contiene el tramo corto afectado por R09-12. Declarar una política pendiente no permite eliminar operaciones mediante conocimiento futuro."
+    }
+  ],
+  "veredicto": "rechazado"
+}

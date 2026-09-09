@@ -120,6 +120,28 @@ def test_r08_05_reused_symbol_gets_distinct_identities_and_delistings_resolve_ag
     assert res2.events == () and len(res2.prior_issuer) == 1 and res2.prior_issuer[0].startswith("2432 (retirada 2008-09-01")
 
 
+def test_r09_05_delisting_without_covering_segment_is_unresolved_unless_an_earlier_issuer_is_implied():
+    from dataclasses import replace
+    instrument = {"A": "ordinary_equity"}
+    master = SecurityMaster()
+    v = security_versions_from_census(_census(("A", "alta y baja el mismo día", "1130108")), market="TWSE", instrument_types=instrument,
+                                      boards={}, recorded_at=REC_AT, source_id="cap-1")[0]
+    master.add(v)
+    same_day = delisting_rows_twse([{"Code": "A", "Company": "A", "DelistingDate": "113/01/08"}])
+    res = resolve_delistings(same_day, master, market="TWSE", recorded_at=REC_AT, source_id="cap-d")
+    assert res.events == () and res.prior_issuer == () and len(res.unresolved) == 1 and "2024-01-08" in res.unresolved[0]
+    # segmento ya cerrado [2024-01-08, 2024-01-12) y retirada posterior: no hay evidencia de otro emisor
+    master2 = SecurityMaster()
+    master2.add(replace(v, valid_to=date(2024, 1, 12)))
+    later = delisting_rows_twse([{"Code": "A", "Company": "A", "DelistingDate": "113/01/17"}])
+    res2 = resolve_delistings(later, master2, market="TWSE", recorded_at=REC_AT, source_id="cap-d")
+    assert res2.events == () and res2.prior_issuer == () and len(res2.unresolved) == 1
+    # retirada exactamente en valid_to: cubre el segmento cerrado
+    at_end = delisting_rows_twse([{"Code": "A", "Company": "A", "DelistingDate": "113/01/12"}])
+    res3 = resolve_delistings(at_end, master2, market="TWSE", recorded_at=REC_AT, source_id="cap-d")
+    assert [e.effective for e in res3.events] == [date(2024, 1, 12)]
+
+
 # ---- FinMind ----------------------------------------------------------------------------------------
 
 def test_finmind_classify_info_is_order_independent_and_separates_instruments_boards_and_markets():
@@ -182,25 +204,36 @@ def test_r08_03_dividend_announcement_without_time_is_a_date_not_an_instant():
 
 @pytest.mark.parametrize("desc,kind", [
     ("New Year", "closure"),
+    ("New Year (2022)", "closure"),
+    ("Adjusted Holiday (2021)", "closure"),
     ("No Trading. Market opens only for Clearing & Settlement", "closure"),
-    ("no trading. market opens only for clearing & settlement", "closure"),
+    ("No Trading. Market opens only for Clearing & Settlement.", "closure"),
+    ("no trading market opens only for clearing & settlement", "closure"),
     ("Chinese New Year’s Eve", "closure"),
+    ("Adjusted Holiday/ Chinese New Year’s Eve", "closure"),
     ("Adjusted Holiday/Children’s Day", "closure"),
+    ("Children’s Day & Tomb-sweeping Day", "closure"),
+    ("Mid-autumn / Moon Festival", "closure"),
     ("Tomb-sweeping Day", "closure"),
-    ("Typhoon Day Off", "closure"),
     ("Market Open", "session_marker"),
     ("market open", "session_marker"),
     ("Last Trading Day", "session_marker"),
     ("First Trading Day of the Year", "session_marker"),
-    # R08-02: negaciones, contradicciones y anuncios pendientes nunca se adivinan
+    # R08-02 / R09-04: negaciones, contradicciones, anuncios pendientes y cualquier redacción no catalogada
+    ("Typhoon Day Off", "unknown"),
     ("Typhoon closure cancelled; normal trading", "unknown"),
+    ("Typhoon warning: trading continues", "unknown"),
     ("Market Open: No trading due to typhoon", "unknown"),
+    ("Market Open is not confirmed", "unknown"),
+    ("Holiday schedule; Market Open", "unknown"),
     ("Holiday schedule to be confirmed", "unknown"),
+    ("Not a Holiday", "unknown"),
     ("New Year holiday, subject to confirmation", "unknown"),
+    ("Adjusted Holiday / Something never seen", "unknown"),
     ("Something never seen", "unknown"),
     ("", "unknown"),
 ])
-def test_r08_02_classify_holiday_row_en_refuses_to_guess(desc, kind):
+def test_r08_02_r09_04_classify_holiday_row_en_only_accepts_catalogued_phrases(desc, kind):
     assert classify_holiday_row_en(desc) == kind
 
 
