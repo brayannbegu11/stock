@@ -62,6 +62,9 @@ class DividendLike:
     known_at: Optional[datetime] = None
     pay_date: Optional[date] = None             # efectivo: fecha de pago (la usa el libro; nunca anterior a la fecha ex)
     known_quality: str = "unknown"              # verified_original | conservative_inference | unknown
+    stock_per_share: Decimal = Decimal(0)       # acciones: TWD de valor nominal por acción (forma exacta, R13-07)
+    par_value: Decimal = Decimal(0)
+    ambiguous: bool = False                     # derecho con filas contradictorias o inválidas: invalida etiquetas e intervalos (R13-05)
 
 
 def features_from_bars(bars: Sequence[BarLike], cutoff_at: datetime, *, sessions_expected_20: int = 20) -> Optional[dict[str, float]]:
@@ -116,11 +119,13 @@ def weekly_label(bars_by_session: Mapping[date, BarLike], entry_s: date, exit_s:
     known_at = max(a.available_at, b.available_at, key=to_utc)
     shares, cash = 1.0, 0.0
     for d in sorted(events, key=lambda e: (e.ex_date, 0 if e.kind == "cash" else 1)):
-        if d.known_at is None:
+        if d.ambiguous or d.known_at is None:            # un derecho ambiguo o sin instante conocido: no hay etiqueta (R13-05)
             return None
         known_at = max(known_at, d.known_at, key=to_utc)
         if d.kind == "cash":
             cash += float(d.cash_per_share) * shares
+        elif d.par_value > 0:
+            shares *= float(d.par_value + d.stock_per_share) / float(d.par_value)
         else:
             shares *= 1.0 + float(d.stock_ratio)
     total = (float(b.close) * shares + cash) / float(a.open) - 1.0

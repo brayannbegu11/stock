@@ -165,12 +165,12 @@ def test_r12_01_conflicting_rights_are_discarded_for_ledger_and_labels_alike(tmp
     store, path = make_market(tmp_path, dividends={"A": rows})
     m = load_market(store, path, CAL)
     a = m.securities[m.by_symbol["A"]]
-    assert a.events == [] and any("different values" in w for w in m.warnings)
-    # una fila inválida (pago antes de la fecha ex) invalida el evento entero aunque otra fila sea válida
+    assert [e.ambiguous for e in a.events] == [True] and any("different values" in w and "AMBIGUOUS" in w for w in m.warnings)
+    # una fila inválida (pago antes de la fecha ex) hace ambiguo el derecho aunque otra fila sea válida
     rows2 = dividend_rows("A", ex_date=ex, cash=10.0, pay=date(2024, 1, 9)) + dividend_rows("A", ex_date=ex, cash=2.0, pay=date(2024, 2, 1))
     store2, path2 = make_market(tmp_path / "b", dividends={"A": rows2})
     m2 = load_market(store2, path2, CAL)
-    assert m2.securities[m2.by_symbol["A"]].events == [] and any("pay_before_ex" in w for w in m2.warnings)
+    assert [e.ambiguous for e in m2.securities[m2.by_symbol["A"]].events] == [True] and any("pay_before_ex" in w for w in m2.warnings)
     # filas idénticas repetidas: un solo evento, con la identidad del libro, compartido por Q1 y el coordinador
     rows3 = dividend_rows("A", ex_date=ex, cash=2.0, pay=date(2024, 2, 1)) * 2
     store3, path3 = make_market(tmp_path / "c", dividends={"A": rows3})
@@ -186,6 +186,90 @@ def test_r12_01_conflicting_rights_are_discarded_for_ledger_and_labels_alike(tmp
     store4, path4 = make_market(tmp_path / "d", dividends={"A": rows4})
     ev4 = load_market(store4, path4, CAL).securities["TWSE:A@2023-01-02"].events[0]
     assert ev4.known_at == taipei(date(2023, 12, 4), time(9, 0)) and ev4.known_quality == "conservative_inference"
+
+
+def _cash_row(sid, ex, cash, pay, *, year="2024", ann_date="2023-12-01", ann_time="8:0:0"):
+    return {"stock_id": sid, "year": year, "AnnouncementDate": ann_date, "AnnouncementTime": ann_time,
+            "CashEarningsDistribution": cash, "CashStatutorySurplus": 0, "StockEarningsDistribution": 0, "StockStatutorySurplus": 0,
+            "CashExDividendTradingDate": ex, "CashDividendPaymentDate": pay, "StockExDividendTradingDate": ""}
+
+
+def test_r13_02_to_05_contradictory_rights_become_ambiguous_and_invalidate_labels_and_intervals(tmp_path):
+    from twlab.backtest import validated_dividend_events
+    from twlab.sources.finmind import dividends_from_rows
+    from twlab.models import q1
+    ex = "2024-01-10"
+
+    def events_for(rows):
+        return validated_dividend_events("TWSE:A@2023-01-02", dividends_from_rows(rows, stock_id="A"), D(10), CAL)
+    # R13-02: 10 y 0 TWD para el mismo derecho: ambiguo, no «10»
+    ev, pr = events_for([_cash_row("A", ex, 10.0, "2024-02-01"), _cash_row("A", ex, 0, "2024-02-01")])
+    assert [e.ambiguous for e in ev] == [True] and pr and "zero and positive" in pr[0]
+    # R13-03: importe infinito: ambiguo (el libro lo rechazaría)
+    ev, pr = events_for([_cash_row("A", ex, "Infinity", "2024-02-01")])
+    assert [e.ambiguous for e in ev] == [True] and "non_finite" in pr[0]
+    # R13-04: periodo vacío frente a 2024 para el mismo derecho: un solo grupo, ambiguo (no dos derechos)
+    ev, pr = events_for([_cash_row("A", ex, 10.0, "2024-02-01"), _cash_row("A", ex, 10.0, "2024-02-01", year="")])
+    assert len(ev) == 1 and ev[0].ambiguous and "missing_period" in pr[0]
+    # R13-05: mismo derecho con anuncios distintos (uno posterior a la fecha ex): ambiguo, nunca «sin dividendo»
+    ev, pr = events_for([_cash_row("A", ex, 10.0, "2024-02-01", ann_date="2024-01-02"), _cash_row("A", ex, 10.0, "2024-02-01", ann_date="2024-02-01")])
+    assert [e.ambiguous for e in ev] == [True]
+    # filas idénticas repetidas: un derecho válido; sólo ceros: ningún derecho
+    ev, pr = events_for([_cash_row("A", ex, 10.0, "2024-02-01")] * 3)
+    assert len(ev) == 1 and not ev[0].ambiguous and pr == []
+    assert events_for([_cash_row("A", ex, 0, "")]) == ([], [])
+    # una etiqueta cuya semana contiene un derecho ambiguo no existe
+    entry, exit_ = date(2024, 1, 8), date(2024, 1, 12)
+    by = {entry: q1.BarLike(entry, D(100), D(100), D(1), taipei(entry, time(13, 30))), exit_: q1.BarLike(exit_, D(100), D(100), D(1), taipei(exit_, time(13, 30)))}
+    amb = q1.DividendLike("A:cash:2024-01-10:2024", date(2024, 1, 10), "cash", ambiguous=True)
+    assert q1.weekly_label(by, entry, exit_, [amb]) is None
+    # y el coordinador invalida el intervalo del tenedor (cantidad incierta), sin fabricar un retorno sin dividendo
+    store, path = make_market(tmp_path, dividends={"A": [_cash_row("A", ex, 10.0, "2024-02-01"), _cash_row("A", ex, 0, "2024-02-01")]})
+    m = load_market(store, path, CAL)
+
+    class OnlyA:
+        name, model_id, version = "Q0", "rule:only_a", "t"
+
+        def forecast(self, view, plan, candidates, *, slots):
+            from twlab.backtest import Selection
+            a = next(c for c in candidates if c.symbol == "A")
+            return [Selection(a.security_id, 1.0, [a.doc_id])], {"training_manifest_id": None}
+    res = Runner(store, m, BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 12), label="t", slots=1), [OnlyA(), RandomForecaster(1)]).run()
+    w = res["weeks"][0]
+    assert any("ambiguous_right" in f for f in w["forecasters"]["Q0"]["stale_prices"])
+    assert w["paired"]["Q0"]["paired"] is False and "ambiguous_right" in w["paired"]["Q0"]["unpaired_reason"]
+    assert w.get("ambiguous_rights")
+
+
+def test_r13_06_unresolved_delisting_makes_the_interval_unmeasurable(tmp_path):
+    store, path = make_market(tmp_path)
+    mf = json.loads(path.read_text(encoding="utf-8"))
+    mf["delisted"].append({"symbol": "A", "name": "name-A", "delisting_date": "2024-01-09"})
+    path.write_text(json.dumps(mf), encoding="utf-8")
+    m = load_market(store, path, CAL)
+
+    class OnlyA:
+        name, model_id, version = "Q0", "rule:only_a", "t"
+
+        def forecast(self, view, plan, candidates, *, slots):
+            from twlab.backtest import Selection
+            a = next(c for c in candidates if c.symbol == "A")
+            return [Selection(a.security_id, 1.0, [a.doc_id])], {"training_manifest_id": None}
+    res = Runner(store, m, BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 12), label="t", slots=1), [OnlyA(), RandomForecaster(1)]).run()
+    w = res["weeks"][0]
+    q0 = w["forecasters"]["Q0"]
+    assert any(f.startswith("unresolved_terminal:") for f in q0["stale_prices"]) and q0["portfolio_net_return_open_close"] is None
+    assert w["paired"]["Q0"]["paired"] is False and "unresolved_terminal" in w["paired"]["Q0"]["unpaired_reason"]
+
+
+def test_r13_07_stock_dividend_uses_the_exact_par_ratio_end_to_end(tmp_path):
+    from twlab.backtest import validated_dividend_events
+    from twlab.sources.finmind import dividends_from_rows
+    row = {"stock_id": "A", "year": "2024", "AnnouncementDate": "2023-12-01", "AnnouncementTime": "8:0:0", "CashEarningsDistribution": 0,
+           "CashStatutorySurplus": 0, "StockEarningsDistribution": 1.0, "StockStatutorySurplus": 0, "CashExDividendTradingDate": "",
+           "CashDividendPaymentDate": "", "StockExDividendTradingDate": "2024-01-10"}
+    ev, _ = validated_dividend_events("TWSE:A@2023-01-02", dividends_from_rows([row], stock_id="A"), D(3), CAL)
+    assert ev[0].stock_per_share == D(1) and ev[0].par_value == D(3)
 
 
 def test_r12_02_valuation_after_a_right_without_a_later_price_is_flagged(tmp_path):
@@ -250,7 +334,7 @@ def test_r11_05_markdown_report_keeps_uncertainty_states():
                                          "A1": {"picks": [{"symbol": "B", "name": "B"}], "stale_prices": []}}}]}
     md = markdown_report(result, title="t")
     assert "desconocido: missing price" in md and "no estimable: degenerate resampling" in md
-    assert "sin intervalo medible (precio obsoleto)" in md and "→ pendiente" not in md
+    assert "sin intervalo medible (stale_price)" in md and "→ pendiente" not in md
 
 
 def test_r10_07_r09_06_period_end_is_respected_and_entries_before_the_bound_are_executed(tmp_path):

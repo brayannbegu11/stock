@@ -1,5 +1,7 @@
 # Respuesta del constructor a la ronda 11 de revisión (GPT-6 Astra)
 
+> **Vigencia.** Las recetas de este informe para los derechos (`dividend_events`, regla «fecha + 1 día») fueron sustituidas en el informe 18 (lista única `validated_dividend_events`, política del protocolo `derive_available_at`) y ampliadas en el informe 19 (derechos ambiguos). Úsese como historial, no como documentación vigente.
+
 **Entrada:** `review/out/ronda11_verificacion_20260909T222136Z.json` (sha256 `abd77e9f…7093`), árbol congelado e íntegro. Veredicto de Astra: **rechazado**. Verificó las correcciones de la ronda 10 (R10-04 y R10-01 completas; R09-03, R09-12, R10-03, R10-05, R10-06, R10-07, R10-08, R10-09, R10-10 parciales; R10-02 con matiz de redacción) y produjo 5 hallazgos nuevos (R11-01..R11-05: 2 altos, 3 medios). Reprodujo el JSON de la muestra, el informe 14 y la demo; auditó 103 paquetes y 6.901 documentos sin barras posteriores al corte.
 
 **Salida:** todas las pruebas en verde (recuento en `README.md`); cada hallazgo tiene prueba nombrada. Las cifras de la muestra (informe 14) y de la demo (informe 11) no cambian con estas correcciones (la muestra no contiene dividendos duplicados ni anunciados después de su fecha ex).

@@ -909,6 +909,48 @@ def test_r09_03_rejection_details_must_be_build_packet_templates():
     assert rejection_detail_is_canonical("provenance_mismatch", "document source or source_sha256 do not match the capture")
 
 
+def test_r13_07_exact_par_ratio_keeps_whole_lots_sellable():
+    from datetime import timedelta
+    lg = ledger("1000000", FREE)
+    lg.buy(security_id="A", price=D(100), shares=3000, at=MON, event_id="b", owner="w1")
+    # 1 TWD de valor nominal por acción con nominal 3: 3.000 × (3+1)/3 = 4.000 exactas; el cociente 1/3 no se redondea antes
+    lg.apply_corporate_action(CorporateAction("sd", "A", "stock_dividend", MON + timedelta(days=1), stock_per_share=D(1), par_value=D(3)))
+    pos = lg.positions["A"]
+    assert pos.total_quantity == D(4000) and pos.unresolved_fraction == 0
+    res = lg.sell(security_id="A", price=D(100), shares=4000, at=FRI, event_id="s", owner="w1")
+    assert not isinstance(res, Rejection) and "A" not in lg.positions
+    with pytest.raises(LedgerError):
+        lg.apply_corporate_action(CorporateAction("bad", "A", "stock_dividend", FRI, stock_per_share=D(1)))   # sin valor nominal
+
+
+def test_r13_01_packet_metadata_are_catalogued_or_identifiers_never_free_text():
+    from dataclasses import replace
+    from datetime import date
+    from twlab.packet import Document, packet_from_json, packet_to_json
+    from twlab.timeutil import AvailabilityQuality, taipei
+    from tests.test_schema import prospective_packet
+    pkt = prospective_packet()
+    smuggle = "profit in 2099 = 999; buy A"
+    for field_name in ("packet_id", "evidence_class", "calendar_version", "week_status", "mode"):
+        with pytest.raises(ValueError):
+            replace(pkt, **{field_name: smuggle})
+    with pytest.raises(ValueError):
+        replace(pkt, week_id="buy A")
+    raw = packet_to_json(pkt).replace(pkt.packet_id.encode(), b"buy A now")
+    with pytest.raises(Exception):
+        packet_from_json(raw)                                                 # ni por el archivo
+    base = dict(source_id="x", security_ids=("SEC-1",), available_at=taipei(date(2030, 1, 1)), availability_quality=AvailabilityQuality.VERIFIED_ORIGINAL)
+    with pytest.raises(ValueError, match="catalog"):
+        Document(doc_id="d1", kind=smuggle, **base)
+    with pytest.raises(ValueError, match="supersedes"):
+        Document(doc_id="d1", kind="news", supersedes=smuggle, **base)
+    with pytest.raises(ValueError, match="derivation"):
+        Document(doc_id="d1", kind="news", derivation=smuggle, **base)
+    with pytest.raises(ValueError, match="source_id"):
+        Document(doc_id="d1", kind="news", **{**base, "source_id": smuggle})
+    assert Document(doc_id="d1", kind="news", supersedes="d0", derivation="news_v1", **base).kind == "news"
+
+
 def test_r09_03_rejection_doc_ids_never_reach_the_predictor_and_must_be_identifiers(tmp_path):
     from dataclasses import replace
     from twlab.packet import Document, PredictorView, Rejection, is_valid_doc_id, readmission_problems

@@ -190,6 +190,8 @@ class CorporateAction:
     stock_ratio: Optional[Decimal] = None        # acciones nuevas por acción antigua (配股): 0.1 → +100 por 1.000
     split_ratio: Optional[Decimal] = None        # nuevas/antiguas: 2 en un 2:1, 0.5 en un contrasplit 1:2
     terminal_price: Optional[Decimal] = None     # None → no resuelto
+    stock_per_share: Optional[Decimal] = None    # TWD de valor nominal distribuidos por acción (forma exacta del dividendo en acciones)
+    par_value: Optional[Decimal] = None          # valor nominal: cantidad nueva = cantidad × (par + per_share) / par, sin redondear el cociente (R13-07)
 
 
 @dataclass(frozen=True)
@@ -434,9 +436,15 @@ class PaperLedger:
             if action.pay_at is not None and to_utc(ensure_aware(action.pay_at)) < to_utc(action.effective_at):
                 raise LedgerError("pay_at cannot precede effective_at")
         elif action.kind == "stock_dividend":
-            if action.stock_ratio is None:
-                raise LedgerError("stock_dividend requires stock_ratio")
-            _positive_decimal(action.stock_ratio, "stock_ratio")
+            if action.stock_ratio is None and action.stock_per_share is None:
+                raise LedgerError("stock_dividend requires stock_ratio or stock_per_share with par_value")
+            if action.stock_ratio is not None:
+                _positive_decimal(action.stock_ratio, "stock_ratio")
+            if action.stock_per_share is not None:
+                _positive_decimal(action.stock_per_share, "stock_per_share")
+                if action.par_value is None:
+                    raise LedgerError("stock_per_share requires par_value")
+                _positive_decimal(action.par_value, "par_value")
         elif action.kind == "split":
             if action.split_ratio is None:
                 raise LedgerError("split requires split_ratio")
@@ -474,9 +482,16 @@ class PaperLedger:
                           f"{qty}x{action.per_share_cash} payable {when}", action.event_id, owner)
             self._settle(action.effective_at)   # pagadero en este mismo instante: se abona ahora (R03-15)
         elif action.kind in ("stock_dividend", "split"):
-            factor = (1 + D(action.stock_ratio)) if action.kind == "stock_dividend" else D(action.split_ratio)
-            for lot in pos.lots:
-                lot.quantity = lot.quantity * factor
+            if action.kind == "stock_dividend" and action.stock_per_share is not None:
+                # forma exacta: multiplicar antes de dividir evita inmovilizar lotes por un cociente periódico (R13-07)
+                par, per = D(action.par_value), D(action.stock_per_share)
+                factor = (par + per) / par
+                for lot in pos.lots:
+                    lot.quantity = lot.quantity * (par + per) / par
+            else:
+                factor = (1 + D(action.stock_ratio)) if action.kind == "stock_dividend" else D(action.split_ratio)
+                for lot in pos.lots:
+                    lot.quantity = lot.quantity * factor
             if action.kind == "split" and pos.last_price is not None:
                 pos.last_price = pos.last_price / D(action.split_ratio)
             if pos.unresolved_fraction > 0:

@@ -1,0 +1,231 @@
+{
+  "ronda": "13",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado. Pasan las 270 pruebas de aceptación y las 20 verificaciones adaptadas. Los 26 ataques adicionales producen 5 aprobaciones y 21 fallos, agrupados en ocho hallazgos nuevos: siete altos y uno medio. Reproduje exactamente el JSON de la muestra, el informe 14 y los resúmenes Q0/A1 de la demo. Audité 103 paquetes y 6.901 documentos: ninguna barra posterior al corte ni diferencia de características. Las cifras y el recuento de 270 pruebas del README se sostienen. Persisten filtraciones por metadatos, validación incompleta de derechos, etiquetas falsas tras descartes, retiradas indebidamente emparejadas y redondeo que inmoviliza lotes. Evidencias en review/out/astra_scratch/test_r13_*.py, r13_attacks_final_log.txt y r13_real/audit.json. Sólo escribí bajo astra_scratch; no ejecuté descargas ni modifiqué código del constructor.",
+  "hallazgos": [
+    {
+      "id": "R09-03/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 496,
+      "afirmacion": "Corregida la vía concreta de doc_id rechazado; quedan otras vías en R13-01.",
+      "contraejemplo": "El identificador con espacios se rechaza y 'profit-in-2099-999-buy-A' desaparece de los rechazos visibles, tanto en histórico como en prospectivo.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_verifications.py -k rejected_doc_id --basetemp review/out/astra_scratch/repro13_rejection",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-05/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 199,
+      "afirmacion": "Corregido: captures.delisting_date se incorpora y las declaraciones contradictorias se rechazan.",
+      "contraejemplo": "Con retirada declarada el 09-01-2024, la compra del 08-01 no se vende el 12-01; la contradicción entre captures y delisted provoca ManifestInconsistent.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_backtest.py review/out/astra_scratch/test_r13_verifications.py -k 'delisting_date_declared or captures_delisting' --basetemp review/out/astra_scratch/repro13_delisting",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R10-10/verificacion",
+      "severidad": "baja",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/16_respuesta_ronda10_astra.md",
+      "linea": 35,
+      "afirmacion": "Corregido: el informe 16 distingue cortes decrecientes de cortes iguales.",
+      "contraejemplo": "§3.1 dice que un corte anterior se rechaza y uno igual se admite, coherentemente con cutoff_at < last_cutoff.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_verifications.py -k report16 --basetemp review/out/astra_scratch/repro13_report16",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R11-01/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 278,
+      "afirmacion": "Corregida la política de fechas sin hora: se utiliza derive_available_at y se declara conservative_inference.",
+      "contraejemplo": "Un anuncio del sábado 13-01-2024 sin hora queda disponible el lunes 15-01 a las 09:00; la etiqueta no entra en el entrenamiento del domingo 14-01 a las 18:00.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_verifications.py -k saturday_announcement --basetemp review/out/astra_scratch/repro13_dateonly",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R12-01/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 296,
+      "afirmacion": "Parcial: existe la lista compartida y pasan los contraejemplos anteriores, pero su validación y sus descartes siguen siendo incorrectos.",
+      "contraejemplo": "Las filas de 2 y 10 TWD, y la combinación de pago anterior a ex con fila válida, se descartan sin depender del orden. Sin embargo, cero, importes no finitos, periodos vacíos y known_at distintos producen R13-02..R13-05.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_verifications.py -k 'conflicting_same_event or invalid_first_duplicate or event_parity or single_dividend' --basetemp review/out/astra_scratch/repro13_shared",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R12-02/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 439,
+      "afirmacion": "Parcial: el caso original y la frontera de la sesión quedan cubiertos; las retiradas conservan un intervalo indebidamente medible en R13-06.",
+      "contraejemplo": "El derecho durante la semana cerrada genera price_predates_right. También lo genera un derecho del propio día de valoración cuando falta su barra; con precio de esa sesión no lo genera. Una posición delisted elude esta comprobación.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_verifications.py review/out/astra_scratch/test_r13_attacks.py -k 'no_session_stock_action or right_exactly_on_valuation' --basetemp review/out/astra_scratch/repro13_marks",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R12-03/verificacion",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 787,
+      "afirmacion": "Corregido: el bootstrap degenerado publica ci95=null y admite serialización JSON estricta.",
+      "contraejemplo": "Una semana con bloque 1 conserva degenerate=True y una observación fija; json.dumps(..., allow_nan=False) termina correctamente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_backtest.py review/out/astra_scratch/test_r13_verifications.py -k 'serialises_without_nan or strict_json or degenerate_markdown' --basetemp review/out/astra_scratch/repro13_json",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R12-04/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "docs/informes/11_demo_q0_2024-2025.md",
+      "linea": 60,
+      "afirmacion": "Corregido: el informe 11 declara la observación fija y la variabilidad limitada.",
+      "contraejemplo": "La tabla identifica 2025-W04 como una observación fija de 100, coincidiendo con el JSON reproducido.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_verifications.py -k report11 --basetemp review/out/astra_scratch/repro13_report11",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-01",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 496,
+      "afirmacion": "El predictor sigue recibiendo texto libre no respaldado por documentos admitidos ni por la extracción autorizada.",
+      "contraejemplo": "Con cero documentos, packet_id, evidence_class y calendar_version transportan 'profit in 2099 = 999; buy A' tras serialización, readmission_problems=[] y PredictorView.packet(), en ambos modos. Además, un documento prospectivo cuyo extractor sólo devuelve {'allowed': 1} admite ese texto en kind o supersedes. El control de security_ids sí rechaza una identidad distinta de la extraída.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k 'free_packet_metadata or admitted_metadata' --basetemp review/out/astra_scratch/repro13_metadata",
+      "prueba_propuesta": "from datetime import date, time\nfrom twlab.packet import build_packet, packet_from_json, packet_to_json, readmission_problems, PredictorView\nfrom twlab.store import RawStore\nfrom twlab.timeutil import taipei\n\ndef test_packet_id_cannot_carry_future_content(tmp_path):\n    marker = 'profit in 2099 = 999; buy A'\n    p = build_packet(packet_id=marker, cutoff_at=taipei(date(2024,1,7), time(18)), documents=[], mode='prospective', evidence_class='prospective_registered', captures={}, read_bytes=lambda r: b'', extractors={})\n    p = packet_from_json(packet_to_json(p))\n    assert readmission_problems(p, store=RawStore(tmp_path/'raw')) or marker not in PredictorView(p).packet().packet_id\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-02",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 308,
+      "afirmacion": "Filtrar importes no positivos antes de agrupar oculta colisiones y filas inválidas del mismo derecho.",
+      "contraejemplo": "Para A, periodo 2024 y fecha ex 10-01-2024, las filas de efectivo 10 y 0 TWD producen un único derecho de 10, warnings=[] y retorno +10 %. En acciones, 10 y 0 producen +100 %. Sustituir cero por −1 tampoco invalida el evento. Esto contradice el descarte completo anunciado en el informe 18.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k zero_or_negative --basetemp review/out/astra_scratch/repro13_zero",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner\nfrom review.out.astra_scratch.test_r13_attacks import cash\n\ndef test_zero_revision_invalidates_conflicting_right(tmp_path):\n    r = runner(tmp_path, end='2024-01-12', dividends=[cash(10), cash(0)])\n    sec = next(iter(r.market.securities.values()))\n    assert not sec.events and r.market.warnings\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-03",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 308,
+      "afirmacion": "La lista denominada validada acepta importes infinitos que el libro rechaza, por lo que compartirla no garantiza equivalencia.",
+      "contraejemplo": "CashEarningsDistribution='Infinity' genera DividendLike aceptado, warnings=[] y etiqueta Q1=inf. El libro rechaza el evento con 'per_share_cash must be a non-negative finite number', registra action_errors y publica retorno 0 %. StockEarningsDistribution='Infinity' reproduce la misma divergencia.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k nonfinite_event --basetemp review/out/astra_scratch/repro13_nonfinite",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner\nfrom review.out.astra_scratch.test_r13_attacks import cash\n\ndef test_nonfinite_right_is_rejected_before_consumption(tmp_path):\n    r = runner(tmp_path, end='2024-01-12', dividends=[cash('Infinity')])\n    sec = next(iter(r.market.securities.values()))\n    assert not sec.events and r.market.warnings\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-04",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 309,
+      "afirmacion": "Un periodo vacío se trata como identidad distinta y permite contabilizar dos veces un derecho ambiguo.",
+      "contraejemplo": "Dos filas iguales de 10 TWD, anunciadas el 02-01-2024 y con ex 10-01, sólo difieren en year='2024' frente a year=''. Se crean los identificadores terminados en ':2024' y ':', se cobran ambos y el retorno pasa de +10 % a +20 %, con warnings=[]. La ausencia de periodo no acredita un segundo derecho.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k missing_period --basetemp review/out/astra_scratch/repro13_period",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.r10_support import runner\nfrom review.out.astra_scratch.test_r13_attacks import cash\n\ndef test_unknown_period_does_not_authorize_second_payment(tmp_path):\n    r = runner(tmp_path, end='2024-01-12', dividends=[cash(10), cash(10, year='')])\n    result = r.run()\n    actual = result['weeks'][0]['forecasters']['Q0']['portfolio_net_return_open_close']\n    assert actual == pytest.approx(.10) or r.market.warnings\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-05",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 322,
+      "afirmacion": "Descartar una colisión borra también su incertidumbre: Q1 fabrica una etiqueta sin dividendo, incluso cuando la colisión procede de una fila futura.",
+      "contraejemplo": "Dos filas del mismo derecho de 10 TWD sólo difieren en anuncio: 02-01-2024 y 01-02-2024. El conjunto de DividendLike las considera distintas y elimina ambas. Con apertura y cierre 100, Q1 produce etiqueta 0 %, conocida el 13-01 a las 13:30 y utilizable el domingo 14-01, en vez de conservar el derecho acreditado o invalidar la etiqueta. El recorrido publica paired=True; market.warnings registra el descarte, pero markdown_report lo omite.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k 'distinct_known_at or discarded_right' --basetemp review/out/astra_scratch/repro13_collision_time",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner, date, time, taipei\nfrom review.out.astra_scratch.test_r13_attacks import cash\nfrom twlab.backtest import TabularForecaster\nfrom twlab.models import q1\n\ndef test_discarded_right_does_not_become_mature_zero_label(tmp_path):\n    r = runner(tmp_path, end='2024-01-12', dividends=[cash(10), cash(10, AnnouncementDate='2024-02-01')])\n    m = r.market\n    sec = next(iter(m.securities))\n    f = TabularForecaster(m, min_weeks=1)\n    rows = q1.build_training_rows({sec: m.securities[sec].bars}, [taipei(date(2024,1,7), time(18))], now_cutoff=taipei(date(2024,1,14), time(18)), calendar=m.calendar, dividends_by_security=f.dividends)\n    assert not rows\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-06",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 660,
+      "afirmacion": "Una retirada sin precio terminal se convierte en retorno medible y entra en el exceso emparejado.",
+      "contraejemplo": "Compra de 1.000 acciones a 100 el 08-01-2024, retirada el 09-01 y derecho en acciones 1:1 el 10-01. marks omite posiciones delisted; la valoración conserva unresolved_valued_at_zero, pero measurable sólo comprueba stale0/stale1. Se publica retorno −100 %, stale_prices=[], paired=True y exceso 0 frente a A1. El cero contable provisional se presenta como cierre de mercado.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k delisted_zero --basetemp review/out/astra_scratch/repro13_delisted_interval",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner\nfrom review.out.astra_scratch.test_r13_attacks import stock\n\ndef test_unresolved_delisting_is_not_a_market_interval(tmp_path):\n    r = runner(tmp_path, end='2024-01-12', delisted='2024-01-09', dividends=[stock(10)])\n    w = r.run()['weeks'][0]\n    assert w['forecasters']['Q0']['portfolio_net_return_open_close'] is None\n    assert not w['paired']['Q0']['paired']\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-07",
+      "severidad": "alta",
+      "categoria": "unidades",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 317,
+      "afirmacion": "Redondear el cociente por valor nominal antes de calcular cantidades puede impedir vender un lote completo.",
+      "contraejemplo": "Con nominal 3 TWD, dividendo en acciones de 1 TWD por acción y 3.000 acciones iniciales, corresponden exactamente 4.000 acciones. Decimal(1)/Decimal(3), seguido del factor de ledger.py:477, produce 3.999,999…; sólo se venden 3.000. Quedan 999,999999999999999999999999 acciones y 100.000 TWD inmovilizados: efectivo final 300.000 en lugar de 400.000.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k stock_ratio_rounding --basetemp review/out/astra_scratch/repro13_rounding",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import fixture, load_market, BacktestConfig, Runner, MomentumForecaster, RandomForecaster, date, D\nfrom review.out.astra_scratch.test_r13_attacks import stock\n\ndef test_exact_entitlement_preserves_sellable_lot(tmp_path):\n    store, market = fixture(tmp_path, end='2024-01-12', dividends=[stock(1)])\n    market = load_market(store, tmp_path/'manifest.json', market.calendar, par_value=D(3))\n    cfg = BacktestConfig(start=date(2024,1,1), end=date(2024,1,12), slots=1, notional=300000, commission_per_side=D(0), sell_tax=D(0), slippage_bps=0, par_value=D(3), n_boot=20)\n    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(cfg.seed)])\n    fv = r.run()['summary']['forecasters']['Q0']['final_valuation']\n    assert fv['cash'] == 400000 and not r.ledgers['Q0'].positions\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-08",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/18_respuesta_ronda12_astra.md",
+      "linea": 30,
+      "afirmacion": "El informe 18 afirma una actualización de límites que no existe en los informes 11 y 14.",
+      "contraejemplo": "§3.1 dice que la falta de versiones históricas de dividendos FinMind se añadió a ambos informes. El informe 11 termina sus límites sin declararla; el 14 sólo advierte costes, censo vigente y disponibilidad de barras. La reproducción exacta del informe 14 confirma la omisión. El informe 17 conserva la receta histórica fecha+1 día y dividend_events, explícitamente sustituida por el informe 18; necesita una remisión si se usa como documentación vigente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r13_attacks.py -k documented_finmind_limit --basetemp review/out/astra_scratch/repro13_docs",
+      "prueba_propuesta": "from pathlib import Path\nimport pytest\n\n@pytest.mark.parametrize('name', ['11_demo_q0_2024-2025.md', '14_backtest_muestra_2024-2025.md'])\ndef test_promised_revision_limit_is_disclosed(name):\n    text = (Path('docs/informes')/name).read_text(encoding='utf-8')\n    assert 'revisiones' in text or 'versiones de FinMind' in text\n",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Se conservará un estado de derecho ambiguo que invalide las etiquetas y los intervalos afectados, en lugar de convertir el descarte en ausencia de dividendo?",
+    "¿Qué representación exacta de derechos permitirá calcular cantidades y lotes sin redondear previamente cocientes como 1/3?"
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "rechazo",
+      "argumento": "La anonimización cierra los identificadores rechazados, pero packet_id, evidence_class, calendar_version, kind y supersedes conservan vías de contenido no acreditado."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "El registro de verificadores de producción permanece vacío y de sólo lectura. Se mantiene la condición de no declarar evidencia prospectiva acreditada sin verificadores criptográficos."
+    },
+    {
+      "id": "P3",
+      "posicion": "rechazo",
+      "argumento": "Las condiciones no están atendidas completamente: hay colisiones ocultas, eventos aceptados que el libro rechaza, incertidumbre terminal incluida en intervalos y pérdida de capacidad de venta por redondeo."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Se sostienen el límite temporal y la marca del caso original sin sesiones, incluida la frontera del día de valoración. La garantía de valoración comparable requiere excluir las retiradas sin resolución de los intervalos medibles."
+    },
+    {
+      "id": "P5",
+      "posicion": "rechazo",
+      "argumento": "Compartir Security.events y recuperar la política de siguiente sesión resuelve los casos anteriores, pero la lista admite infinitos, duplica identidades incompletas y convierte colisiones temporales en etiquetas maduras de retorno sin derechos. La advertencia sobre revisiones tampoco llegó a los informes de resultados."
+    }
+  ],
+  "veredicto": "rechazado"
+}

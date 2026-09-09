@@ -314,9 +314,9 @@ def test_r05_11_validator_does_not_trust_a_caller_built_packet_plan():
                      entry_at=datetime.fromisoformat("2026-09-10T09:00:00+08:00"))
     obj = base(cutoff_at=thursday.isoformat(), issued_at="2026-09-10T07:00:00+08:00", deadline_at=forged.deadline_at.isoformat())
     assert "packet_cutoff_is_not_the_weekly_protocol_cutoff" in vp(obj, forged)
-    typo = replace(packet(), week_status="valid_typo")
-    inv = base(status="invalid", ranking=[], status_reason="fake-no-sessions", deadline_at=CUTOFF.isoformat())
-    assert any(p.startswith("packet_week_status_unknown") for p in vp(inv, typo))
+    # un week_status fuera del catálogo ya no puede ni construirse (R13-01); el validador conserva su comprobación
+    with pytest.raises(ValueError, match="week_status"):
+        replace(packet(), week_status="valid_typo")
     early_entry = replace(packet(), entry_at=DEADLINE - timedelta(hours=1))
     assert "packet_plan_inconsistent_with_protocol" in vp(base(), early_entry)
     moved_deadline = replace(packet(), deadline_at=DEADLINE + timedelta(days=1), registration_deadline_at=DEADLINE + timedelta(days=1))

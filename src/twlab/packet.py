@@ -41,6 +41,12 @@ from .weekly import STATUS_VALID, plan_week
 MODE_HISTORICAL = "historical"
 MODE_PROSPECTIVE = "prospective"
 EVIDENCE_PROSPECTIVE = "prospective_registered"
+# Catálogos cerrados: ningún campo de metadatos es texto libre que pueda llegar al predictor (R13-01)
+EVIDENCE_CLASSES = frozenset({"historical_numeric_temporally_controlled", "historical_current_llm_exploratory",
+                              "historical_chronological_model_audited", EVIDENCE_PROSPECTIVE})
+KNOWN_DOCUMENT_KINDS = frozenset({"news", "filing", "announcement", "calendar_event", "price_bar", "price_bar_series", "flow",
+                                  "dividend", "index", "macro", "census", "open", "close", "adjusted"})
+WEEK_STATUSES = frozenset({"valid", "invalid:no_sessions"})
 
 R_AVAILABLE_AFTER_CUTOFF = "available_after_cutoff"
 R_UNKNOWN_AVAILABILITY = "unknown_availability"
@@ -98,6 +104,11 @@ def is_valid_doc_id(doc_id: Any) -> bool:
     return isinstance(doc_id, str) and _DOC_ID_RE.fullmatch(doc_id) is not None
 
 
+def is_valid_calendar_version(value: Any) -> bool:
+    import re
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_:./+\-]{1,200}@[A-Za-z0-9_:./+\-]{1,100}", value) is not None
+
+
 def canonical_bytes(obj: Any) -> bytes:
     return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=_jsonable).encode("utf-8")
 
@@ -124,6 +135,14 @@ class Document:
     def __post_init__(self) -> None:
         if not is_valid_doc_id(self.doc_id):
             raise ValueError(f"doc_id {self.doc_id!r} is not an identifier (letters, digits, _ : . @ / -; max 200)")
+        if self.kind not in KNOWN_DOCUMENT_KINDS:
+            raise ValueError(f"document kind {self.kind!r} is not in the catalog (R13-01)")
+        if self.supersedes is not None and not is_valid_doc_id(self.supersedes):
+            raise ValueError("supersedes must be a doc_id identifier (R13-01)")
+        if not is_valid_doc_id(self.source_id):
+            raise ValueError(f"source_id {self.source_id!r} is not an identifier (R13-01)")
+        if self.derivation is not None and not is_valid_doc_id(self.derivation):
+            raise ValueError("derivation must be an identifier (R13-01)")
         ensure_aware(self.available_at, f"{self.doc_id}.available_at")
         for name in ("published_at", "first_seen_at", "scheduled_for"):
             v = getattr(self, name)
@@ -169,6 +188,22 @@ class Packet:
     entry_at: Optional[datetime] = None
     exit_at: Optional[datetime] = None
     calendar_version: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Metadatos de catálogo o identificadores: el paquete no transporta texto libre al predictor (R13-01)."""
+        if not is_valid_doc_id(self.packet_id):
+            raise ValueError(f"packet_id {self.packet_id!r} is not an identifier")
+        if self.mode not in (MODE_HISTORICAL, MODE_PROSPECTIVE):
+            raise ValueError(f"unknown mode {self.mode!r}")
+        if self.evidence_class not in EVIDENCE_CLASSES:
+            raise ValueError(f"evidence_class {self.evidence_class!r} is not in the catalog")
+        if self.week_status is not None and self.week_status not in WEEK_STATUSES:
+            raise ValueError(f"week_status {self.week_status!r} is not in the catalog")
+        if self.week_id is not None and not (len(self.week_id) == 8 and self.week_id[4] == "-" and self.week_id[5] == "W" and self.week_id[:4].isdigit()
+                                             and self.week_id[6:].isdigit()):
+            raise ValueError(f"week_id {self.week_id!r} is not an ISO week")
+        if self.calendar_version is not None and not is_valid_calendar_version(self.calendar_version):
+            raise ValueError(f"calendar_version {self.calendar_version!r} is not '<source>@<version>' with identifier characters")
 
     def admitted_ids(self) -> set[str]:
         return {d.doc_id for d in self.admitted}

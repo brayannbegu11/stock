@@ -12,6 +12,13 @@ Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad
 
 Referencia equiponderada del universo elegible (bruta, apertura→cierre): -0.09 % semanal.
 
+## Límites
+
+- Universo del censo vigente (sesgo de supervivencia); costes ilustrativos; disponibilidad de barras por política de 24 h, no verificada.
+- Derechos (dividendos) según FinMind: la fecha y hora de anuncio acreditan el anuncio, no las revisiones posteriores de importes o fechas; no hay versiones históricas archivadas. Las etiquetas y la contabilidad que dependen de derechos son inferencia conservadora.
+- Derechos ambiguos o inválidos detectados en la carga: 0 (etiquetas e intervalos de sus tenedores invalidados); avisos de carga en total: 0.
+- Un bootstrap con observaciones fijas o degenerado se declara como tal en la tabla; nunca como un IC ordinario.
+
 ## Selecciones semana a semana
 
 | Semana | Q0 | Q1 | A1 |

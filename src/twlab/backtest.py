@@ -293,38 +293,59 @@ def dividend_known_at(dv: finmind.DividendRow, calendar: TradingCalendar) -> tup
     return None, AvailabilityQuality.UNKNOWN.value
 
 
+def _finite_nonneg(x) -> bool:
+    return isinstance(x, D) and x.is_finite() and x >= 0
+
+
 def validated_dividend_events(sec_id: str, rows: Sequence[finmind.DividendRow], par_value: D,
                               calendar: TradingCalendar) -> tuple[list[q1mod.DividendLike], list[str]]:
-    """La **única** lista de derechos que consumen el libro y las etiquetas de Q1 (R12-01).
+    """La **única** lista de derechos que consumen el libro y las etiquetas de Q1 (R12-01, R13-02..05).
 
-    Un ``event_id`` (``{valor}:{cash|stock}:{fecha ex}:{periodo}``) con filas de valores distintos, o con una
-    fila que el libro rechazaría (pago anterior a la fecha ex), se descarta por completo y se informa: ni el
-    libro ni las etiquetas lo aplican. Las filas idénticas repetidas cuentan una vez.
+    Las filas se agrupan por (tipo, fecha ex) **antes** de filtrar importes: un mismo derecho con filas
+    contradictorias (importes distintos, cero junto a positivo, periodos distintos, anuncios distintos), con
+    una fila inválida (importe no finito o negativo, periodo vacío, pago anterior a la fecha ex) no se
+    descarta en silencio: produce un derecho **ambiguo** que invalida las etiquetas y los intervalos de las
+    posiciones afectadas. Las filas idénticas repetidas cuentan una vez; sólo ceros = ningún derecho.
     """
-    candidates: dict[str, list] = {}
-    problems: list[str] = []
+    groups: dict[tuple[str, date], list[dict]] = {}
     for dv in rows:
         known_at, quality = dividend_known_at(dv, calendar)
-        if dv.cash_ex_date and dv.cash_per_share > 0:
-            eid = f"{sec_id}:cash:{dv.cash_ex_date}:{dv.period}"
-            if dv.cash_pay_date and dv.cash_pay_date < dv.cash_ex_date:
-                candidates.setdefault(eid, []).append("invalid:pay_before_ex")
-            else:
-                candidates.setdefault(eid, []).append(q1mod.DividendLike(eid, dv.cash_ex_date, "cash", cash_per_share=dv.cash_per_share,
-                                                                         known_at=known_at, pay_date=dv.cash_pay_date, known_quality=quality))
-        if dv.stock_ex_date and dv.stock_per_share > 0:
-            eid = f"{sec_id}:stock:{dv.stock_ex_date}:{dv.period}"
-            candidates.setdefault(eid, []).append(q1mod.DividendLike(eid, dv.stock_ex_date, "stock", stock_ratio=dv.stock_per_share / par_value,
-                                                                     known_at=known_at, pay_date=None, known_quality=quality))
+        if dv.cash_ex_date is not None:
+            groups.setdefault(("cash", dv.cash_ex_date), []).append(
+                {"amount": dv.cash_per_share, "pay": dv.cash_pay_date, "period": str(dv.period or "").strip(), "known_at": known_at, "quality": quality})
+        if dv.stock_ex_date is not None:
+            groups.setdefault(("stock", dv.stock_ex_date), []).append(
+                {"amount": dv.stock_per_share, "pay": None, "period": str(dv.period or "").strip(), "known_at": known_at, "quality": quality})
     events: list[q1mod.DividendLike] = []
-    for eid, cands in candidates.items():
-        invalid = [c for c in cands if isinstance(c, str)]
-        distinct = {c for c in cands if not isinstance(c, str)}
-        if invalid or len(distinct) > 1:
-            problems.append(f"{eid}: {len(cands)} rows " + ("with an invalid member (" + ", ".join(invalid) + ")" if invalid else "with different values")
-                            + "; event discarded for ledger and labels (R12-01)")
+    problems: list[str] = []
+    for (kind, exd), members in groups.items():
+        invalid: list[str] = []
+        for m in members:
+            if not _finite_nonneg(m["amount"]):
+                invalid.append("non_finite_or_negative_amount")
+            if not m["period"] and (isinstance(m["amount"], D) and m["amount"] != 0):
+                invalid.append("missing_period")
+            if kind == "cash" and m["pay"] and m["pay"] < exd:
+                invalid.append("pay_before_ex")
+        positive = [m for m in members if _finite_nonneg(m["amount"]) and m["amount"] > 0]
+        zero = [m for m in members if _finite_nonneg(m["amount"]) and m["amount"] == 0]
+        distinct = {(m["amount"], m["pay"], m["period"], m["known_at"]) for m in positive}
+        period = positive[0]["period"] if positive else ""
+        eid = f"{sec_id}:{kind}:{exd.isoformat()}:{period}"
+        if invalid or len(distinct) > 1 or (positive and zero):
+            why = "invalid member (" + ", ".join(sorted(set(invalid))) + ")" if invalid else ("zero and positive rows" if (positive and zero) else "different values")
+            problems.append(f"{eid}: {len(members)} rows with {why}; right marked AMBIGUOUS: labels and intervals of holders are invalid (R13-02..05)")
+            events.append(q1mod.DividendLike(eid, exd, kind, known_at=None, ambiguous=True))
             continue
-        events.append(next(iter(distinct)))
+        if not positive:
+            continue                                        # sólo ceros: no hay derecho
+        m = positive[0]
+        if kind == "cash":
+            events.append(q1mod.DividendLike(eid, exd, "cash", cash_per_share=m["amount"], known_at=m["known_at"], pay_date=m["pay"],
+                                             known_quality=m["quality"]))
+        else:
+            events.append(q1mod.DividendLike(eid, exd, "stock", stock_ratio=m["amount"] / par_value, known_at=m["known_at"], pay_date=None,
+                                             known_quality=m["quality"], stock_per_share=m["amount"], par_value=par_value))
     return sorted(events, key=lambda e: (e.ex_date, 0 if e.kind == "cash" else 1)), problems
 
 
@@ -430,6 +451,7 @@ class Runner:
         self.initial = D(cfg.notional * cfg.slots)
         self.ledgers = {n: PaperLedger(ledger_id=n, initial_cash=self.initial, cost_model=costs) for n in self.forecasters}
         self.open_slots: dict[str, list] = {n: [] for n in self.forecasters}
+        self.ambiguous_positions: dict[str, set[str]] = {n: set() for n in self.forecasters}
         self.prev_equity = {n: self.initial for n in self.forecasters}
         self.cursor = {n: cfg.start - timedelta(days=1) for n in self.forecasters}
         self.weeks: list[dict] = []
@@ -446,7 +468,11 @@ class Runner:
         out, stale = {}, []
         valued_at = valued_at or session
         for sec, pos in ledger.positions.items():
+            if sec in self.ambiguous_positions.get(ledger.ledger_id, ()):
+                stale.append(f"ambiguous_right:{sec}")     # cantidad incierta: ninguna valoración es comparable (R13-05)
             if pos.status.startswith("delisted"):
+                if pos.terminal_price is None:
+                    stale.append(f"unresolved_terminal:{sec}")   # valor terminal no resuelto: el cero contable no es un precio (R13-06)
                 continue
             b = self.market.by_session.get(sec, {}).get(session)
             if b is None:
@@ -480,12 +506,18 @@ class Runner:
         n = 0
         for exd, kind, sec, e in sorted(events, key=lambda ev: (ev[0], ev[1])):
             at = taipei(exd, PRE_OPEN)
+            if e is not None and e.ambiguous:
+                # el derecho no puede aplicarse: la posición queda con cantidad incierta mientras se mantenga (R13-05)
+                self.ambiguous_positions[name].add(sec)
+                self.weeks[-1].setdefault("ambiguous_rights", []).append(f"{name}:{e.event_id}")
+                continue
             try:
                 if kind == "cash":
                     pay = taipei(e.pay_date, time(9, 0)) if e.pay_date else None
                     ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "cash_dividend", at, per_share_cash=e.cash_per_share, pay_at=pay))
                 elif kind == "stock":
-                    ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "stock_dividend", at, stock_ratio=e.stock_ratio))
+                    ledger.apply_corporate_action(CorporateAction(e.event_id, sec, "stock_dividend", at, stock_ratio=e.stock_ratio,
+                                                                  stock_per_share=e.stock_per_share, par_value=e.par_value))
                 elif kind == "delisting":
                     ledger.apply_corporate_action(CorporateAction(f"{sec}:delisting:{exd}", sec, "delisting", at, terminal_price=None))
                 else:
@@ -652,6 +684,8 @@ class Runner:
             self.open_slots[name] = [(wid, ss) for wid, ss in self.open_slots[name]
                                      if any(s.status in ("filled", "exit_blocked") or (s.status == "exited" and not s.liquidated) for s in ss)]
             close_marks, stale1 = self.marks(exit_s, lg, "close")
+            # un derecho ambiguo sobre una posición tenida esta semana invalida el intervalo aunque la posición ya se haya vendido (R13-05)
+            stale1 += [f"ambiguous_right:{x.split(':', 1)[1]}" for x in record.get("ambiguous_rights", []) if x.startswith(name + ":")]
             try:
                 val = lg.valuation(prices=close_marks, at=plan.exit_at)
                 equity_end, flags = val.total, list(val.flags) + stale0 + stale1
@@ -705,7 +739,8 @@ class Runner:
             if closure:
                 entry["unpaired_reason"] = "extraordinary_closure_unhandled"
             elif record["forecasters"][name]["stale_prices"] or record["forecasters"][base]["stale_prices"]:
-                entry["unpaired_reason"] = "stale_price_in_interval"
+                first = (record["forecasters"][name]["stale_prices"] or record["forecasters"][base]["stale_prices"])[0]
+                entry["unpaired_reason"] = f"non_market_valuation_in_interval:{first}"
             elif name in intervals and base in intervals:
                 try:
                     entry["excess_net_vs_baseline"] = float(paired_excess(intervals[name], intervals[base], exposure_tolerance=cfg.exposure_tolerance))
@@ -827,6 +862,15 @@ def markdown_report(result: dict, *, title: str) -> str:
                      f"{fmt(e['mean_costs_over_invested'])} | {e['weeks_positive']}/{s['weeks_operated']} | {equity_txt} | {pe_txt} |")
     ew = s["universe_ew"]["mean_weekly_gross_open_close"]
     lines += ["", f"Referencia equiponderada del universo elegible (bruta, apertura→cierre): {ew*100:+.2f} % semanal." if ew is not None else "", ""]
+    warns = s.get("market_warnings", [])
+    ambiguous = [w for w in warns if "AMBIGUOUS" in w]
+    lines += ["## Límites", "",
+              "- Universo del censo vigente (sesgo de supervivencia); costes ilustrativos; disponibilidad de barras por política de 24 h, no verificada.",
+              "- Derechos (dividendos) según FinMind: la fecha y hora de anuncio acreditan el anuncio, no las revisiones posteriores de importes o "
+              "fechas; no hay versiones históricas archivadas. Las etiquetas y la contabilidad que dependen de derechos son inferencia conservadora.",
+              f"- Derechos ambiguos o inválidos detectados en la carga: {len(ambiguous)} (etiquetas e intervalos de sus tenedores invalidados); "
+              f"avisos de carga en total: {len(warns)}." + (" Ejemplos: " + "; ".join(w[:120] for w in warns[:3]) if warns else ""),
+              "- Un bootstrap con observaciones fijas o degenerado se declara como tal en la tabla; nunca como un IC ordinario.", ""]
     lines += ["## Selecciones semana a semana", ""]
     names = list(s["forecasters"])
     lines.append("| Semana | " + " | ".join(names) + " |")
@@ -849,7 +893,7 @@ def markdown_report(result: dict, *, title: str) -> str:
             elif w.get("pending_outcome"):
                 tail = " → pendiente"
             elif fr.get("stale_prices"):
-                tail = " → sin intervalo medible (precio obsoleto)"
+                tail = f" → sin intervalo medible ({fr['stale_prices'][0].split(':')[0]})"
             else:
                 tail = " → sin intervalo medible"
             cells.append(txt + tail)
