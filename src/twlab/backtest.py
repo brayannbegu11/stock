@@ -803,8 +803,13 @@ class Runner:
                             for s in slots if s.security_id}
             basket_ambiguous = any(_hit(s) for s in slots)
             fr = record["forecasters"][name]
+            slot_by_sec = {s.security_id: s for s in slots if s.security_id}
             for p in fr["picks"]:
                 p["gross_return"] = pick_returns.get(p["security_id"])
+                slot = slot_by_sec.get(p["security_id"])
+                if slot is not None:
+                    p["entry_status"] = slot.status                      # filled | exited | entry_failed | exit_blocked
+                    p["entry_reason"] = slot.reason or None
             fr.update({"notional_per_slot": float(notional), "filled": rep.filled_slots, "failed": rep.failed_slots,
                        "exit_blocked": rep.exit_blocked_slots, "fail_reasons": [s.reason for s in slots if s.status == "entry_failed"],
                        "mean_gross_pick_return": (float(rep.mean_gross_pick_return) if rep.mean_gross_pick_return is not None and not basket_ambiguous else None),
@@ -995,7 +1000,16 @@ def markdown_report(result: dict, *, title: str) -> str:
             if not picks:
                 cells.append(f"({fr.get('forecast_status', '—')}: {fr.get('status_reason') or ''})".strip())
                 continue
-            txt = ", ".join(f"{p['symbol']} {p['name']}" + (f" {p['gross_return']*100:+.1f} %" if p.get("gross_return") is not None else "") for p in picks)
+            def _pick(p):
+                s = f"{p['symbol']} {p['name']}"
+                if p.get("gross_return") is not None:
+                    return s + f" {p['gross_return']*100:+.1f} %"
+                if p.get("entry_status") == "entry_failed":
+                    return s + f" (sin ejecutar: {p.get('entry_reason')})"
+                if p.get("entry_status") in ("exit_blocked",):
+                    return s + " (salida bloqueada)"
+                return s
+            txt = ", ".join(_pick(p) for p in picks)
             net = fr.get("portfolio_net_return_open_close")
             if net is not None:
                 tail = f" → neto {net*100:+.2f} %"
