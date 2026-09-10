@@ -45,7 +45,7 @@ EVIDENCE_PROSPECTIVE = "prospective_registered"
 EVIDENCE_CLASSES = frozenset({"historical_numeric_temporally_controlled", "historical_current_llm_exploratory",
                               "historical_chronological_model_audited", EVIDENCE_PROSPECTIVE})
 KNOWN_DOCUMENT_KINDS = frozenset({"news", "filing", "announcement", "calendar_event", "price_bar", "price_bar_series", "flow",
-                                  "dividend", "index", "macro", "census"})
+                                  "dividend", "index", "macro", "census", "capture_manifest"})
 WEEK_STATUSES = frozenset({"valid", "invalid:no_sessions"})
 
 R_AVAILABLE_AFTER_CUTOFF = "available_after_cutoff"

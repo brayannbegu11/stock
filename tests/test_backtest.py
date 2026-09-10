@@ -275,7 +275,7 @@ def test_r14_06_r15_05_forecaster_refuses_a_market_whose_content_changed_underne
     from dataclasses import replace
     from twlab.models import q1
     store, path = make_market(tmp_path, end=date(2024, 6, 28))
-    for mutate in ("capture", "bar", "event", "calendar"):
+    for mutate in ("capture", "bar", "event", "calendar", "ex_date"):
         m = load_market(store, path, CAL)
         f = TabularForecaster(m, min_weeks=10)
         f.maybe_train(taipei(date(2024, 3, 3), time(18, 0)))
@@ -287,8 +287,13 @@ def test_r14_06_r15_05_forecaster_refuses_a_market_whose_content_changed_underne
             sec.bars[-100] = replace(b, close=b.close * 2)
         elif mutate == "event":                                  # un derecho que aparece o cambia sin cambiar capturas
             sec.events.append(q1.DividendLike("x:cash:2024-01-10:2024", date(2024, 1, 10), "cash", cash_per_share=D(10), known_at=taipei(date(2023, 12, 1))))
-        else:                                                    # otro calendario con la misma versión declarada
-            m.calendar = TradingCalendar(start=CAL.start, end=CAL.end, closures=[date(2024, 1, 12)], source_id="synthetic", recorded_at=CAL.recorded_at, version="2")
+        elif mutate == "ex_date":                                # misma identidad de evento, otra fecha ex (R15-05 parcial)
+            sec.events.append(q1.DividendLike("x:cash:2024-01-10:2024", date(2024, 1, 10), "cash", cash_per_share=D(10), known_at=taipei(date(2023, 12, 1))))
+            f = TabularForecaster(m, min_weeks=10)
+            f.maybe_train(taipei(date(2024, 3, 3), time(18, 0)))
+            sec.events[-1] = replace(sec.events[-1], ex_date=date(2024, 1, 11))
+        else:                                                    # otro calendario con la MISMA etiqueta de versión pero distinto contenido (R15-05)
+            m.calendar = TradingCalendar(start=CAL.start, end=CAL.end, closures=[date(2024, 1, 12)], source_id=CAL.source_id, recorded_at=CAL.recorded_at, version=CAL.version)
         with pytest.raises(ValueError, match="changed"):
             f.maybe_train(taipei(date(2024, 3, 10), time(18, 0)))
 
@@ -315,7 +320,7 @@ def test_r15_06_r15_07_new_lots_keep_gross_returns_and_the_report_flags_uncertai
     assert q3["picks"][0]["gross_return"] is not None and q3["mean_gross_pick_return"] is not None   # R15-06: el lote nuevo conserva su bruto
     assert any(f.startswith("ambiguous_right:") for f in q3["stale_prices"])    # pero el patrimonio sigue incierto
     md = markdown_report(res, title="t")
-    assert "INCIERTO" in md                                                    # R15-07: el patrimonio final se publica calificado
+    assert "PROVISIONAL" in md and "ambiguous_right" in md                    # R15-07: el patrimonio final se publica calificado
 
 
 def test_r13_06_unresolved_delisting_makes_the_interval_unmeasurable(tmp_path):
@@ -394,6 +399,75 @@ def test_r10_05_delisting_date_declared_in_captures_is_used(tmp_path):
     path.write_text(json.dumps(mf), encoding="utf-8")
     with pytest.raises(ManifestInconsistent):
         load_market(store, path, CAL)
+
+
+def test_r16_02_r16_03_daily_market_provenance_and_last_kept_capture(tmp_path):
+    from twlab.backtest import load_market_daily
+    from twlab.master import SecurityMaster, SecurityVersion, security_id_for
+    from twlab.sources import twse_daily as td
+    from tests.test_twse_daily import _put, twse_body, tpex_body, TWSE_FIELDS
+    store = RawStore(tmp_path)
+    master = SecurityMaster()
+    for market, sym in (("TWSE", "2035"), ("TPEX", "6488")):
+        sid = security_id_for(market, sym, date(2023, 1, 2))
+        master.add(SecurityVersion(security_id=sid, issuer_id=sid, symbol=sym, name_zh=sym, market=market, board="main",
+                                   instrument_type="ordinary_equity", valid_from=date(2023, 1, 2), valid_to=None, recorded_at=taipei(date(2024, 1, 1)), source_id="t"))
+    caps = {}
+    for d, price in ((date(2024, 1, 4), "100"), (date(2024, 1, 5), "--")):        # 2035: precio el 4-01, sin precio regular el 5-01
+        row = ["2035", "x", "1,000", "1", "100,000", price, price, price, price, "+", "0"]
+        caps[d] = _put(store, "twse", f"{td.TWSE_DATASET}/{d.isoformat()}", twse_body(d.strftime("%Y%m%d"), [row]))
+        trow = ["6488", "y", "50", "+1", "50", "50", "50", "50", "1,000", "50,000", "1"] + [""] * 6
+        _put(store, "tpex", f"{td.TPEX_DATASET}/{d.isoformat()}", tpex_body(d.strftime("%Y%m%d"), [trow]))
+    m = load_market_daily(store, CAL, master, as_of=date(2024, 1, 10), start=date(2024, 1, 4), end=date(2024, 1, 5))
+    a = m.securities[m.by_symbol["2035"]]
+    assert [b.session for b in a.bars] == [date(2024, 1, 4)]
+    assert a.price_capture.capture_id == caps[date(2024, 1, 4)].capture_id             # R16-03: la captura de la última barra conservada
+    assert a.source_id == "twse" and a.derivation == td.TWSE_DERIVATION                # R16-02: procedencia de la fuente real
+    assert a.bar_captures == {date(2024, 1, 4): caps[date(2024, 1, 4)].capture_id}
+    b = m.securities[m.by_symbol["6488"]]
+    assert b.source_id == "tpex" and b.derivation == td.TPEX_DERIVATION and len(b.bar_captures) == 2
+    # el documento del paquete lleva esa procedencia y enumera las capturas de cada sesión
+    from twlab.weekly import plan_week
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 5), label="t")
+    r = Runner(store, m, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    plan = plan_week(taipei(date(2024, 1, 7), time(18, 0)), CAL)
+    packet, _, _ = r.build_week_packet(plan)
+    doc = next(d for d in packet.admitted if d.security_ids == (b.security_id,))
+    assert doc.source_id == "tpex" and doc.derivation == td.TPEX_DERIVATION and doc.payload["captures_doc"] == "tpex:captures:2024-W02"
+    assert doc.capture_id == b.bar_captures[date(2024, 1, 5)]
+    manifest = next(d for d in packet.admitted if d.doc_id == "tpex:captures:2024-W02")
+    assert manifest.kind == "capture_manifest" and manifest.payload["session_captures"] == {d.isoformat(): c for d, c in b.bar_captures.items()}
+    assert manifest.capture_id == b.bar_captures[date(2024, 1, 5)] and manifest.available_at <= plan.cutoff_at
+    twse_manifest = next(d for d in packet.admitted if d.doc_id == "twse:captures:2024-W02")
+    assert list(twse_manifest.payload["session_captures"]) == ["2024-01-04"]      # la sesión sin precio regular no respalda ninguna barra
+
+
+def test_r16_07_and_user_scenario_flags_and_odd_lot_costs(tmp_path):
+    from twlab.backtest import markdown_report
+    result = {"summary": {"period": ["2024-01-01", "2024-01-12"], "manifest": "m", "universe_size": 2, "weeks_operated": 1, "weeks_invalid_no_sessions": 0,
+                          "weeks_pending_outcome": [], "assumptions": {"baseline": "A1"}, "universe_ew": {"mean_weekly_gross_open_close": None},
+                          "forecasters": {"Q0": {"model_id": "q0", "mean_weekly_net_return_open_close": None, "mean_weekly_gross_pick_return": None,
+                                                 "mean_costs_over_invested": None, "weeks_positive": 0, "final_equity": 100000.0,
+                                                 "final_valuation": {"flags": ["stale_price:TWSE:A@2023-01-02:2024-01-11"]}, "ambiguous_claims": []},
+                                          "A1": {"model_id": "a1", "mean_weekly_net_return_open_close": None, "mean_weekly_gross_pick_return": None,
+                                                 "mean_costs_over_invested": None, "weeks_positive": 0, "final_equity": 1.0, "final_valuation": {"flags": []}}}},
+              "weeks": []}
+    md = markdown_report(result, title="t")
+    assert "PROVISIONAL" in md and "stale_price" in md                                   # R16-07
+    # escenario del usuario: lotes sueltos con comisión mínima
+    store, path = make_market(tmp_path, end=date(2024, 3, 29))
+    m = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 19), label="t", notional=5_000, lot_size=1, min_commission_twd=D(20))
+    res = Runner(store, m, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    w = res["weeks"][0]["forecasters"]["Q0"]
+    assert w["filled"] == 5 and w["failed"] == 0                                        # con lotes de 1 acción todo cabe
+    # 0,1425 % de 5.000 TWD son 7 TWD, pero el mínimo de 20 se aplica por lado: la fricción de ida y vuelta supera el 1,2 %
+    assert w["costs_over_invested"] > 0.012
+    assert res["summary"]["assumptions"]["lot_size"] == 1 and D(str(res["summary"]["assumptions"]["costs"]["min_commission_twd"])) == D(20)
+    # sin mínimo, la misma orden paga sólo el porcentaje
+    cfg0 = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 19), label="t", notional=5_000, lot_size=1)
+    res0 = Runner(store, load_market(store, path, CAL), cfg0, [MomentumForecaster(), RandomForecaster(1)]).run()
+    assert res0["weeks"][0]["forecasters"]["Q0"]["costs_over_invested"] < 0.009
 
 
 def test_r11_05_markdown_report_keeps_uncertainty_states():

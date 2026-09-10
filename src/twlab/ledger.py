@@ -68,6 +68,12 @@ class CostModel:
     slippage_bps_per_side: int = 0
     rounding: str = "floor"               # floor | half_up; política declarada, a confirmar con el bróker
     label: str = "illustrative_not_contracted"
+    min_commission_twd: Decimal = D(0)    # comisión mínima por orden (habitual: 20 TWD); pesa en órdenes pequeñas (lotes sueltos)
+
+    def commission(self, executed: Decimal) -> Decimal:
+        if executed <= 0:
+            return D(0)
+        return max(self.round(executed * self.commission_per_side), D(self.min_commission_twd))
 
     def __post_init__(self) -> None:
         for name in ("commission_per_side", "sell_tax"):
@@ -78,6 +84,8 @@ class CostModel:
             raise LedgerError("slippage_bps_per_side out of range")
         if self.rounding not in ("floor", "half_up"):
             raise LedgerError("rounding must be floor or half_up")
+        if not isinstance(self.min_commission_twd, Decimal) or not self.min_commission_twd.is_finite() or self.min_commission_twd < 0:
+            raise LedgerError("min_commission_twd must be a finite non-negative Decimal")
 
     @property
     def slippage(self) -> Decimal:
@@ -366,7 +374,7 @@ class PaperLedger:
         gross = q_twd(price * shares)
         slip = self.costs.round(gross * self.costs.slippage)
         executed = gross + slip
-        commission = self.costs.round(executed * self.costs.commission_per_side)
+        commission = self.costs.commission(executed)
         total = executed + commission
         if total > self.cash:
             return self._reject(security_id, "buy", "insufficient_cash", f"need={total} cash={self.cash}", at, event_id)
@@ -405,7 +413,7 @@ class PaperLedger:
         gross = q_twd(price * shares)
         slip = self.costs.round(gross * self.costs.slippage)
         executed = gross - slip
-        commission = self.costs.round(executed * self.costs.commission_per_side)
+        commission = self.costs.commission(executed)
         tax = self.costs.round(executed * self.costs.sell_tax)
         net = executed - commission - tax
         remaining = D(shares)

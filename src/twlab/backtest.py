@@ -54,6 +54,8 @@ class BacktestConfig:
     commission_per_side: D = D("0.001425")
     sell_tax: D = D("0.003")
     slippage_bps: int = 10
+    lot_size: int = 1000                       # 1000 = lote regular; 1 = lotes sueltos (零股, precios de sesión regular como aproximación declarada)
+    min_commission_twd: D = D(0)               # comisión mínima por orden (los brókers suelen aplicar 20 TWD)
     min_history_sessions: int = 120
     liquidity_multiple: int = 20               # mediana(importe 20 sesiones) ≥ multiple × nocional
     par_value: D = D(10)
@@ -74,6 +76,9 @@ class Security:
     price_capture: object
     dividend_capture: object = None
     events: list = field(default_factory=list)          # derechos validados (q1.DividendLike): libro y etiquetas usan esta lista
+    source_id: str = "finmind"                          # procedencia de las barras (finmind | twse | tpex)
+    derivation: str = "finmind_price_bars_v1"           # extractor declarado para el documento de barras
+    bar_captures: dict = field(default_factory=dict)    # sesión → capture_id que respalda esa barra (fuentes por fecha, R16-02)
 
 
 @dataclass
@@ -97,14 +102,16 @@ class MarketData:
         memoria, aunque conserve identificadores, cambia la versión."""
         import hashlib
         h = hashlib.sha256()
-        h.update(f"{self.calendar.source_id}@{self.calendar.version}\n".encode("utf-8"))
+        cal = self.calendar
+        # contenido del calendario, no sólo su etiqueta (R15-05, ronda 16): rango y cierres efectivos
+        h.update(f"{cal.source_id}@{cal.version}|{cal.start}|{cal.end}|{','.join(sorted(d.isoformat() for d in cal.closures))}\n".encode("utf-8"))
         for sec_id in sorted(self.securities):
             s = self.securities[sec_id]
             h.update(f"{sec_id}|{s.price_capture.capture_id}|{getattr(s.dividend_capture, 'capture_id', '')}|{s.listing_date}|{s.delisting_date}\n".encode("utf-8"))
             for b in s.bars:
                 h.update(f"{b.session}:{b.open}:{b.close}:{b.value_twd}:{b.available_at.timestamp()}\n".encode("utf-8"))
             for e in s.events:
-                h.update(f"{e.event_id}:{e.kind}:{e.cash_per_share}:{e.stock_per_share}:{e.par_value}:{e.stock_ratio}:{e.pay_date}:"
+                h.update(f"{e.event_id}:{e.kind}:{e.ex_date}:{e.cash_per_share}:{e.stock_per_share}:{e.par_value}:{e.stock_ratio}:{e.pay_date}:"
                          f"{e.known_at.timestamp() if e.known_at else None}:{e.ambiguous}\n".encode("utf-8"))
         return h.hexdigest()[:16]
 
@@ -256,7 +263,7 @@ def load_market_daily(store: RawStore, calendar: TradingCalendar, master: Securi
     have = {"TWSE": td.captured_sessions(store, "twse", td.TWSE_DATASET), "TPEX": td.captured_sessions(store, "tpex", td.TPEX_DATASET)}
     readers = {"TWSE": (td.twse_rows, td.bars_twse), "TPEX": (td.tpex_rows, td.bars_tpex)}
     bars: dict[tuple[str, str], list] = {k: [] for k in wanted}
-    last_capture: dict[tuple[str, str], object] = {}
+    captures_by_session: dict[tuple[str, str], dict[date, object]] = {k: {} for k in wanted}
     missing: list[str] = []
     closed_sessions: list[str] = []
     for s in calendar.sessions_between(start, end):
@@ -274,12 +281,13 @@ def load_market_daily(store: RawStore, calendar: TradingCalendar, master: Securi
                 key = (market, sid)
                 if key in wanted:
                     bars[key].append(bar)
-                    last_capture[key] = rec
+                    captures_by_session[key][s] = rec
     dropped = 0
     dropped_before_listing = 0
     securities: dict[str, Security] = {}
     by_symbol: dict[str, str] = {}
     by_session: dict[str, dict[date, finmind.Bar]] = {}
+    sources = {"TWSE": ("twse", td.TWSE_DERIVATION), "TPEX": ("tpex", td.TPEX_DERIVATION)}
     for key, v in wanted.items():
         allb = sorted(bars[key], key=lambda b: b.session)
         usable = [b for b in allb if b.has_regular_price]
@@ -288,7 +296,11 @@ def load_market_daily(store: RawStore, calendar: TradingCalendar, master: Securi
         dropped_before_listing += len(usable) - len(kept)
         if not kept:
             continue
-        securities[v.security_id] = Security(v.symbol, v.security_id, v.market, v.name_zh, v.valid_from, v.valid_to, kept, [], last_capture[key], None, [])
+        caps = {b.session: captures_by_session[key][b.session] for b in kept}     # una captura por barra conservada (R16-02)
+        last_rec = caps[kept[-1].session]                                          # la de la última barra conservada (R16-03)
+        src, deriv = sources[v.market]
+        securities[v.security_id] = Security(v.symbol, v.security_id, v.market, v.name_zh, v.valid_from, v.valid_to, kept, [], last_rec, None, [],
+                                             src, deriv, {d: r.capture_id for d, r in caps.items()})
         by_symbol[v.symbol] = v.security_id
         by_session[v.security_id] = {b.session: b for b in kept}
     traded: set[date] = set().union(*[set(m) for m in by_session.values()]) if by_session else set()
@@ -533,10 +545,11 @@ class Runner:
                                  f"but the ledger uses {cfg.par_value} (R11-03)")
         if market.par_value != cfg.par_value:
             raise ValueError(f"market events were validated with par_value={market.par_value} but the ledger uses {cfg.par_value} (R11-03)")
-        costs = CostModel(commission_per_side=cfg.commission_per_side, sell_tax=cfg.sell_tax, slippage_bps_per_side=cfg.slippage_bps)
+        costs = CostModel(commission_per_side=cfg.commission_per_side, sell_tax=cfg.sell_tax, slippage_bps_per_side=cfg.slippage_bps,
+                          min_commission_twd=cfg.min_commission_twd)
         self.costs = costs
         self.initial = D(cfg.notional * cfg.slots)
-        self.ledgers = {n: PaperLedger(ledger_id=n, initial_cash=self.initial, cost_model=costs) for n in self.forecasters}
+        self.ledgers = {n: PaperLedger(ledger_id=n, initial_cash=self.initial, cost_model=costs, lot_size=cfg.lot_size) for n in self.forecasters}
         self.open_slots: dict[str, list] = {n: [] for n in self.forecasters}
         self.ambiguous_positions: dict[str, set[str]] = {n: set() for n in self.forecasters}
         self.ambiguous_claims: dict[str, set[str]] = {n: set() for n in self.forecasters}     # derechos no aplicados: incertidumbre permanente
@@ -628,16 +641,45 @@ class Runner:
     def build_week_packet(self, plan: WeekPlan) -> tuple[Packet, object, list[Candidate]]:
         cutoff = plan.cutoff_at
         docs = []
+        # Procedencia de fuentes por fecha (R16-02): un documento «capture_manifest» por fuente enumera, sesión a sesión,
+        # la captura que respalda las barras de esa fuente conocidas al corte; cada serie lo referencia (captures_doc) y
+        # lleva como capture_id/source_sha256 los de su última barra conocida. Así la lista completa queda archivada una
+        # vez por paquete y no 1.937 veces.
+        manifests: dict[str, dict[str, str]] = {}
+        manifest_caps: dict[str, dict] = {}
+        for s in self.market.securities.values():
+            if not s.bar_captures:
+                continue
+            m = manifests.setdefault(s.source_id, {})
+            for d, cap in s.bar_captures.items():
+                if taipei(d).replace(hour=13, minute=30) + finmind.PRICE_AVAILABILITY_LAG <= cutoff:
+                    m[d.isoformat()] = cap
+        for src, entries in manifests.items():
+            if not entries:
+                continue
+            last_session = max(entries)
+            last_cap = self.store.get(entries[last_session])
+            manifest_caps[src] = last_cap
+            docs.append(Document(
+                doc_id=f"{src}:captures:{plan.week_id}", kind="capture_manifest", source_id=src, security_ids=(),
+                available_at=taipei(date.fromisoformat(last_session)).replace(hour=13, minute=30) + finmind.PRICE_AVAILABILITY_LAG,
+                availability_quality=AvailabilityQuality.CONSERVATIVE_INFERENCE, capture_id=last_cap.capture_id, source_sha256=last_cap.sha256,
+                derivation="capture_manifest_v1", payload={"session_captures": dict(sorted(entries.items()))},
+            ))
         for sec_id, s in self.market.securities.items():
             known = [b for b in s.bars if b.available_at <= cutoff]
             if not known:
                 continue
+            window = known[-130:]
+            last_cap = self.store.get(s.bar_captures[known[-1].session]) if s.bar_captures else s.price_capture
+            payload = {"history_sessions": len(known), "last_session": known[-1].session.isoformat(),
+                       "sessions": [[b.session.isoformat(), str(b.open), str(b.close), b.volume_shares, str(b.value_twd)] for b in window]}
+            if s.bar_captures:
+                payload["captures_doc"] = f"{s.source_id}:captures:{plan.week_id}"
             docs.append(Document(
-                doc_id=f"{s.symbol}:bars:{plan.week_id}", kind="price_bar_series", source_id="finmind", security_ids=(sec_id,),
+                doc_id=f"{s.symbol}:bars:{plan.week_id}", kind="price_bar_series", source_id=s.source_id, security_ids=(sec_id,),
                 available_at=known[-1].available_at, availability_quality=AvailabilityQuality.CONSERVATIVE_INFERENCE,
-                capture_id=s.price_capture.capture_id, source_sha256=s.price_capture.sha256, derivation="finmind_price_bars_v1",
-                payload={"history_sessions": len(known), "last_session": known[-1].session.isoformat(),
-                         "sessions": [[b.session.isoformat(), str(b.open), str(b.close), b.volume_shares, str(b.value_twd)] for b in known[-130:]]},
+                capture_id=last_cap.capture_id, source_sha256=last_cap.sha256, derivation=s.derivation, payload=payload,
             ))
         packet = build_packet(packet_id=f"pkt-{self.cfg.label}-{plan.week_id}", cutoff_at=cutoff, documents=docs, mode="historical",
                               evidence_class=EVIDENCE, calendar=self.market.calendar)
@@ -647,6 +689,8 @@ class Runner:
         last_session = self.market.calendar.prev_session(before=cutoff.date())
         candidates: list[Candidate] = []
         for doc in packet.admitted:
+            if doc.kind != "price_bar_series":
+                continue
             sec_id = doc.security_ids[0]
             s = self.market.securities[sec_id]
             sessions = list(doc.payload["sessions"])
@@ -965,11 +1009,14 @@ def markdown_report(result: dict, *, title: str) -> str:
             pe_txt = f"no estimable: {pe['error']}"
         else:
             pe_txt = "—"
+        fflags = [str(f) for f in e.get("final_valuation", {}).get("flags", [])]
         if e.get("final_equity") is None:
             equity_txt = "desconocido: " + str(e.get("final_valuation", {}).get("error", ""))
-        elif e.get("ambiguous_claims") or any(str(f).startswith(("ambiguous_right", "unresolved_terminal", "price_predates_right"))
-                                              for f in e.get("final_valuation", {}).get("flags", [])):
-            equity_txt = f"≈ {e['final_equity']:,.0f} TWD (contable, INCIERTO: {len(e.get('ambiguous_claims', []))} derechos ambiguos / marcas de valoración)"
+        elif e.get("ambiguous_claims") or fflags:
+            # cualquier marca de la valoración final (derecho ambiguo, terminal no resuelto, precio anterior a derecho,
+            # precio obsoleto, fracción pendiente…) la convierte en provisional (R15-07, R16-07)
+            kinds = sorted({f.split(":")[0] if not f.startswith("TWSE") and not f.startswith("TPEX") else f.rsplit(":", 1)[-1] for f in fflags})
+            equity_txt = f"≈ {e['final_equity']:,.0f} TWD (contable, PROVISIONAL: {', '.join(kinds) or 'derechos ambiguos'})"
         else:
             equity_txt = f"{e['final_equity']:,.0f} TWD"
         lines.append(f"| {name} (`{e['model_id']}`) | {fmt(e['mean_weekly_net_return_open_close'])} | {fmt(e['mean_weekly_gross_pick_return'])} | "

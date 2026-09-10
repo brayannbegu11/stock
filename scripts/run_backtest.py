@@ -46,6 +46,8 @@ def main() -> int:
     ap.add_argument("--commission", default="0.001425")
     ap.add_argument("--slippage-bps", type=int, default=10)
     ap.add_argument("--sizing", choices=("proportional", "fixed"), default="proportional")
+    ap.add_argument("--lot-size", type=int, default=1000, help="1000 = lotes regulares; 1 = lotes sueltos (零股), precios de sesión regular como aproximación")
+    ap.add_argument("--min-commission", default="0", help="comisión mínima por orden en TWD (habitual: 20)")
     ap.add_argument("--exposure-tolerance", default="0.10")
     ap.add_argument("--retrain-every", type=int, default=4)
     ap.add_argument("--min-train-weeks", type=int, default=52)
@@ -63,7 +65,8 @@ def main() -> int:
     calendar = load_twse_reference_calendar()
     cfg = BacktestConfig(start=start, end=end, slots=args.slots, notional=args.notional, sizing=args.sizing,
                          exposure_tolerance=D(args.exposure_tolerance), block_length=args.block_length, seed=args.seed,
-                         commission_per_side=D(args.commission), slippage_bps=args.slippage_bps, label=label)
+                         commission_per_side=D(args.commission), slippage_bps=args.slippage_bps, label=label,
+                         lot_size=args.lot_size, min_commission_twd=D(args.min_commission))
     if args.manifest == "daily":
         # universo completo desde las cotizaciones oficiales por fecha (sin derechos); historial desde --lookback-start
         master = load_master_file(sorted((ROOT / "data" / "store").glob("master_*.jsonl"))[-1])

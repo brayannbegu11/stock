@@ -1,0 +1,322 @@
+{
+  "ronda": "16",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: 7 hallazgos nuevos, incluidos 2 altos; R15-05 sigue parcialmente abierto. Pasan las 285 pruebas de aceptación. Las verificaciones anteriores adaptadas producen 70 pases y 1 fallo. La muestra reproduce íntegramente el resumen y el informe 14; el detalle sólo añade entry_status y entry_reason. Sus 103 paquetes contienen cero documentos o barras posteriores al corte y 6.901 reconstrucciones de características coinciden. La carga diaria reproduce 1.937 valores, 987.309 barras utilizables y 8.787 exclusiones. En 2025 coinciden exactamente apertura, cierre, volumen e importe de 15.538 pares TWSE–FinMind, incluidos 102 sin precio regular; los casos restantes faltan en ambas fuentes. La semana pendiente conserva las entradas sin publicar retorno de salida. Los informes 11 y 14 sostienen sus cifras; los informes 20/21 exageran la inmutabilidad, y el informe 15 contiene errores de interpretación y denominador. No se reejecutó íntegramente Q1 sobre el universo. Todos los archivos escritos están bajo review/out/astra_scratch/.",
+  "hallazgos": [
+    {
+      "id": "R09-03/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 140,
+      "afirmacion": "Corregido el contraejemplo: los rechazos no transportan el contenido original y los metadatos atacados se rechazan.",
+      "contraejemplo": "El marcador «profit in 2099 = 999; buy A» queda rechazado, también mediante period_end y availability_quality.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py review/out/astra_scratch/test_r15_verifications.py -k 'metadata or rejected_doc_id' --basetemp=review/out/astra_scratch/repro16_metadata",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R12-01/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 107,
+      "afirmacion": "Parcial: los derechos contradictorios se comparten e invalidan correctamente; la caché todavía puede conservar etiquetas incompatibles con una fecha ex modificada.",
+      "contraejemplo": "Cambiar ex_date del derecho de 10 TWD al 16-01-2024, conservando event_id, no detiene Q1; véase R15-05/verificacion.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_attacks.py -k hash_covers --basetemp=review/out/astra_scratch/repro16_hash",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-01/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 140,
+      "afirmacion": "Corregidos los contraejemplos de metadatos libres en Document y Packet.",
+      "contraejemplo": "Pasan los ataques a kind, supersedes, source_id, derivation y metadatos del paquete; period_end y availability_quality ya rechazan el marcador futuro.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py review/out/astra_scratch/test_r15_verifications.py -k metadata --basetemp=review/out/astra_scratch/repro16_metadata",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-07/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 140,
+      "afirmacion": "Corregidos los contraejemplos de cantidades, ventas y cobros racionales.",
+      "contraejemplo": "4.000/3 acciones cobran 4.000 TWD a 3 TWD por acción; después de vender 1.000 cobran 1.000 TWD, y una cantidad inferior a 1.000 no permite vender 1.000.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k 'rational or partial_sale or reverse_split or unresolved_fraction' --basetemp=review/out/astra_scratch/repro16_rational",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-01/verificacion",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/packet.py",
+      "linea": 153,
+      "afirmacion": "Corregidos los campos pendientes de Document.",
+      "contraejemplo": "version, capture_id, source_sha256, security_ids, period_end, availability_quality y payload superan las pruebas de rechazo tipado ejecutadas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_ledger.py -k r14_01_r14_02 --basetemp=review/out/astra_scratch/repro16_document",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-02/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": null,
+      "afirmacion": "Corregido: la verificación histórica admite una captura actual y verifica procedencia y derivación sin exigir ingestión anterior al corte.",
+      "contraejemplo": "Un documento de enero de 2024 capturado en 2026 entra en histórico y supera la readmisión; los controles de procedencia y payload incorrectos siguen rechazándose.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k historical --basetemp=review/out/astra_scratch/repro16_historical",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-04/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 398,
+      "afirmacion": "Corregido: las enteras vendibles y fracciones consumen el racional exacto.",
+      "contraejemplo": "El split 0.99999999999999999999999999999 sobre 1.000 acciones conserva una fracción positiva y bloquea la venta de 1.000.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k 'reverse_split or unresolved_fraction or split_partial' --basetemp=review/out/astra_scratch/repro16_whole",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-05/verificacion",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 798,
+      "afirmacion": "Corregido: la invalidación bruta distingue el lote afectado de compras posteriores.",
+      "contraejemplo": "El lote comprado el 08-01 pierde su bruto por el derecho ambiguo del 10-01; el comprado el 15-01 conserva bruto cero, mientras el patrimonio continúa incierto.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k new_lot --basetemp=review/out/astra_scratch/repro16_new_lot",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-06/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 100,
+      "afirmacion": "Parcial: se detectan cambios de barras y capturas, pero persiste el cambio de calendario con igual versión.",
+      "contraejemplo": "Cerrar el 12-01-2024 en otro calendario synthetic@1 no cambia data_version ni el manifiesto de 134 filas reutilizado por Q1.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k calendar_same_version --basetemp=review/out/astra_scratch/repro16_calendar",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-01/verificacion",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "src/twlab/packet.py",
+      "linea": 162,
+      "afirmacion": "Corregido: period_end exige fecha, availability_quality exige catálogo y payload exige mapa.",
+      "contraejemplo": "El texto futuro en period_end o availability_quality se rechaza tanto en histórico como en prospectivo.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k all_visible_document --basetemp=review/out/astra_scratch/repro16_types",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-02/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": null,
+      "afirmacion": "Corregida la confusión de relojes PIT-04.",
+      "contraejemplo": "Captura de 2026 para corte 07-01-2024 admitida y readmitida en histórico; el caso prospectivo sigue rechazándose. Se adaptaron dos controles antiguos que exigían first_seen_at en histórico.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k historical --basetemp=review/out/astra_scratch/repro16_historical",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-03/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 140,
+      "afirmacion": "Corregida la sobreventa por redondeo de cantidad.",
+      "contraejemplo": "Una cantidad racional estrictamente inferior a 1.000 presenta 999 enteras vendibles y no ejecuta la venta de 1.000.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k 'reverse_split or unresolved_fraction' --basetemp=review/out/astra_scratch/repro16_fraction",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-04/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 508,
+      "afirmacion": "Corregida la pérdida de un TWD en dividendos sobre cantidades periódicas.",
+      "contraejemplo": "3 × 4.000/3 declara 4.000 TWD; después de vender 1.000 acciones, 3 × 1.000/3 declara 1.000 TWD.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k 'cash_from_rational or partial_sale_then_cash' --basetemp=review/out/astra_scratch/repro16_cash",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-05/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 100,
+      "afirmacion": "Parcial: data_version omite el contenido del calendario y ex_date de los derechos; contradice el informe 21 §3.1.",
+      "contraejemplo": "Después de entrenar 134 filas al 14-01-2024, sustituir el calendario por otro que cierra el 12-01 con igual source_id/version permite reutilizar el mismo manifiesto. Cambiar sólo ex_date del dividendo de 10 TWD al 16-01 tampoco provoca ValueError. Ambos casos fallan en test_hash_covers_calendar_and_ex_date.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_attacks.py -k hash_covers --basetemp=review/out/astra_scratch/repro16_hash",
+      "prueba_propuesta": "from dataclasses import replace\nimport pytest\nfrom review.out.astra_scratch.r10_support import fixture, date, time, taipei\nfrom review.out.astra_scratch.test_r13_attacks import cash\nfrom twlab.backtest import TabularForecaster\n\ndef test_changed_ex_date_invalidates_forecaster(tmp_path):\n    _, market = fixture(tmp_path, end='2024-01-12', dividends=[cash(10)])\n    f = TabularForecaster(market, min_weeks=1, retrain_every_weeks=1)\n    f.maybe_train(taipei(date(2024,1,14), time(18)))\n    security = next(iter(market.securities.values()))\n    security.events[0] = replace(security.events[0], ex_date=date(2024,1,16))\n    with pytest.raises(ValueError):\n        f.maybe_train(taipei(date(2024,1,21), time(18)))\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-06/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 798,
+      "afirmacion": "Corregida la contaminación del bruto de lotes nuevos.",
+      "contraejemplo": "La compra posterior a la fecha ex conserva gross_return=0 y mean_gross_pick_return=0; portfolio_net_return_open_close permanece null por la reclamación anterior.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k new_lot --basetemp=review/out/astra_scratch/repro16_new_lot",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-07/verificacion",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 970,
+      "afirmacion": "Corregido el contraejemplo de derecho ambiguo; la variante con precio obsoleto queda abierta como R16-07.",
+      "contraejemplo": "El derecho en acciones 10/0 ahora produce «INCIERTO» en la celda de patrimonio final.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_previous.py -k markdown_final --basetemp=review/out/astra_scratch/repro16_markdown",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R16-01",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/sources/twse_daily.py",
+      "linea": 68,
+      "afirmacion": "Los dos adaptadores ignoran la fecha de la respuesta y pueden introducir cotizaciones futuras bajo una sesión anterior.",
+      "contraejemplo": "Una captura archivada como sesión 05-01-2024 cuyo cuerpo declara date=20240112 genera una barra del 05-01 a 100 y disponibilidad del 06-01. load_market_daily la admite en ambos mercados. No se observó esta discrepancia en la comparación real de 2025; el fallo está reproducido con capturas sintéticas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_attacks.py -k payload_date --basetemp=review/out/astra_scratch/repro16_dates",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r16_attacks import daily\n\n@pytest.mark.parametrize('market', ['TWSE', 'TPEX'])\ndef test_response_date_matches_requested_session(tmp_path, market):\n    try:\n        _, market_data = daily(tmp_path, market, days=('2024-01-05',), body_day='2024-01-12')\n    except ValueError:\n        return\n    assert not market_data.securities\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R16-02",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 636,
+      "afirmacion": "Los paquetes oficiales declaran procedencia y extractor FinMind y enlazan una captura que no contiene su serie histórica.",
+      "contraejemplo": "El último paquete archivado de W20 contiene 1.923 documentos con source_id distinto del de su captura; W37 contiene 1.937. Para 1101 en W20, source_id=finmind y derivation=finmind_price_bars_v1, pero capture_id apunta a TWSE MI_INDEX_ALLBUT0999/2026-09-09 mientras el payload contiene 130 sesiones hasta 2026-05-08. Esa captura diaria no acredita los bytes de las otras sesiones. La readmisión verificada no puede sostener esta procedencia.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_attacks.py -k real_provenance --basetemp=review/out/astra_scratch/repro16_provenance",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r16_attacks import daily\nfrom review.out.astra_scratch.r10_support import BacktestConfig, Runner, MomentumForecaster, RandomForecaster, date, time, taipei\nfrom twlab.weekly import plan_week\n\ndef test_daily_document_source_matches_capture(tmp_path):\n    store, market = daily(tmp_path)\n    cfg = BacktestConfig(start=date(2024,1,1), end=date(2024,1,12))\n    runner = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])\n    packet, _, _ = runner.build_week_packet(plan_week(taipei(date(2024,1,7), time(18)), market.calendar))\n    doc = packet.admitted[0]\n    assert doc.source_id == store.get(doc.capture_id).source_id\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R16-03",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 277,
+      "afirmacion": "price_capture se actualiza antes de descartar barras sin precio regular y deja de identificar la última barra conservada.",
+      "contraejemplo": "Con precio 100 el 04-01 y «--» el 05-01, la única barra conservada es del 04-01 pero price_capture corresponde al 05-01. En la carga real ocurre en 21 valores: 2035 termina el 08-09 y 4154 el 03-09, pero ambos apuntan a dailyQuotes/2026-09-09.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_attacks.py -k last_kept_bar --basetemp=review/out/astra_scratch/repro16_last_capture",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r16_attacks import daily\n\ndef test_capture_belongs_to_last_retained_bar(tmp_path):\n    _, market = daily(tmp_path, zero_last=True)\n    security = market.securities['A']\n    assert security.price_capture.dataset.endswith(security.bars[-1].session.isoformat())\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R16-04",
+      "severidad": "media",
+      "categoria": "identidad",
+      "archivo": "src/twlab/sources/twse_daily.py",
+      "linea": 114,
+      "afirmacion": "Las filas duplicadas de un símbolo se resuelven silenciosamente por orden, a diferencia del rechazo de sesiones duplicadas en FinMind.",
+      "contraejemplo": "Dos filas de 2330 para la misma sesión, una con OHLC=100 y otra con OHLC=200, producen una única barra a 200 sin aviso. Invertirlas cambia el resultado a 100. Reproducido en TWSE y TPEx.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_attacks.py -k duplicate_symbol --basetemp=review/out/astra_scratch/repro16_duplicates",
+      "prueba_propuesta": "import pytest\nfrom datetime import date\nfrom twlab.sources import twse_daily as td\n\ndef test_conflicting_symbol_rows_are_rejected():\n    rows = [{'代號':'2330', '開盤':p, '最高':p, '最低':p, '收盤':p, '成交股數':'1000', '成交金額(元)':'100000', '成交筆數':'10'} for p in ('100','200')]\n    with pytest.raises(ValueError):\n        td.bars_tpex(date(2024,1,5), rows)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R16-05",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/sources/twse_daily.py",
+      "linea": 91,
+      "afirmacion": "La ausencia de columnas obligatorias se transforma en ceros válidos, ocultando roturas del esquema.",
+      "contraejemplo": "Una fila que sólo contiene símbolo 2330, apertura 100 y cierre 100 produce has_regular_price=True con máximo, mínimo, volumen, importe y transacciones iguales a cero. Ambos adaptadores aceptan esa barra sin error ni aviso; puede alimentar historial y alterar filtros de liquidez.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_attacks.py -k missing_required --basetemp=review/out/astra_scratch/repro16_columns",
+      "prueba_propuesta": "from datetime import date\nfrom twlab.sources import twse_daily as td\n\ndef test_missing_columns_are_not_valid_market_data():\n    try:\n        bar = td.bars_twse(date(2024,1,5), [{'證券代號':'2330', '開盤價':'100', '收盤價':'100'}])['2330']\n    except ValueError:\n        return\n    assert not bar.has_regular_price\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R16-06",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "docs/informes/15_backtest_universo_2026.md",
+      "linea": 22,
+      "afirmacion": "El informe usa un denominador incorrecto y una interpretación del dimensionado y los costes que el JSON no sostiene.",
+      "contraejemplo": "Antes de W37 hay 80 selecciones de Q1 y 16 fallos, no 85 selecciones. El dimensionado es proporcional: W37 asigna 796.187 TWD a cada puesto de Q1; 3037 abre a 939 TWD y no cabe, aunque cotiza por debajo de 1.000. La diferencia media neta A1−Q1 es 1,390365 puntos porcentuales, superior al máximo coste medio declarado de 0,762961 %, contradiciendo «mayores que cualquier diferencia». El README también debe explicar el umbral variable.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_reports.py -k claimed --basetemp=review/out/astra_scratch/repro16_report_claims",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r16_reports import saved\n\ndef test_report_denominator_matches_attempted_selections():\n    result = saved()\n    attempts = sum(len(w['forecasters']['Q1']['picks']) for w in result['weeks'] if not w.get('pending_outcome'))\n    assert attempts == 85\n\ndef test_report_cost_comparison_matches_json():\n    fs = saved()['summary']['forecasters']\n    spread = abs(fs['A1']['mean_weekly_net_return_open_close'] - fs['Q1']['mean_weekly_net_return_open_close'])\n    assert max(f['mean_costs_over_invested'] for f in fs.values()) > spread\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R16-07",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 970,
+      "afirmacion": "La calificación del patrimonio final omite stale_price y sigue presentando una valoración obsoleta sin advertencia.",
+      "contraejemplo": "Se compran 1.000 A a 100 el 08-01. Falta su cierre del 12-01, mientras B sí tiene barra ese día. La salida queda bloqueada y final_valuation conserva stale_price para A con precio del 11-01; la tabla muestra «100,000 TWD» sin calificación. El informe 21 promete cubrir las marcas de valoración, pero el filtro sólo contempla tres prefijos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r16_reports.py -k stale --basetemp=review/out/astra_scratch/repro16_stale",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner, date\nfrom twlab.backtest import markdown_report\n\ndef test_stale_final_equity_is_qualified(tmp_path):\n    r = runner(tmp_path, end='2024-01-12', symbols=('A','B'))\n    sid = r.market.by_symbol['A']\n    r.market.securities[sid].bars.pop()\n    del r.market.by_session[sid][date(2024,1,12)]\n    result = r.run()\n    assert any(f.startswith('stale_price:') for f in result['summary']['forecasters']['Q0']['final_valuation']['flags'])\n    row = next(x for x in markdown_report(result, title='test').splitlines() if x.startswith('| Q0 (`'))\n    assert any(word in row.lower() for word in ('inciert','obsolet','stale','provisional','desconocid'))\n",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Cómo se archivará la lista completa de capturas por sesión que respalda cada serie, con fuente y extractor correctos y posibilidad de readmisión verificada?",
+    "¿Se incluirán ex_date y el contenido efectivo del calendario en data_version, o se impedirá sustituirlos durante la vida del pronosticador?",
+    "¿Qué evidencia adicional acredita el cierre del 10-07-2026? Las respuestas archivadas acreditan ausencia de datos, pero no incluyen un anuncio de cierre.",
+    "¿Se retirará del informe 15 la afirmación de que los constructores desconocen el periodo por su corte de conocimiento? El archivo no acredita esa ausencia de conocimiento ni convierte esta reconstrucción en evidencia prospectiva."
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "acepto",
+      "argumento": "Las correcciones de tipado y separación del reloj histórico superan los contraejemplos originales. La nueva procedencia incorrecta de los paquetes diarios se registra separadamente en R16-02."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Mantener la distinción entre reconstrucción histórica y evidencia prospectiva acreditada. La lista W37 se archivó después de su entrada simulada y no constituye una predicción prospectiva del lunes."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Verificados los racionales exactos en ventas, fracciones y dividendos, y la invalidación bruta por lote sin contaminar compras posteriores."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "El patrimonio con reclamaciones ambiguas ya se califica. Extender la advertencia a precios obsoletos: R16-07."
+    },
+    {
+      "id": "P5",
+      "posicion": "rechazo",
+      "argumento": "Persiste un contraejemplo original de R15-05 y aparece otro con ex_date. La afirmación de que ninguna mutación pasa desapercibida es falsa."
+    },
+    {
+      "id": "P6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Se sostiene el alcance de 1.937 valores y el uso como recorrido técnico sin medición de rentabilidad. Corregir fechas y procedencia antes de afirmar una cadena trazable. Mantener explícita la ausencia de derechos también en etiquetas y comparaciones: el control ejecutado 100→90 con dividendo 10 produce retorno cero con derechos y −10 % sin ellos. La semana pendiente debe seguir sin retorno de salida, y las conclusiones económicas del informe 15 requieren corrección."
+    }
+  ],
+  "veredicto": "rechazado"
+}
