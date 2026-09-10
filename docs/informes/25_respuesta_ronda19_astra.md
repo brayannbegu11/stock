@@ -17,8 +17,8 @@ P1–P8 aceptados (P3, P4, P5 y P8 sin condiciones). Condiciones atendidas: etiq
 
 ## 3. Regeneración de artefactos
 
-R19-03 cambia el JSON de la semana pendiente (costes de W37). Los dos escenarios se relanzaron con el código corregido tras esta respuesta; hasta que terminen, los JSON e informes publicados no traen los costes de W37 (todo lo demás coincide con el código). Cuando terminen, los informes 15 y 15b se regeneran con sus cabeceras desde el JSON, el sitio se reexporta y se publica de nuevo en `gh-pages`. Si esta nota sigue aquí, la regeneración está en curso o quedó pendiente; el README indica el estado.
+R19-03 cambia el JSON de la semana pendiente (costes de W37). Los dos escenarios se volvieron a ejecutar con el código corregido (JSON del 10-09 a las 08:1x): los informes 15 y 15b llevan los costes conocidos de W37 (`costs_scope = entries_only_pending_exit`), el sitio se reexportó y se publicó en `gh-pages`. Además se ejecutó por primera vez con el código vigente el escenario de historial largo (`universe_longhist_2021_2026`, informe 15c, cotizaciones desde enero de 2021, Q1 con ~250 semanas de etiqueta): Q1 −0,87 % semanal neto sin entradas fallidas, Q0 y A1 idénticos al informe 15; el sitio lo muestra como tercera pestaña.
 
 ## 4. Pendientes que siguen abiertos
 
-Extractor de readmisión para series multicaptura; adaptadores de sello y primera lista prospectiva acreditada; dividendos del universo completo; política de cierres sobrevenidos; adaptador oficial de lotes sueltos; backtest con el historial 2021-2026 (informe 15c, en ejecución). Los bloqueantes que dependen del usuario no cambian (informe 21 §4).
+Extractor de readmisión para series multicaptura; adaptadores de sello y primera lista prospectiva acreditada; dividendos del universo completo; política de cierres sobrevenidos; adaptador oficial de lotes sueltos; backtest con el historial 2021-2026 publicado (informe 15c); queda pendiente su revisión por Astra (ronda 20). Los bloqueantes que dependen del usuario no cambian (informe 21 §4).
