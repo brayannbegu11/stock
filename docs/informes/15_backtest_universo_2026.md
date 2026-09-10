@@ -12,17 +12,17 @@
 |---|---|---|---|---|
 | Media semanal bruta de las selecciones | −0,64 % | −0,65 % | +2,35 % | +1,23 % |
 | Media semanal neta de la cartera (apertura→cierre) | −0,87 % | −1,04 % | +0,35 % | — |
-| Semanas con neto > 0 | 5/16 | 6/16 | 9/16 | — |
+| Semanas con neto > 0 (de las medibles) | 5/16 | 6/16 | 9/16 | — |
 | Entradas fallidas (lote más caro que el nocional del puesto) | 9 de 80 | 16 de 80 | 4 de 80 | — |
-| Coste medio sobre lo invertido | 0,75 % | 0,75 % | 0,76 % | — |
+| Coste medio sobre importe comprado + vendido heredado | 0,73 % | 0,74 % | 0,75 % | — |
 | Patrimonio final (inicial 5.000.000 TWD) | 3.969.855 (−20,6 %) | 3.962.879 (−20,7 %) | 4.786.273 (−4,3 %) | — |
 | Exceso neto emparejado frente a A1 | +0,80 % con 7 semanas emparejables: **no estimable** | −0,34 % con 5 semanas emparejables: **no estimable** | — | — |
 
-Lectura correcta: en un mercado que subió (+1,23 % semanal el universo elegible, bruto), las dos reglas de precios lo hicieron peor que el azar, y el azar peor que el mercado. La diferencia media neta A1−Q1 (+1,39 % por semana) es mayor que el coste medio (0,75 % del importe invertido); con 17 semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
+Lectura correcta: en un mercado que subió (+1,23 % semanal el universo elegible, bruto), las dos reglas de precios lo hicieron peor que el azar, y el azar peor que el mercado. La diferencia media neta A1−Q1 (+1,39 % por semana) es mayor que el coste medio (0,74 % del importe invertido); con 17 semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
 
 1. **El dimensionado proporcional (efectivo disponible / 5 por puesto, ≈ 0,8-1 M TWD) no puede comprar un lote de 1.000 acciones de los valores más caros.** Q1 elige con frecuencia 台積電 (2330, ≈ 2.400 TWD), 鴻海, 緯穎 o 欣興: 16 entradas fallidas de 80. Hay que decidir: subir el capital, admitir lotes sueltos (零股; escenario del informe 15b) o filtrar el universo por precio. Es una decisión de protocolo y cambia el universo elegible.
 2. **La regla de emparejamiento (misma exposición ±0.10) deja fuera a la mayoría de las semanas** cuando un pronosticador falla entradas y el otro no. O se corrige el dimensionado (punto 1) o el emparejamiento debe definirse de otro modo.
-3. Los costes ilustrativos (≈ 0,76 % semanal sobre lo invertido) son del orden de las diferencias semanales entre pronosticadores.
+3. Los costes ilustrativos (≈ 0,75 % semanal sobre lo invertido) son del orden de las diferencias semanales entre pronosticadores.
 
 ## Lista de la semana en curso (corte 2026-09-06 18:00 Taipei; semana 2026-W37)
 
@@ -54,11 +54,11 @@ Periodo 2026-05-04 → 2026-09-09 · universo 1937 valores (official_daily_quote
 
 Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad de barras por política de 24 h. Nada de esto es una estimación de rendimiento futuro.
 
-| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 | Patrimonio final | Exceso neto vs A1 (IC 95 %) |
+| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 (de las medibles) | Patrimonio final | Exceso neto vs A1 (IC 95 %) |
 |---|---|---|---|---|---|---|
-| Q0 (`rule:momentum_20_sessions_v1`) | -0.87 % | -0.64 % | +0.75 % | 5/17 | 3,969,855 TWD | +0.80 % (incertidumbre no estimable: remuestreo degenerado, n=7) |
-| Q1 (`q1:tabular_ridge_lgbm_rank_v2`) | -1.04 % | -0.65 % | +0.75 % | 6/17 | 3,962,879 TWD | -0.34 % (incertidumbre no estimable: remuestreo degenerado, n=5) |
-| A1 (`rule:random_eligible_v1`) | +0.35 % | +2.35 % | +0.76 % | 9/17 | 4,786,273 TWD | — |
+| Q0 (`rule:momentum_20_sessions_v1`) | -0.87 % | -0.64 % | +0.73 % | 5/16 | 3,969,855 TWD | +0.80 % (incertidumbre no estimable: remuestreo degenerado, n=7) |
+| Q1 (`q1:tabular_ridge_lgbm_rank_v2`) | -1.04 % | -0.65 % | +0.74 % | 6/16 | 3,962,879 TWD | -0.34 % (incertidumbre no estimable: remuestreo degenerado, n=5) |
+| A1 (`rule:random_eligible_v1`) | +0.35 % | +2.35 % | +0.75 % | 9/16 | 4,786,273 TWD | — |
 
 Referencia equiponderada del universo elegible (bruta, apertura→cierre): +1.23 % semanal.
 
@@ -82,7 +82,7 @@ Referencia equiponderada del universo elegible (bruta, apertura→cierre): +1.23
 | 2026-W26 | 2243 宏旭-KY +6.0 %, 6654 天正國際 -14.4 %, 2061 風青 +12.4 %, 2492 華新科 -12.3 %, 3026 禾伸堂 -18.1 % → neto -3.53 % | 2412 中華電 -0.7 %, 2330 台積電 (sin ejecutar: notional_below_one_lot), 3045 台灣大 -0.4 %, 1210 大成 +0.9 %, 5871 中租-KY -2.2 % → neto -1.06 % | 1305 華夏 -2.6 %, 4542 科嶠 -9.3 %, 8076 伍豐 -4.9 %, 6834 天二科技 +8.5 %, 3591 艾笛森 +9.3 % → neto -0.22 % |
 | 2026-W27 | 2483 百容 +20.5 %, 2243 宏旭-KY +31.5 %, 1714 和桐 +25.0 %, 5328 華容 +15.7 %, 2061 風青 +23.3 % → neto +21.82 % | 2330 台積電 (sin ejecutar: notional_below_one_lot), 2882 國泰金 -10.9 %, 2881 富邦金 -8.3 %, 2412 中華電 -2.1 %, 6669 緯穎 (sin ejecutar: notional_below_one_lot) → neto -4.27 % | 5292 華懋 +8.1 %, 2543 皇昌 +2.8 %, 3231 緯創 +3.2 %, 4585 達明 +15.0 %, 2607 榮運 -4.9 % → neto +3.53 % |
 | 2026-W28 | 2483 百容 (salida bloqueada), 2243 宏旭-KY (salida bloqueada), 5328 華容 (salida bloqueada), 4556 旭然 (salida bloqueada), 2466 冠西電 (salida bloqueada) → sin intervalo medible (stale_price) | 2881 富邦金 (salida bloqueada), 2330 台積電 (sin ejecutar: notional_below_one_lot), 2412 中華電 (salida bloqueada), 2344 華邦電 (salida bloqueada), 5386 青雲 (salida bloqueada) → sin intervalo medible (stale_price) | 4147 中裕 (salida bloqueada), 8182 加高 (salida bloqueada), 8271 宇瞻 (salida bloqueada), 8105 凌巨 (salida bloqueada), 4967 十銓 (salida bloqueada) → sin intervalo medible (stale_price) |
-| 2026-W29 | (abstained: no_eligible_securities) | (abstained: no_eligible_securities) | (abstained: no_eligible_securities) |
+| 2026-W29 | (abstained: no_eligible_securities) → neto del libro -6.29 % (posiciones heredadas) | (abstained: no_eligible_securities) → neto del libro -2.10 % (posiciones heredadas) | (abstained: no_eligible_securities) → neto del libro -11.40 % (posiciones heredadas) |
 | 2026-W30 | 2466 冠西電 -22.1 %, 2434 統懋 -6.6 %, 3055 蔚華科 -17.1 %, 6226 光鼎 -7.4 %, 4707 磐亞 -10.9 % → neto -12.91 % | 3624 光頡 -11.2 %, 6223 旺矽 (sin ejecutar: notional_below_one_lot), 2481 強茂 -6.0 %, 3481 群創 -6.8 %, 5425 台半 -7.6 % → neto -6.65 % | 4585 達明 -1.8 %, 2458 義隆 +1.2 %, 6579 研揚 +20.7 %, 6205 詮欣 -0.2 %, 2609 陽明 +3.2 % → neto +3.31 % |
 | 2026-W31 | 4556 旭然 -40.0 %, 2434 統懋 -23.7 %, 8039 台虹 -26.2 %, 2466 冠西電 -4.1 %, 6505 台塑化 -13.3 % → neto -20.42 % | 2887 台新新光金 +4.2 %, 2330 台積電 (sin ejecutar: notional_below_one_lot), 6174 安碁 -9.8 %, 2412 中華電 +0.0 %, 6175 立敦 -13.2 % → neto -4.18 % | 1717 長興 -2.4 %, 2415 錩新 -5.5 %, 1714 和桐 -11.8 %, 4540 全球傳動 -10.2 %, 3060 銘異 -6.1 % → neto -7.83 % |
 | 2026-W32 | 6598 ABC-KY -4.3 %, 6243 迅杰 -4.2 %, 3685 元創精密 +9.5 %, 6505 台塑化 -0.6 %, 2357 華碩 +3.4 % → neto -0.04 % | 2412 中華電 -0.7 %, 1216 統一 +2.9 %, 3045 台灣大 -1.3 %, 5871 中租-KY -1.8 %, 2845 遠東銀 -1.5 % → neto -1.19 % | 6199 天品 -3.9 %, 6223 旺矽 (sin ejecutar: notional_below_one_lot), 5880 合庫金 -3.0 %, 4916 事欣科 +14.9 %, 8050 廣積 +28.3 % → neto +6.35 % |

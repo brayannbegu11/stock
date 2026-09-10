@@ -17,7 +17,7 @@
 | R16-07 | media | El patrimonio final se califica como provisional ante **cualquier** marca de la valoración final (precio obsoleto incluido). | `test_r16_07_and_user_scenario_flags_and_odd_lot_costs` |
 | R15-05 / R14-06 / R12-01 (parciales) | media | `data_version` incluye el contenido del calendario (rango y cierres efectivos, no sólo la etiqueta) y la fecha ex de cada derecho. | `test_r14_06_r15_05_forecaster_refuses_a_market_whose_content_changed_underneath` (calendario con la misma etiqueta; fecha ex) |
 
-## 2. Posiciones de Astra sobre P1..P6
+## 2. Posiciones de Astra sobre P1..P6 (y adenda P7)
 
 - **P1 (acepto).** Mantenido; la procedencia de los paquetes diarios (R16-02) corregida aparte.
 - **P2 (acepto con condiciones).** Aceptada la precisión: la lista de la semana 2026-W37 se archivó el 10-09, **después** de la entrada simulada del lunes 7-09, así que es una reconstrucción histórica, no una predicción prospectiva. El informe 15 lo dice ahora literalmente. La primera lista realmente prospectiva será la del corte del domingo 13-09, emitida antes de la apertura del lunes 14.
@@ -25,6 +25,7 @@
 - **P4 (acepto con condiciones).** Condición atendida (R16-07).
 - **P5 (rechazo).** Aceptado: faltaban el contenido del calendario y la fecha ex. Corregido; la formulación pasa a ser «ningún cambio de barras, derechos, capturas, altas/bajas o calendario efectivo pasa desapercibido».
 - **P6 (acepto con condiciones).** Condiciones atendidas: fechas y procedencia corregidas; la ausencia de derechos se declara también en etiquetas y comparaciones (informe 15 §Límites: con derechos el control 100→90 con dividendo 10 rinde 0 %; sin ellos, −10 %).
+- **P7 (adenda, ronda 17).** Propuesta formulada en el prompt de la ronda 17 y evaluada por Astra en esa ronda (aceptada con condiciones): «el escenario de lotes sueltos con 15.000 TWD por puesto y comisión mínima de 20 TWD es la aproximación declarada al capital real del usuario; sus precios son los de sesión regular y no los del mercado de lotes sueltos». Las condiciones (dimensionado con mínimo, estados por selección, aproximación declarada en el sitio) se atienden en los informes 23 y 24. Esta adenda responde a R18-10: el informe 15b remitía a esta sección sin que P7 constara en ella.
 
 ## 3. Respuestas a las preguntas del revisor
 

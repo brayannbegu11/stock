@@ -101,6 +101,7 @@ def export_scenario(sid: str, label: str, informe: str) -> dict | None:
             "exit_blocked": fs.get("exit_blocked"),
             "final_equity": _num(fs.get("final_equity")),
             "total_net_return": _num(fs.get("total_net_return")),
+            "final_valuation": {k: (fs.get("final_valuation") or {}).get(k) for k in ("equity", "flags", "valued_at", "prices_session", "unresolved")},
             "final_flags": list((fs.get("final_valuation") or {}).get("flags") or []),           # condiciones de la valoración final (R18-08)
             "final_valued_at": (fs.get("final_valuation") or {}).get("valued_at"),
             "final_prices_session": (fs.get("final_valuation") or {}).get("prices_session"),
