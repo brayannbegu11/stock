@@ -35,7 +35,7 @@
 
 - Informe 22 §2 P5 e informe 21 §3.1 decían que ningún cambio de capturas pasaba desapercibido para `data_version`. Era falso para `bar_captures` hasta R17-02. Queda corregido en el código y anotado aquí; los informes anteriores no se reescriben.
 - Informe 15b decía que la lista de la semana era la misma que en el informe 15; ya se corrigió antes de esta ronda (el universo elegible cambia con el nocional), y Astra confirma en P7 que la liquidez escala correctamente.
-- La primera versión del sitio decía «184 hallazgos corregidos», «0 bloqueantes abiertos» y «rechazadas por diseño»; ahora publica 184 hallazgos nuevos acumulados, las verificaciones registradas por Astra y los bloqueantes emitidos frente a los verificados.
+- La primera versión del sitio decía «184 hallazgos corregidos», «0 bloqueantes abiertos» y «rechazadas por diseño»; ahora publica el recuento derivado de hallazgos nuevos acumulados (`review_stats.new_total` en `docs/site/data.json`; 197 en 17 rondas al cierre de esta respuesta), las verificaciones registradas por Astra y los bloqueantes emitidos frente a los verificados.
 
 ## 4. Regeneración de artefactos
 

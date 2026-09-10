@@ -313,7 +313,7 @@ es:{
   deck:"Cada semana, tres pronosticadores eligen cinco acciones entre casi 2.000 valores de Taiwán. Nada se compra de verdad: el laboratorio simula, archiva cada paso con hora real y mide contra el azar. Esta página muestra lo que ha producido hasta ahora, con sus límites a la vista.",
   st_updated:"Actualizado", st_week:"Semana en curso", st_weeks:"Semanas simuladas", st_weeks_s:"mayo–septiembre de 2026",
   st_tests:"Pruebas automáticas", st_tests_s:"todas en verde, sin red",
-  st_rounds:"Rondas de revisión", st_rounds_s:n=>`todas con veredicto «rechazado»`, st_universe:"Universo", st_universe_s:"acciones del tablero principal",
+  st_rounds:"Rondas de revisión", st_rounds_s:(n,vc)=>verdictText(vc), st_universe:"Universo", st_universe_s:"acciones del tablero principal",
   verdict_tag:"Lectura honesta",
   verdict:(v)=>`En las ${v.w} semanas simuladas (mayo–septiembre de 2026) ninguna cartera gana dinero neta de costes en ningún escenario. En el protocolo estándar, Q0 y Q1 ${v.stdBelow?"quedan por debajo del":"no superan con claridad al"} control aleatorio (${v.q0s} y ${v.q1s} frente a ${v.a1s} semanal)${v.user?`; con tu capital, Q1 ${v.q1AboveUser?"queda ligeramente por encima del azar":"tampoco supera al azar"} (${v.q1u} frente a ${v.a1u}), pero el intervalo de confianza del exceso incluye el cero`:""}. Con tan pocas semanas y sin dividendos no se puede afirmar ni negar que tengan señal. Las listas de esta página son la salida de un experimento, no recomendaciones.`,
   wk_label:"Esta semana", wk_title:"La lista de la semana",
@@ -334,11 +334,12 @@ es:{
   scen_missing:"Este escenario todavía se está calculando; cuando termine, el exportador lo añadirá aquí.",
   scen_note:{standard:"",user:"Aproximación declarada: las ejecuciones de lotes sueltos usan los precios de la sesión regular, no los del mercado de lotes sueltos; el deslizamiento de 20 pb y la comisión mínima de 20 TWD son hipótesis, no mediciones."},
   kpi_title:(n)=>`${n} semanas operadas`,
-  kpi:{net:"Media semanal neta de la cartera (apertura → cierre)",gross:"Media semanal bruta de las 5 selecciones",costs:"Coste medio sobre lo invertido",pos:"Semanas con neto positivo",fail:"Entradas fallidas (de las intentadas)",eq:"Patrimonio final",tot:"Rentabilidad total",paired:"Exceso neto frente al azar (A1)"},
+  kpi:{net:"Media semanal neta de la cartera (apertura → cierre)",gross:"Media semanal bruta de las 5 selecciones",costs:"Coste medio sobre lo invertido",pos:"Semanas con neto positivo (de las medibles)",fail:"Entradas fallidas (de las intentadas)",eq:"Patrimonio final",tot:"Rentabilidad total",paired:"Exceso neto frente al azar (A1)"},
   ew:(x)=>`Universo elegible, bruto y sin costes: ${x} semanal de media.`,
   paired_v:(m,n,deg)=>deg?`${m} pp · ${n} semanas emparejables · no estimable`:`${m} pp · ${n} semanas`,
   paired_ci:(lo,hi)=>`IC 95 % [${lo}, ${hi}]`,
   paired_lim:(n)=>`variabilidad limitada: ${n} semanas fijas`,
+  provisional:"PROVISIONAL", valued_at:(d,s)=>`Patrimonio final valorado el ${d} con precios de la sesión ${s}.`,
   chart_title:"Patrimonio simulado, semana a semana",
   chart_cap:"Valor de cada cartera al cierre de la semana, neto de costes ilustrativos. La línea punteada es el capital inicial. Los puntos huecos son valoraciones provisionales (precios obsoletos o fracciones sin resolver), no cierres de mercado.",
   tw_legend:"Convención de Taiwán: ▲ rojo = sube, ▼ verde = baja. El signo acompaña siempre al color.",
@@ -354,7 +355,7 @@ es:{
     {when:"Domingo 18:00",h:"Corte",p:"Se cierra la ventana de información. En una corrida prospectiva sólo entra lo publicado y archivado antes de esta hora; en las reconstrucciones de esta página los datos se capturaron el 9 y 10 de septiembre de 2026, después de cada corte, y el corte sólo filtra por fecha de sesión."},
     {when:"Lunes 08:30",h:"Plazo",p:"Cada pronosticador entrega su lista de cinco valores. Se archiva con hora real y firma de contenido."},
     {when:"Lunes · apertura",h:"Entrada simulada",p:"Compra al precio de apertura, con comisión, deslizamiento y el tamaño de lote del escenario."},
-    {when:"Viernes · cierre",h:"Salida simulada",p:"Venta al último cierre de la semana, con impuesto de venta. Si no hay sesión, la salida espera a la siguiente."},
+    {when:"Viernes · cierre",h:"Salida simulada",p:"Venta al último cierre de la semana, con impuesto de venta. Si ese día no hay cotización, la salida se reintenta en el cierre semanal siguiente (no en la sesión siguiente); la política de cierres sobrevenidos sigue pendiente."},
     {when:"Después",h:"Medición",p:"Cada cartera se empareja con el control aleatorio de la misma semana y se estima el exceso con bootstrap por bloques."}
   ],
   fc_title:"Tres pronosticadores, una vara de medir",
@@ -373,13 +374,14 @@ es:{
     {b:"GPT-6 Astra (Codex CLI)",p:"Revisor independiente: intenta romper el sistema en cada ronda."},
     {b:"GPT-6 Pro",p:"Plan de investigación y protocolo de partida (v2.0, 9-09-2026)."}
   ],
-  rev_label:"Revisión adversarial", rev_title:(n)=>`${n} rondas, todas con veredicto «rechazado»`,
-  rev_sub:"Después de cada bloque de trabajo, un segundo modelo intenta romper el sistema: filtraciones temporales, paquetes alterados, sellos falsos, errores de contabilidad. Cada hallazgo recibe una corrección y una prueba con nombre, y Astra verifica esas correcciones en la ronda siguiente; algunas verificaciones quedan parciales y vuelven a la lista. Hasta ahora todas las rondas han terminado en «rechazado»: el revisor sólo aprueba cuando no queda ningún hallazgo alto o bloqueante sin corregir, y cada ronda encuentra hallazgos nuevos.",
+  rev_label:"Revisión adversarial", rev_title:(n,vc)=>`${n} rondas: ${verdictText(vc)}`,
+  rev_sub:"Después de cada bloque de trabajo, un segundo modelo intenta romper el sistema: filtraciones temporales, paquetes alterados, sellos falsos, errores de contabilidad. Cada hallazgo recibe una corrección y una prueba con nombre, y Astra verifica esas correcciones en la ronda siguiente; algunas verificaciones quedan parciales y vuelven a la lista. El revisor sólo aprueba cuando no queda ningún hallazgo alto o bloqueante sin corregir; «aprobado con cambios» significa que sólo quedan hallazgos medios o bajos. Los veredictos de cada ronda están en las tarjetas de abajo.",
   rev_chart:"Hallazgos nuevos por ronda, por severidad",
-  rev_cap:(a,b,c)=>`De ${a} hallazgos (${b} bloqueantes) en la ronda 1 a ${c} en la última, ninguno bloqueante desde la ronda 6.`,
+  rev_cap:(a,b,c,lb)=>`De ${a} hallazgos (${b} bloqueantes) en la ronda 1 a ${c} en la última; ${lb?`último bloqueante en la ronda ${lb}`:"ningún bloqueante"}.`,
+  verdict_counts:(r,ac,ap)=>[r?`${r} rechazadas`:"",ac?`${ac} aprobadas con cambios`:"",ap?`${ap} aprobadas`:""].filter(Boolean).join(" · "),
   rev_k:{total:"Hallazgos nuevos acumulados",verified:"Verificados por Astra en rondas posteriores",first:"Ronda 1",last:"Última ronda",block:"Bloqueantes emitidos · verificados"},
   sev:{bloqueante:"bloqueante",alta:"alta",media:"media",baja:"baja"},
-  verdicts:{rechazado:"rechazado",aceptado:"aceptado"},
+  verdicts:{rechazado:"rechazado",aprobado_con_cambios:"aprobado con cambios",aprobado:"aprobado",aceptado:"aceptado"},
   new_findings:(n)=>`${n} hallazgos nuevos`, response:"Respuesta del constructor", astra_out:"Informe de Astra", round_word:"Ronda",
   rev_lang:"Los resúmenes de Astra están en español, tal como los emitió.",
   data_label:"Datos", data_title:"De dónde sale todo",
@@ -430,7 +432,7 @@ en:{
   deck:"Every week, three forecasters pick five stocks out of nearly 2,000 Taiwanese securities. Nothing is actually bought: the lab simulates, archives every step with a real timestamp and measures against chance. This page shows what it has produced so far, limits included.",
   st_updated:"Updated", st_week:"Current week", st_weeks:"Weeks simulated", st_weeks_s:"May–September 2026",
   st_tests:"Automated tests", st_tests_s:"all passing, no network",
-  st_rounds:"Review rounds", st_rounds_s:n=>`all with a “rejected” verdict`, st_universe:"Universe", st_universe_s:"main-board common stocks",
+  st_rounds:"Review rounds", st_rounds_s:(n,vc)=>verdictText(vc), st_universe:"Universe", st_universe_s:"main-board common stocks",
   verdict_tag:"Honest reading",
   verdict:(v)=>`Over the ${v.w} simulated weeks (May–September 2026) no portfolio makes money net of costs in either scenario. Under the standard protocol, Q0 and Q1 ${v.stdBelow?"end below":"do not clearly beat"} the random control (${v.q0s} and ${v.q1s} vs. ${v.a1s} weekly)${v.user?`; with your capital, Q1 ${v.q1AboveUser?"ends slightly above chance":"does not beat chance either"} (${v.q1u} vs. ${v.a1u}), but the confidence interval of the excess includes zero`:""}. With so few weeks and no dividends we can neither claim nor rule out that they carry signal. The lists on this page are the output of an experiment, not recommendations.`,
   wk_label:"This week", wk_title:"The week's list",
@@ -451,11 +453,12 @@ en:{
   scen_missing:"This scenario is still being computed; the exporter will add it here when it finishes.",
   scen_note:{standard:"",user:"Declared approximation: odd-lot executions use regular-session prices, not odd-lot market prices; the 20 bp slippage and the NT$20 minimum commission are assumptions, not measurements."},
   kpi_title:(n)=>`${n} weeks traded`,
-  kpi:{net:"Mean weekly net portfolio return (open → close)",gross:"Mean weekly gross return of the 5 picks",costs:"Mean cost over invested amount",pos:"Weeks with positive net",fail:"Failed entries (of attempted)",eq:"Final equity",tot:"Total return",paired:"Net excess vs. random (A1)"},
+  kpi:{net:"Mean weekly net portfolio return (open → close)",gross:"Mean weekly gross return of the 5 picks",costs:"Mean cost over invested amount",pos:"Weeks with positive net (of measurable)",fail:"Failed entries (of attempted)",eq:"Final equity",tot:"Total return",paired:"Net excess vs. random (A1)"},
   ew:(x)=>`Eligible universe, gross and before costs: ${x} weekly on average.`,
   paired_v:(m,n,deg)=>deg?`${m} pp · ${n} pairable weeks · not estimable`:`${m} pp · ${n} weeks`,
   paired_ci:(lo,hi)=>`95% CI [${lo}, ${hi}]`,
   paired_lim:(n)=>`limited variability: ${n} fixed weeks`,
+  provisional:"PROVISIONAL", valued_at:(d,s)=>`Final equity valued on ${d} with prices of session ${s}.`,
   chart_title:"Simulated equity, week by week",
   chart_cap:"Value of each portfolio at the week's close, net of illustrative costs. The dotted line is the starting capital. Hollow points are provisional valuations (stale prices or unresolved fractions), not market closes.",
   tw_legend:"Taiwan convention: ▲ red = up, ▼ green = down. The sign always accompanies the colour.",
@@ -471,7 +474,7 @@ en:{
     {when:"Sunday 18:00",h:"Cutoff",p:"The information window closes. In a prospective run only what was published and archived before this time enters; in the reconstructions on this page the data were captured on 9–10 September 2026, after every cutoff, and the cutoff only filters by session date."},
     {when:"Monday 08:30",h:"Deadline",p:"Each forecaster delivers its five-stock list. It is archived with a real timestamp and a content signature."},
     {when:"Monday · open",h:"Simulated entry",p:"Buy at the opening price, with commission, slippage and the scenario's lot size."},
-    {when:"Friday · close",h:"Simulated exit",p:"Sell at the last close of the week, with sales tax. If there is no session, the exit waits for the next one."},
+    {when:"Friday · close",h:"Simulated exit",p:"Sell at the last close of the week, with sales tax. If there is no quote that day, the exit is retried at the next weekly close (not the next session); the policy for unscheduled closures is still pending."},
     {when:"Afterwards",h:"Measurement",p:"Each portfolio is paired with the same week's random control and the excess is estimated with block bootstrap."}
   ],
   fc_title:"Three forecasters, one yardstick",
@@ -490,13 +493,14 @@ en:{
     {b:"GPT-6 Astra (Codex CLI)",p:"Independent reviewer: tries to break the system in every round."},
     {b:"GPT-6 Pro",p:"Starting research plan and protocol (v2.0, 9 Sep 2026)."}
   ],
-  rev_label:"Adversarial review", rev_title:(n)=>`${n} rounds, all with a “rejected” verdict`,
-  rev_sub:"After each block of work, a second model tries to break the system: temporal leaks, tampered packets, forged seals, accounting errors. Every finding receives a fix and a named test, and Astra verifies those fixes in the next round; some verifications remain partial and return to the list. So far every round has ended in “rejected”: the reviewer only approves when no high or blocking finding is left open, and every round finds new ones.",
+  rev_label:"Adversarial review", rev_title:(n,vc)=>`${n} rounds: ${verdictText(vc)}`,
+  rev_sub:"After each block of work, a second model tries to break the system: temporal leaks, tampered packets, forged seals, accounting errors. Every finding receives a fix and a named test, and Astra verifies those fixes in the next round; some verifications remain partial and return to the list. The reviewer only approves when no high or blocking finding is left open; “approved with changes” means only medium or low findings remain. Each round's verdict is in the cards below.",
   rev_chart:"New findings per round, by severity",
-  rev_cap:(a,b,c)=>`From ${a} findings (${b} blocking) in round 1 to ${c} in the latest, none blocking since round 6.`,
+  rev_cap:(a,b,c,lb)=>`From ${a} findings (${b} blocking) in round 1 to ${c} in the latest; ${lb?`last blocking finding in round ${lb}`:"no blocking findings"}.`,
+  verdict_counts:(r,ac,ap)=>[r?`${r} rejected`:"",ac?`${ac} approved with changes`:"",ap?`${ap} approved`:""].filter(Boolean).join(" · "),
   rev_k:{total:"New findings, cumulative",verified:"Verified by Astra in later rounds",first:"Round 1",last:"Latest round",block:"Blocking issued · verified"},
   sev:{bloqueante:"blocking",alta:"high",media:"medium",baja:"low"},
-  verdicts:{rechazado:"rejected",aceptado:"accepted"},
+  verdicts:{rechazado:"rejected",aprobado_con_cambios:"approved with changes",aprobado:"approved",aceptado:"accepted"},
   new_findings:(n)=>`${n} new findings`, response:"Builder's response", astra_out:"Astra's report", round_word:"Round",
   rev_lang:"Astra's summaries are shown in Spanish, as issued.",
   data_label:"Data", data_title:"Where everything comes from",
@@ -547,7 +551,7 @@ zh:{
   deck:"每週，三個預測器從近 2,000 檔台股中各挑出五檔。沒有任何真實買賣：實驗室只做模擬，每一步都以真實時間存檔，並與隨機對照比較。本頁呈現至今的成果，也把限制擺在前面。",
   st_updated:"更新時間", st_week:"本週", st_weeks:"模擬週數", st_weeks_s:"2026 年 5 月至 9 月",
   st_tests:"自動化測試", st_tests_s:"全數通過，離線執行",
-  st_rounds:"審查回合", st_rounds_s:n=>`全部裁定為「駁回」`, st_universe:"股票池", st_universe_s:"主板普通股",
+  st_rounds:"審查回合", st_rounds_s:(n,vc)=>verdictText(vc), st_universe:"股票池", st_universe_s:"主板普通股",
   verdict_tag:"誠實解讀",
   verdict:(v)=>`在模擬的 ${v.w} 週（2026 年 5 月至 9 月）中，兩種情境下沒有任何投資組合在扣除成本後獲利。標準協定下，Q0 與 Q1 ${v.stdBelow?"都不如":"未明顯勝過"}隨機對照（每週 ${v.q0s}、${v.q1s}，對照 ${v.a1s}）${v.user?`；在你的資金情境下，Q1 ${v.q1AboveUser?"略高於隨機":"同樣未勝過隨機"}（${v.q1u} 對 ${v.a1u}），但超額報酬的信賴區間包含零`:""}。週數太少、又沒有股利資料，無法斷言它們有或沒有預測力。本頁的名單是實驗的輸出，不是投資建議。`,
   wk_label:"本週", wk_title:"本週名單",
@@ -568,11 +572,12 @@ zh:{
   scen_missing:"此情境仍在計算中；完成後匯出程式會將它加到這裡。",
   scen_note:{standard:"",user:"已聲明的近似：零股交易以一般盤價格成交，而非零股市場價格；20 個基點的滑價與 NT$20 的最低手續費皆為假設，非實測。"},
   kpi_title:(n)=>`已交易 ${n} 週`,
-  kpi:{net:"投資組合每週平均淨報酬（開盤 → 收盤）",gross:"5 檔選股每週平均毛報酬",costs:"平均成本佔投入金額比例",pos:"淨報酬為正的週數",fail:"進場失敗（佔嘗試次數）",eq:"期末權益",tot:"總報酬",paired:"相對隨機對照（A1）的淨超額"},
+  kpi:{net:"投資組合每週平均淨報酬（開盤 → 收盤）",gross:"5 檔選股每週平均毛報酬",costs:"平均成本佔投入金額比例",pos:"淨報酬為正的週數（佔可衡量週數）",fail:"進場失敗（佔嘗試次數）",eq:"期末權益",tot:"總報酬",paired:"相對隨機對照（A1）的淨超額"},
   ew:(x)=>`可交易股票池，毛報酬且未計成本：平均每週 ${x}。`,
   paired_v:(m,n,deg)=>deg?`${m} 個百分點 · 可配對 ${n} 週 · 無法估計`:`${m} 個百分點 · ${n} 週`,
   paired_ci:(lo,hi)=>`95% 信賴區間 [${lo}, ${hi}]`,
   paired_lim:(n)=>`變異有限：${n} 週固定`,
+  provisional:"暫定", valued_at:(d,s)=>`期末權益於 ${d} 以 ${s} 交易日價格估值。`,
   chart_title:"逐週模擬權益",
   chart_cap:"各投資組合在當週收盤時的價值，已扣除示意性成本。虛線為起始資金。空心點為暫定估值（價格過時或零碎股未結清），並非市場收盤值。",
   tw_legend:"台灣慣例：▲ 紅色 = 上漲，▼ 綠色 = 下跌。正負號一律與顏色並列。",
@@ -588,7 +593,7 @@ zh:{
     {when:"週日 18:00",h:"截止",p:"資訊窗口關閉。在前瞻性執行中，只納入此時間之前已公開並存檔的資料；本頁的重建結果所用資料是在 2026 年 9 月 9 至 10 日（每個截止之後）擷取的，截止只依交易日期篩選。"},
     {when:"週一 08:30",h:"期限",p:"每個預測器交出五檔名單，以真實時間戳與內容簽章存檔。"},
     {when:"週一 · 開盤",h:"模擬進場",p:"以開盤價買進，計入手續費、滑價，以及該情境的交易單位。"},
-    {when:"週五 · 收盤",h:"模擬出場",p:"以當週最後收盤價賣出，計入證交稅。若當日無交易，出場順延至下一個交易日。"},
+    {when:"週五 · 收盤",h:"模擬出場",p:"以當週最後收盤價賣出，計入證交稅。若當日沒有報價，出場會在下一個週收盤時重試（而非下一個交易日）；臨時休市的處理政策尚待制定。"},
     {when:"事後",h:"衡量",p:"每個投資組合與同一週的隨機對照配對，並以區塊拔靴法估計超額報酬。"}
   ],
   fc_title:"三個預測器，一把量尺",
@@ -607,13 +612,14 @@ zh:{
     {b:"GPT-6 Astra（Codex CLI）",p:"獨立審查者：每一回合都試圖攻破系統。"},
     {b:"GPT-6 Pro",p:"起始的研究計畫與協定（v2.0，2026-09-09）。"}
   ],
-  rev_label:"對抗式審查", rev_title:(n)=>`${n} 回合，全部裁定為「駁回」`,
-  rev_sub:"每完成一段工作，就由另一個模型嘗試攻破系統：時間洩漏、竄改封包、偽造印章、帳務錯誤。每個缺陷都會得到修正與一個具名測試，Astra 會在下一回合驗證這些修正；部分驗證仍為部分通過，會回到清單中。至今每一回合都以「駁回」作結：審查者只有在沒有任何高或阻斷級缺陷未修正時才會通過，而每一回合都會發現新缺陷。",
+  rev_label:"對抗式審查", rev_title:(n,vc)=>`${n} 回合：${verdictText(vc)}`,
+  rev_sub:"每完成一段工作，就由另一個模型嘗試攻破系統：時間洩漏、竄改封包、偽造印章、帳務錯誤。每個缺陷都會得到修正與一個具名測試，Astra 會在下一回合驗證這些修正；部分驗證仍為部分通過，會回到清單中。審查者只有在沒有任何高或阻斷級缺陷未修正時才會通過；「有條件通過」表示只剩中或低嚴重度的缺陷。各回合的裁定見下方卡片。",
   rev_chart:"各回合新缺陷數，依嚴重度",
-  rev_cap:(a,b,c)=>`從第 1 回合的 ${a} 個缺陷（${b} 個阻斷級）到最新回合的 ${c} 個；自第 6 回合起沒有阻斷級缺陷。`,
+  rev_cap:(a,b,c,lb)=>`從第 1 回合的 ${a} 個缺陷（${b} 個阻斷級）到最新回合的 ${c} 個；${lb?`最後一個阻斷級缺陷出現在第 ${lb} 回合`:"沒有阻斷級缺陷"}。`,
+  verdict_counts:(r,ac,ap)=>[r?`${r} 回駁回`:"",ac?`${ac} 回有條件通過`:"",ap?`${ap} 回通過`:""].filter(Boolean).join(" · "),
   rev_k:{total:"累計新缺陷",verified:"Astra 於後續回合驗證",first:"第 1 回合",last:"最新回合",block:"阻斷級：發出 · 已驗證"},
   sev:{bloqueante:"阻斷",alta:"高",media:"中",baja:"低"},
-  verdicts:{rechazado:"駁回",aceptado:"接受"},
+  verdicts:{rechazado:"駁回",aprobado_con_cambios:"有條件通過",aprobado:"通過",aceptado:"接受"},
   new_findings:(n)=>`${n} 個新缺陷`, response:"建構者回覆", astra_out:"Astra 報告", round_word:"回合",
   rev_lang:"Astra 的摘要以原文（西班牙文）呈現。",
   data_label:"資料", data_title:"一切從何而來",
@@ -666,6 +672,9 @@ function detectLang(){
   if(n.startsWith("zh")) return "zh"; if(n.startsWith("en")) return "en"; return "es";
 }
 function t(k){ const v=S[state.lang][k]; return v===undefined?S.es[k]:v; }
+function verdictCounts(rounds){ const c={rechazado:0,aprobado_con_cambios:0,aprobado:0}; for(const r of rounds||[]){ const v=r.verdict in c?r.verdict:(r.verdict==="aceptado"?"aprobado":"rechazado"); c[v]++; } return c; }
+function verdictText(vc){ vc=vc||{}; return t("verdict_counts")(vc.rechazado||0,vc.aprobado_con_cambios||0,vc.aprobado||0); }
+function lastBlockingRound(rounds){ let lb=0; for(const r of rounds||[]){ if((r.severity||{}).bloqueante) lb=r.round; } return lb; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 /* ---------- formatting ---------- */
@@ -733,7 +742,7 @@ function hero(base,rounds){
     {k:t("st_weeks"), v:nf(weeks,0), s:t("st_weeks_s")},
     {k:t("st_universe"), v:base?nf(base.universe_size,0):"—", s:t("st_universe_s")},
     {k:t("st_tests"), v:DATA.tests!=null?nf(DATA.tests,0):"—", s:t("st_tests_s")},
-    {k:t("st_rounds"), v:nf(rounds.length,0), s:t("st_rounds_s")(rounds.length)},
+    {k:t("st_rounds"), v:nf(rounds.length,0), s:t("st_rounds_s")(rounds.length,verdictCounts(rounds))},
     {k:t("st_updated"), v:fmtDate(DATA.generated_at,{day:"numeric",month:"short"}), s:fmtDate(DATA.generated_at,{hour:"2-digit",minute:"2-digit",hour12:false})+" Taipei"}
   ];
   const std = scenario("standard"), usr = scenario("user");
@@ -795,15 +804,15 @@ function kpiAndChart(sc){
     `<tr><td>${esc(K.net)}</td>${FC.map(f=>F[f]?signed(F[f].mean_weekly_net):"<td class=num>—</td>").join("")}</tr>`,
     `<tr><td>${esc(K.gross)}</td>${FC.map(f=>F[f]?signed(F[f].mean_weekly_gross_picks):"<td class=num>—</td>").join("")}</tr>`,
     row(K.costs,x=>pct(x.mean_costs_over_invested,2,false)),
-    row(K.pos,x=>`${x.weeks_positive}/${x.weeks_selected}`),
+    row(K.pos,x=>`${x.weeks_positive}/${x.weeks_measured!=null?x.weeks_measured:x.weeks_selected}`),
     row(K.fail,x=>`${x.entry_failures}/${(x.weeks_selected||0)*(sc.assumptions.slots||5)}`),
-    row(K.eq,x=>twd(x.final_equity)),
+    `<tr><td>${esc(K.eq)}</td>${FC.map(f=>{const x=F[f]; if(!x) return "<td class=num>—</td>"; const fl=x.final_flags||[]; return `<td class="num${fl.length?" wrap":""}">${esc(twd(x.final_equity))}${fl.length?`<br><span class="chip warn" title="${esc(fl.join(", "))}">${esc(t("provisional"))}</span>`:""}</td>`;}).join("")}</tr>`,
     `<tr><td>${esc(K.tot)}</td>${FC.map(f=>F[f]?signed(F[f].total_net_return):"<td class=num>—</td>").join("")}</tr>`,
     `<tr><td>${esc(K.paired)}</td>${FC.map(f=>{const x=F[f]; if(!x) return "<td class=num>—</td>"; const p=x.paired; if(!p||f===sc.assumptions.baseline) return `<td class="num flat">—</td>`; const ci=(p.ci95?`<br><span class="chip">${esc(t("paired_ci")(pp(p.ci95[0]),pp(p.ci95[1])))}</span>`:"")+(p.variability_limited?` <span class="chip warn">${esc(t("paired_lim")(p.n_fixed_observations))}</span>`:""); return `<td class="num wrap ${p.degenerate?"flat":cls(p.mean)}">${esc(t("paired_v")(pp(p.mean),p.n_used,p.degenerate))}${ci}</td>`;}).join("")}</tr>`
   ].join("");
   return `<div class="resgrid">
     <div class="card"><h3>${esc(t("kpi_title")(sc.weeks_operated))}</h3><div class="scroll"><table class="kpi"><colgroup><col class="lbl"><col><col><col></colgroup><thead><tr><th></th>${FC.map(f=>`<th class="num"><span class="chip ${f}">${f}</span></th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="cap">${esc(t("ew")(pct(sc.universe_ew_mean_weekly_gross)))}</p><p class="cap">${esc(t("tw_legend"))}</p></div>
+      <p class="cap">${esc(t("ew")(pct(sc.universe_ew_mean_weekly_gross)))}</p>${(()=>{const q=F.Q0||F.A1||F.Q1; return q&&q.final_valued_at?`<p class="cap">${esc(t("valued_at")(fmtDay(q.final_valued_at),fmtPlainDate(q.final_prices_session)))}</p>`:"";})()}<p class="cap">${esc(t("tw_legend"))}</p></div>
     <div class="card"><h3>${esc(t("chart_title"))}</h3>${equityChart(sc)}<div class="legend">${FC.map(f=>`<span><i style="background:var(--${f.toLowerCase()})"></i>${esc(t("fc")[f])}</span>`).join("")}</div><p class="cap">${esc(t("chart_cap"))}</p></div>
   </div>`;
 }
@@ -887,11 +896,11 @@ function reviewSection(rounds){
     </div></div>`;
   }).join("");
   return `<section class="block" id="revision"><div class="wrap">
-    ${secHead("rev_label",esc(t("rev_title")(rounds.length)),esc(t("rev_sub")))}
+    ${secHead("rev_label",esc(t("rev_title")(rounds.length,verdictCounts(rounds))),esc(t("rev_sub")))}
     <div class="revgrid">
-      <div class="card"><h3>${esc(t("rev_chart"))}</h3>${findingsChart(rounds)}<div class="sevlegend">${SEV.map(s=>`<span><i class="sev-${s}"></i>${esc(t("sev")[s])}</span>`).join("")}</div><p class="cap">${esc(t("rev_cap")(first.findings_new,first.severity.bloqueante||0,last.findings_new))}</p></div>
+      <div class="card"><h3>${esc(t("rev_chart"))}</h3>${findingsChart(rounds)}<div class="sevlegend">${SEV.map(s=>`<span><i class="sev-${s}"></i>${esc(t("sev")[s])}</span>`).join("")}</div><p class="cap">${esc(t("rev_cap")(first.findings_new,first.severity.bloqueante||0,last.findings_new,lastBlockingRound(rounds)))}</p></div>
       <div class="card side">
-        <div><div class="k">${esc(K.total)}</div><div class="v">${nf(RS.new_total!=null?RS.new_total:total,0)}</div><div class="s">${esc(t("st_rounds_s")(rounds.length))}</div></div>
+        <div><div class="k">${esc(K.total)}</div><div class="v">${nf(RS.new_total!=null?RS.new_total:total,0)}</div><div class="s">${esc(t("st_rounds_s")(rounds.length,verdictCounts(rounds)))}</div></div>
         <div><div class="k">${esc(K.verified)}</div><div class="v">${RS.verified_total!=null?nf(RS.verified_total,0):"—"}</div><div class="s">${RS.unverified_ids?esc(RS.unverified_ids.slice(0,6).join(" · "))+(RS.unverified_ids.length>6?" …":""):""}</div></div>
         <div><div class="k">${esc(K.block)}</div><div class="v">${RS.blocking_new!=null?`${nf(RS.blocking_new,0)} · ${nf(RS.blocking_verified,0)}`:"—"}</div><div class="s">${esc(t("sev").bloqueante)}</div></div>
         <div><div class="k">${esc(K.last)}</div><div class="v">${last.findings_new}</div><div class="s">${(last.severity||{}).alta||0} ${esc(t("sev").alta)} · ${(last.severity||{}).media||0} ${esc(t("sev").media)}</div></div>

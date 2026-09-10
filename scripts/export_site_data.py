@@ -101,6 +101,10 @@ def export_scenario(sid: str, label: str, informe: str) -> dict | None:
             "exit_blocked": fs.get("exit_blocked"),
             "final_equity": _num(fs.get("final_equity")),
             "total_net_return": _num(fs.get("total_net_return")),
+            "final_flags": list((fs.get("final_valuation") or {}).get("flags") or []),           # condiciones de la valoración final (R18-08)
+            "final_valued_at": (fs.get("final_valuation") or {}).get("valued_at"),
+            "final_prices_session": (fs.get("final_valuation") or {}).get("prices_session"),
+            "weeks_measured": fs.get("weeks_measured"),
             "paired": paired_summary(pe) if pe else None,
             "unpaired_reasons": fs.get("unpaired_reasons") or {},
         }
@@ -216,9 +220,12 @@ def export_rounds() -> list[dict]:
         n = int(m.group(1))
         d = json.loads(p.read_text(encoding="utf-8"))
         new = [h for h in d.get("hallazgos", []) if re.fullmatch(rf"R0*{n}-\d+", str(h.get("id", "")))]
-        verifications = [{"id": str(h.get("id", "")).split("/", 1)[0], "state": h.get("estado_verificacion"), "severity": h.get("severidad"),
-                          "claim": h.get("afirmacion")}
-                         for h in d.get("hallazgos", []) if "/verificacion" in str(h.get("id", ""))]
+        verifications = []
+        for h in d.get("hallazgos", []):
+            mv = re.fullmatch(r"(R\d+-\d+)/verificacion", str(h.get("id", "")))      # identificador completo (R18-03)
+            if mv:
+                verifications.append({"id": mv.group(1), "state": h.get("estado_verificacion"), "severity": h.get("severidad"),
+                                      "claim": h.get("afirmacion")})
         sev: dict[str, int] = {}
         for h in new:
             k = str(h.get("severidad") or "sin_severidad")
@@ -260,13 +267,16 @@ def review_stats(rounds: list[dict]) -> dict:
     Una verificación cuenta como tal si Astra la registró con estado ``reproducido`` en una ronda posterior; el texto de la
     verificación puede declararla parcial, y eso no se interpreta aquí: se publica el recuento y el enlace al JSON."""
     new_by_id: dict[str, str] = {}
+    emitted_round: dict[str, int] = {}
     for r in rounds:
         for h in r["new_findings"]:
             new_by_id[h["id"]] = h.get("severity") or ""
+            emitted_round[h["id"]] = r["round"]
     verified: set[str] = set()
     for r in rounds:
         for v in r["verifications"]:
-            if v["id"] in new_by_id and v["state"] == "reproducido":
+            # sólo cuenta una verificación de un hallazgo existente, en una ronda posterior a su emisión (R18-03)
+            if v["id"] in new_by_id and v["state"] == "reproducido" and r["round"] > emitted_round[v["id"]]:
                 verified.add(v["id"])
     blocking = {i for i, s in new_by_id.items() if s == "bloqueante"}
     return {"new_total": len(new_by_id), "verified_total": len(verified), "blocking_new": len(blocking),

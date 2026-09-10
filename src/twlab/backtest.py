@@ -122,6 +122,10 @@ class ManifestInconsistent(ValueError):
     pass
 
 
+# Fuentes por fecha: cada sesión de una serie debe estar respaldada por su propia captura (R18-01)
+SESSION_CAPTURE_SOURCES = ("twse", "tpex")
+
+
 def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar, *, default_market: str = "TWSE",
                 par_value: D = D(10)) -> MarketData:
     """Carga barras y dividendos desde las capturas listadas en un manifiesto (muestra o universo).
@@ -655,7 +659,12 @@ class Runner:
             m = manifests.setdefault(s.source_id, {})
             for d, cap in s.bar_captures.items():
                 if taipei(d).replace(hour=13, minute=30) + finmind.PRICE_AVAILABILITY_LAG <= cutoff:
-                    m[d.isoformat()] = cap
+                    key = d.isoformat()
+                    if key in m and m[key] != cap:
+                        # dos series de la misma fuente no pueden referenciar capturas distintas de una misma sesión (R18-02):
+                        # el manifiesto común no sobrescribe; el conflicto detiene la construcción del paquete
+                        raise ManifestInconsistent(f"conflicting session captures for {s.source_id} {key}: {m[key]} vs {cap} ({s.symbol})")
+                    m[key] = cap
         for src, entries in manifests.items():
             if not entries:
                 continue
@@ -674,8 +683,9 @@ class Runner:
             if not known:
                 continue
             window = known[-130:]
-            if s.bar_captures:
-                # toda sesión de la serie debe estar respaldada por una captura enumerada (R17-03); si no, la serie no se admite
+            if s.bar_captures or s.source_id in SESSION_CAPTURE_SOURCES:
+                # toda sesión de la serie debe estar respaldada por una captura enumerada (R17-03); un mapa vacío en una
+                # fuente por fecha no convierte la serie en una de captura única (R18-01): tampoco se admite
                 missing = [b.session for b in window if b.session not in s.bar_captures]
                 if missing:
                     provenance_rejected.append((sec_id, s.symbol, len(missing)))
@@ -836,8 +846,10 @@ class Runner:
                            "stale_prices": stale0, "note": "entrada ejecutada; salida pendiente"})
                 continue
             self.apply_actions(name, exit_s)
+            prior = [(wid, ss) for wid, ss in self.open_slots[name] if wid != plan.week_id]
             for wid, ss in self.open_slots[name]:
                 exit_basket(lg, ss, close_prices=close_prices, at=plan.exit_at, week_id=wid)
+            inherited_fills = [s.exit for _, ss in prior for s in ss if s.exit is not None and s.exit.at == plan.exit_at]
             self.open_slots[name] = [(wid, ss) for wid, ss in self.open_slots[name]
                                      if any(s.status in ("filled", "exit_blocked") or (s.status == "exited" and not s.liquidated) for s in ss)]
             close_marks, stale1 = self.marks(exit_s, lg, "close")
@@ -853,7 +865,12 @@ class Runner:
             interval_return = (equity_end / equity_start - 1) if measurable else None
             chain_return = (equity_end / self.prev_equity[name] - 1) if equity_end is not None and self.prev_equity[name] else None
             invested = sum((s.entry.gross for s in slots if s.entry is not None), D(0))
-            costs_twd = _week_costs(slots)
+            # costes de la semana: cesta nueva + ventas heredadas ejecutadas esta semana (R18-05); el denominador es el
+            # importe bruto comprado más el vendido de cestas anteriores, para que una semana sin compras no quede sin tasa
+            inherited_costs = sum((f.commission + f.tax + f.slippage_cost for f in inherited_fills), D(0))
+            inherited_sales_gross = sum((f.gross for f in inherited_fills), D(0))
+            costs_twd = _week_costs(slots) + inherited_costs
+            costs_denominator = invested + inherited_sales_gross
             # una selección sólo pierde su rentabilidad bruta si sufrió un derecho ambiguo mientras la tenía (R14-05, R15-06):
             # un lote nuevo del mismo valor, comprado después de la fecha ex, conserva su retorno bruto
             def _hit(slot) -> bool:
@@ -877,7 +894,8 @@ class Runner:
                        "portfolio_net_return_open_close": float(interval_return) if interval_return is not None else None,
                        "portfolio_net_return_week_over_week": float(chain_return) if chain_return is not None else None,
                        "exposure_at_open": float(exposure), "costs_twd": float(costs_twd),
-                       "costs_over_invested": float(costs_twd / invested) if invested else None,
+                       "inherited_exit_costs_twd": float(inherited_costs), "costs_denominator_twd": float(costs_denominator),
+                       "costs_over_invested": float(costs_twd / costs_denominator) if costs_denominator else None,
                        "equity_open": float(equity_start) if equity_start is not None else None,
                        "equity_end": float(equity_end) if equity_end is not None else None, "flags": list(dict.fromkeys(flags))[:8],
                        "stale_prices": list(dict.fromkeys(stale0 + stale1)), "baskets_in_follow_up": len(self.open_slots[name])})
@@ -965,6 +983,7 @@ class Runner:
                 "mean_weekly_gross_pick_return": self._mean(fw, lambda r: r.get("mean_gross_pick_return")),
                 "mean_costs_over_invested": self._mean(fw, lambda r: r.get("costs_over_invested")),
                 "weeks_positive": sum(1 for r in fw if (r.get("portfolio_net_return_open_close") or 0) > 0),
+                "weeks_measured": sum(1 for r in fw if r.get("portfolio_net_return_open_close") is not None),   # denominador (R18-07)
                 "weeks_selected": sum(1 for r in fw if r.get("forecast_status") == "selected"),
                 "entry_failures": sum(r.get("failed", 0) for r in fw), "exit_blocked": sum(r.get("exit_blocked", 0) for r in fw),
                 "final_equity": final[name]["equity"],
@@ -1011,7 +1030,7 @@ def markdown_report(result: dict, *, title: str) -> str:
              f"{len(s['weeks_pending_outcome'])} pendientes de desenlace.", "",
              "Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad de barras por política de 24 h. "
              "Nada de esto es una estimación de rendimiento futuro.", "",
-             "| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 | Patrimonio final | Exceso neto vs " + s["assumptions"]["baseline"] + " (IC 95 %) |",
+             "| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 (de las medibles) | Patrimonio final | Exceso neto vs " + s["assumptions"]["baseline"] + " (IC 95 %) |",
              "|---|---|---|---|---|---|---|"]
     fmt = lambda x: "—" if x is None else f"{x*100:+.2f} %"
     for name, e in s["forecasters"].items():
@@ -1037,7 +1056,7 @@ def markdown_report(result: dict, *, title: str) -> str:
         else:
             equity_txt = f"{e['final_equity']:,.0f} TWD"
         lines.append(f"| {name} (`{e['model_id']}`) | {fmt(e['mean_weekly_net_return_open_close'])} | {fmt(e['mean_weekly_gross_pick_return'])} | "
-                     f"{fmt(e['mean_costs_over_invested'])} | {e['weeks_positive']}/{s['weeks_operated']} | {equity_txt} | {pe_txt} |")
+                     f"{fmt(e['mean_costs_over_invested'])} | {e['weeks_positive']}/{e.get('weeks_measured', s['weeks_operated'])} | {equity_txt} | {pe_txt} |")
     ew = s["universe_ew"]["mean_weekly_gross_open_close"]
     lines += ["", f"Referencia equiponderada del universo elegible (bruta, apertura→cierre): {ew*100:+.2f} % semanal." if ew is not None else "", ""]
     warns = s.get("market_warnings", [])
@@ -1062,7 +1081,9 @@ def markdown_report(result: dict, *, title: str) -> str:
             fr = w["forecasters"].get(n, {})
             picks = fr.get("picks", [])
             if not picks:
-                cells.append(f"({fr.get('forecast_status', '—')}: {fr.get('status_reason') or ''})".strip())
+                net0 = fr.get("portfolio_net_return_open_close")
+                tail0 = f" → neto del libro {net0*100:+.2f} % (posiciones heredadas)" if net0 is not None else ""
+                cells.append(f"({fr.get('forecast_status', '—')}: {fr.get('status_reason') or ''}){tail0}".strip())
                 continue
             def _pick(p):
                 s = f"{p['symbol']} {p['name']}"

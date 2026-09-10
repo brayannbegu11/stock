@@ -1106,3 +1106,20 @@ def test_r17_01_slot_sizing_includes_minimum_commission_and_ledger_rounding():
     n = affordable_shares(lg2, price=D("939"), budget=D(1_000_000))
     assert n == 1000 and entry_cost(lg2, price=D("939"), shares=n) <= D(1_000_000)
     assert affordable_shares(lg2, price=D("2400"), budget=D(1_000_000)) == 0
+
+
+def test_r18_05_inherited_exit_fills_carry_their_costs_into_the_week():
+    """R18-05: una venta de una cesta anterior ejecutada esta semana suma sus costes al agregado semanal del libro."""
+    from twlab.simulation import enter_basket, exit_basket
+    costs = CostModel(commission_per_side=D("0.001425"), sell_tax=D("0.003"), slippage_bps_per_side=20, min_commission_twd=D(20))
+    lg = PaperLedger(ledger_id="r18", initial_cash=D(20000), cost_model=costs, lot_size=1)
+    mon = taipei(date(2026, 5, 4), time(9, 0)); fri = taipei(date(2026, 5, 8), time(13, 30)); fri2 = taipei(date(2026, 5, 15), time(13, 30))
+    slots = enter_basket(lg, picks=["A"], slots=1, notional_per_slot=D(10000), open_prices={"A": D(100)}, at=mon, week_id="w1")
+    lg.mark_suspended("A", at=fri)
+    exit_basket(lg, slots, close_prices={"A": D(100)}, at=fri, week_id="w1")
+    assert slots[0].status == "exit_blocked" and slots[0].exit is None
+    lg.mark_resumed("A", at=fri2) if hasattr(lg, "mark_resumed") else lg.positions["A"].__setattr__("status", "open")
+    exit_basket(lg, slots, close_prices={"A": D(100)}, at=fri2, week_id="w1")
+    f = slots[0].exit
+    assert f is not None and f.at == fri2 and f.side == "sell"
+    assert f.commission + f.tax + f.slippage_cost >= D(20) + D("0.003") * f.gross

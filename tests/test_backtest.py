@@ -603,3 +603,45 @@ def test_r17_10_pending_week_records_the_known_entry_status_of_each_pick(tmp_pat
     assert all(p.get("entry_status") in ("filled", "entry_failed") for p in fr["picks"])
     assert sum(p["entry_status"] == "filled" for p in fr["picks"]) == fr["filled"]
     assert sum(p["entry_status"] == "entry_failed" for p in fr["picks"]) == fr["failed"]
+
+
+def test_r18_01_empty_capture_map_on_a_daily_source_is_not_a_single_capture_series(tmp_path):
+    from twlab.weekly import plan_week
+    store, market = _daily_market(tmp_path)
+    for sec in market.securities.values():
+        sec.bar_captures.clear()
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 5), label="t")
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    packet, _, candidates = r.build_week_packet(plan_week(taipei(date(2024, 1, 7), time(18, 0)), CAL))
+    assert not any(d.kind == "price_bar_series" for d in packet.admitted)
+    assert all(c.reasons[0].startswith("provenance_incomplete:") for c in candidates) and len(candidates) == 2
+
+
+def test_r18_02_conflicting_session_captures_between_series_stop_the_packet(tmp_path):
+    from twlab.backtest import ManifestInconsistent
+    from twlab.weekly import plan_week
+    store, market = _daily_market(tmp_path)
+    import copy
+    a = market.securities[market.by_symbol["2035"]]
+    b = copy.deepcopy(a)
+    b.bar_captures[date(2024, 1, 4)] = "twse:MI_INDEX_ALLBUT0999/2024-01-04:2024-01-05T00:00:00+00:00:other-revision"
+    market.securities["TWSE:9999@2023-01-02"] = b
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 5), label="t")
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    with pytest.raises(ManifestInconsistent):
+        r.build_week_packet(plan_week(taipei(date(2024, 1, 7), time(18, 0)), CAL))
+
+
+def test_r18_07_summary_counts_measurable_weeks_separately(tmp_path):
+    from twlab.backtest import load_market, markdown_report
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 2, 5), end=date(2024, 3, 29), label="t", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    res = r.run()
+    for name, e in res["summary"]["forecasters"].items():
+        measured = sum(1 for w in res["weeks"] if w["status"] == "valid" and not w.get("pending_outcome")
+                       and w["forecasters"][name].get("portfolio_net_return_open_close") is not None)
+        assert e["weeks_measured"] == measured and e["weeks_positive"] <= e["weeks_measured"]
+    report = markdown_report(res, title="t")
+    assert f"{res['summary']['forecasters']['Q0']['weeks_positive']}/{res['summary']['forecasters']['Q0']['weeks_measured']}" in report
