@@ -603,6 +603,9 @@ def test_r17_10_pending_week_records_the_known_entry_status_of_each_pick(tmp_pat
     assert all(p.get("entry_status") in ("filled", "entry_failed") for p in fr["picks"])
     assert sum(p["entry_status"] == "filled" for p in fr["picks"]) == fr["filled"]
     assert sum(p["entry_status"] == "entry_failed" for p in fr["picks"]) == fr["failed"]
+    # R19-03: los costes de las compras ya ejecutadas se publican aunque la salida esté pendiente
+    assert fr["costs_twd"] > 0 and fr["costs_denominator_twd"] > 0 and fr["costs_scope"] == "entries_only_pending_exit"
+    assert abs(fr["costs_over_invested"] - fr["costs_twd"] / fr["costs_denominator_twd"]) < 1e-12
 
 
 def test_r18_01_empty_capture_map_on_a_daily_source_is_not_a_single_capture_series(tmp_path):

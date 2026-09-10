@@ -839,10 +839,14 @@ class Runner:
                     if slot is not None:
                         p["entry_status"] = slot.status                  # filled | entry_failed
                         p["entry_reason"] = slot.reason or None
+                invested0 = sum((s.entry.gross for s in slots if s.entry is not None), D(0))
+                costs0 = _week_costs(slots)                                  # costes ya conocidos de las compras (R19-03)
                 fr.update({"notional_per_slot": float(notional), "filled": sum(1 for s in slots if s.status == "filled"),
                            "failed": sum(1 for s in slots if s.status == "entry_failed"),
                            "fail_reasons": [s.reason for s in slots if s.status == "entry_failed"],
                            "equity_open": float(equity_start) if equity_start is not None else None, "exposure_at_open": float(exposure),
+                           "costs_twd": float(costs0), "costs_denominator_twd": float(invested0),
+                           "costs_over_invested": float(costs0 / invested0) if invested0 else None, "costs_scope": "entries_only_pending_exit",
                            "stale_prices": stale0, "note": "entrada ejecutada; salida pendiente"})
                 continue
             self.apply_actions(name, exit_s)
@@ -1030,7 +1034,7 @@ def markdown_report(result: dict, *, title: str) -> str:
              f"{len(s['weeks_pending_outcome'])} pendientes de desenlace.", "",
              "Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad de barras por política de 24 h. "
              "Nada de esto es una estimación de rendimiento futuro.", "",
-             "| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 (de las medibles) | Patrimonio final | Exceso neto vs " + s["assumptions"]["baseline"] + " (IC 95 %) |",
+             "| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre compras brutas + ventas brutas heredadas | Semanas > 0 (de las medibles) | Patrimonio final | Exceso neto vs " + s["assumptions"]["baseline"] + " (IC 95 %) |",
              "|---|---|---|---|---|---|---|"]
     fmt = lambda x: "—" if x is None else f"{x*100:+.2f} %"
     for name, e in s["forecasters"].items():

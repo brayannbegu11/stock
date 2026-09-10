@@ -1,0 +1,231 @@
+{
+  "ronda": "19",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Verificadas R18-01..R18-11. Pasan 304 pruebas de aceptación y 61 controles adversariales. La repetición de 510 selecciones reproduce 474 entradas, los seis patrimonios finales y todos los costes y denominadores semanales maduros. Las medias regeneradas coinciden con los JSON. Quedan cuatro hallazgos nuevos: tres medios y uno bajo, reproducidos mediante 13 casos fallidos. Sólo escribí bajo review/out/astra_scratch/.",
+  "hallazgos": [
+    {
+      "id": "R18-01/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 686,
+      "afirmacion": "Corregido: TWSE/TPEx rechazan mapas vacíos; FinMind conserva la admisión por captura única.",
+      "contraejemplo": "Las dos sesiones sin captura producen provenance_incomplete:2_sessions_without_capture; la serie FinMind íntegra sigue admitida y elegible.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r18_attacks.py review/out/astra_scratch/test_r19_verification.py -k 'empty_daily_capture or finmind_single_capture' --basetemp review/out/astra_scratch/r19_verify01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-02/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 666,
+      "afirmacion": "Corregido: el conflicto entre series lanza ManifestInconsistent sin escritura parcial en el archivo.",
+      "contraejemplo": "Dos revisiones TWSE del 04/01/2024 referenciadas por A y B detienen run_week; todos los archivos conservan exactamente sus hashes anteriores.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_verification.py -k conflict_is_atomic --basetemp review/out/astra_scratch/r19_verify02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-03/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 279,
+      "afirmacion": "Corregido: sólo cuentan identificadores completos, emitidos y verificados en una ronda posterior.",
+      "contraejemplo": "verificacion_extra, otra/verificacion y verificaciones anteriores o de la misma ronda cuentan cero; los recuentos actuales coinciden con los originales.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r18_attacks.py -k 'verification_identifier or verification_must_be_later' --basetemp review/out/astra_scratch/r19_verify03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-04/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "docs/index.html",
+      "linea": 959,
+      "afirmacion": "Corregido: títulos, subtítulos y última ronda con bloqueantes responden a los datos en los tres idiomas.",
+      "contraejemplo": "La mutación con una ronda aprobada, una rechazada y una aprobada con cambios muestra exactamente esos tres recuentos y sitúa el último bloqueante en la ronda 24.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_verification.py -k review_text_changes",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-05/verificacion",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 873,
+      "afirmacion": "Corregido para las semanas maduras: ventas heredadas, denominadores y medias reproducen ambos JSON e informes.",
+      "contraejemplo": "W29 Q0 estándar: 33.381/6.159.300 = 0,5419609371 %; Q0 del usuario: 509/80.391 = 0,6331554527 %. Las seis medias de costes coinciden exactamente con la repetición.",
+      "comando_reproduccion": "python -B -m review.out.astra_scratch.r19_replay",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-06/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 1090,
+      "afirmacion": "Corregido: ambos informes muestran los retornos del libro de W29 aunque no haya selección nueva.",
+      "contraejemplo": "Las seis celdas de W29 contienen sus retornos netos del JSON y la indicación de posiciones heredadas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r18_attacks.py -k generated_reports_keep",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-07/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 986,
+      "afirmacion": "Corregido: weeks_measured coincide con los retornos usados en las medias y los denominadores de semanas positivas.",
+      "contraejemplo": "Hay 16 semanas medibles por pronosticador: positivas 5/6/9 en estándar y 5/6/5 en el escenario del usuario; las medias netas se reproducen con esas observaciones.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_verification.py -k all_summary_denominators",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-08/verificacion",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "docs/index.html",
+      "linea": 866,
+      "afirmacion": "Corregido: se conservan y muestran las condiciones de la valoración final independientemente de la última semana medible.",
+      "contraejemplo": "Una última semana medible sin marcas seguida de valoración del 17/01 con precio obsoleto del 16/01 conserva fecha y flag, y genera PROVISIONAL. En los artefactos reales, la valoración del 09/09 difiere del cierre de W36.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_verification.py -k 'final_flags or stale_final' --basetemp review/out/astra_scratch/r19_verify08",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-09/verificacion",
+      "severidad": "baja",
+      "categoria": "datos",
+      "archivo": "docs/informes/23_respuesta_ronda17_astra.md",
+      "linea": 38,
+      "afirmacion": "Corregido mediante referencia al recuento derivado; el número histórico queda fechado y README elimina el literal desfasado.",
+      "contraejemplo": "El informe remite a review_stats.new_total y limita 197/17 al cierre de aquella respuesta; el sitio actual contiene 208 hallazgos en 18 rondas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_verification.py -k document_counts",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-10/verificacion",
+      "severidad": "baja",
+      "categoria": "especificacion",
+      "archivo": "docs/informes/22_respuesta_ronda16_astra.md",
+      "linea": 27,
+      "afirmacion": "Corregido: P7 consta como adenda en la sección citada por el informe 15b.",
+      "contraejemplo": "La sección 2 contiene P7 (adenda, ronda 17), su aproximación de precios y las condiciones.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r18_attacks.py -k p7_documented",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R18-11/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "docs/index.html",
+      "linea": 357,
+      "afirmacion": "Corregido: los tres idiomas describen el reintento en el cierre semanal siguiente.",
+      "contraejemplo": "La salida bloqueada del 12/01 se ejecuta el 19/01; los textos ya no prometen la siguiente sesión y mantienen pendiente la política de cierres sobrevenidos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r18_attacks.py -k 'exit_retry or followup_sales' --basetemp review/out/astra_scratch/r19_verify11",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-01",
+      "severidad": "media",
+      "categoria": "unidades",
+      "archivo": "docs/index.html",
+      "linea": 370,
+      "afirmacion": "Las etiquetas públicas siguen describiendo las tasas como costes sobre importe invertido, aunque el denominador incluye ventas heredadas. La discrepancia también permanece en las tablas generadas de 15/15b y en la explicación de README.",
+      "contraejemplo": "W29 Q0 estándar no compra nada y publica 33.381 TWD de costes sobre 6.159.300 TWD vendidos. El sitio dice «Coste medio sobre lo invertido», «Mean cost over invested amount» y «平均成本佔投入金額比例». Las tablas generadas de 15:57 y 15b:51 dicen «Costes/semana sobre invertido», mientras sus cabeceras manuales sí describen el denominador correcto.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_attacks.py -k 'cost_label or report_cost_heading'",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r19_verification import render\n\ndef test_denominador_publico():\n    x = render()\n    assert 'heredad' in x['es']['strings']['kpi']['costs'].lower()\n    assert 'inherited' in x['en']['strings']['kpi']['costs'].lower()\n\nUnificar las etiquetas del sitio, markdown_report, informes y README con «compras brutas + ventas brutas heredadas». Los cinco casos completos ejecutados están en test_r19_attacks.py.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-02",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "docs/index.html",
+      "linea": 347,
+      "afirmacion": "La lectura principal sólo deriva parcialmente sus conclusiones: mantiene literales la pérdida de todas las carteras y que el intervalo incluye cero, aunque los datos cambien.",
+      "contraejemplo": "Al establecer total_net_return=0,25 para las seis carteras y ci95=[0,01,0,03], los indicadores muestran ganancias e intervalos positivos, pero hero conserva «ninguna cartera gana dinero» y «el intervalo de confianza del exceso incluye el cero». Se reproduce también en inglés y chino. Los datos actuales son compatibles con esos literales; el fallo aparece al actualizarlos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_attacks.py -k 'positive_final_returns or interval_excluding_zero'",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r19_verification import render\n\n@pytest.mark.parametrize('lang,loss,ci', [\n    ('es', 'ninguna cartera gana dinero', 'intervalo de confianza del exceso incluye el cero'),\n    ('en', 'no portfolio makes money', 'confidence interval of the excess includes zero'),\n    ('zh', '沒有任何投資組合在扣除成本後獲利', '超額報酬的信賴區間包含零')])\ndef test_conclusiones_derivadas(lang, loss, ci):\n    html = render('profitable')[lang]['hero']\n    assert loss not in html\n    assert ci not in html\n\nDerivar ambas conclusiones de total_net_return y paired.ci95, contemplando también intervalos ausentes.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-03",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 834,
+      "afirmacion": "La rama pending_exit omite los costes y el denominador de compras ya ejecutadas. La afirmación del informe 24 §5.1 sobre agregar los costes por fecha de ejecución de todas las cestas necesita esta salvedad o corrección.",
+      "contraejemplo": "Con límite 10/01/2024, capital 10.000 TWD, precio 100, lote 1 y comisión mínima 20, Q0 compra 99 acciones el 08/01: bruto 9.900 y comisión 20. Publica filled=1 y pending_outcome=true, pero costs_twd y costs_denominator_twd están ausentes. En W37 de ambos escenarios el exportador también presenta costs_twd=null pese a las compras registradas. El libro sí descuenta esos costes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_attacks.py -k pending_week_reports --basetemp review/out/astra_scratch/r19_pending_repro",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r19_verification import fixture, Runner, BacktestConfig, MomentumForecaster, RandomForecaster, D, date\n\ndef test_costes_conocidos_en_semana_pendiente(tmp_path):\n    raw, market = fixture(tmp_path, end='2024-01-10')\n    cfg = BacktestConfig(date(2024,1,1), date(2024,1,10), slots=1, notional=10000, lot_size=1, min_commission_twd=D(20), slippage_bps=0)\n    r = Runner(raw, market, cfg, [MomentumForecaster(), RandomForecaster(1)])\n    r.run_week(date(2024,1,7))\n    w = r.weeks[-1]\n    fill = r.open_slots['Q0'][0][1][0].entry\n    assert w['pending_outcome'] and fill.gross == 9900 and fill.commission == 20\n    assert w['forecasters']['Q0'].get('costs_twd') == 20\n    assert w['forecasters']['Q0'].get('costs_denominator_twd') == 9900\n\nPublicar costes conocidos como parciales sin incorporar la semana pendiente a las medias maduras.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-04",
+      "severidad": "baja",
+      "categoria": "estadistica",
+      "archivo": "docs/informes/15_backtest_universo_2026.md",
+      "linea": 5,
+      "afirmacion": "El informe afirma que W28 quedó fuera de la estadística, pero la semana sí entra en la media de costes regenerada.",
+      "contraejemplo": "W28 Q0 estándar tiene retorno neto nulo y costes 16.557 TWD, tasa 0,2426218458 %. La media publicada de costes usa 17 semanas y vale 0,7346397133 %; excluyendo W28 sería 0,7653908301 %. La media neta usa 16 semanas. La frase no distingue ambos conjuntos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r19_attacks.py -k w28_is_not_described",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r19_verification import ROOT, export, read_source\n\ndef test_exclusion_w28_precisa():\n    _, label, report = export.SCENARIOS[0]\n    d = read_source(label)\n    q = next(w for w in d['weeks'] if w['week_id'] == '2026-W28')['forecasters']['Q0']\n    assert q['portfolio_net_return_open_close'] is None and q['costs_over_invested'] > 0\n    text = (ROOT/'docs/informes'/report).read_text(encoding='utf8')\n    assert 'la semana 2026-W28 quedó fuera de la estadística' not in text\n\nPrecisar que se excluye del retorno neto medible y del exceso emparejado, pero permanece en costes y cobertura.",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Mapas vacíos y conflictos quedan corregidos y comprobados sin escritura parcial. Mantener explícitamente pendiente la readmisión verificada multicaptura hasta implementar su extractor."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "W37 sigue correctamente clasificada como reconstrucción. La fecha anunciada del 13/09 no acredita una predicción: su clasificación depende de captura, emisión y sello efectivos."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Los controles de lotes, comisión mínima y efectivo inmovilizado pasan; la repetición conserva las ejecuciones y patrimonios."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto",
+      "argumento": "La valoración final conserva fecha, sesión y marcas, incluso cuando la última semana medible carece de ellas; el sitio muestra la provisionalidad."
+    },
+    {
+      "id": "P5",
+      "posicion": "acepto",
+      "argumento": "Las mutaciones de referencias por sesión cambian data_version y detienen Q1; pasan nuevamente los controles anteriores."
+    },
+    {
+      "id": "P6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Los artefactos regenerados reproducen sus cifras y conservan los límites declarados. Corregir las etiquetas del denominador, las conclusiones parcialmente literales y la descripción de exclusión estadística."
+    },
+    {
+      "id": "P7",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Dimensionado, costes heredados, referencia documental y aproximación de precios regulares quedan comprobados. Publicar los costes conocidos de semanas pendientes y corregir las etiquetas públicas de costes."
+    },
+    {
+      "id": "P8",
+      "posicion": "acepto",
+      "argumento": "Los identificadores completos, la posterioridad y los textos derivados de revisión responden correctamente a las mutaciones. Se cuentan verificaciones registradas sin equipararlas a cierres completos."
+    }
+  ],
+  "veredicto": "aprobado_con_cambios"
+}
