@@ -48,7 +48,7 @@ Periodo 2026-05-04 → 2026-09-09 · universo 1937 valores (official_daily_quote
 
 Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad de barras por política de 24 h. Nada de esto es una estimación de rendimiento futuro.
 
-| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 (de las medibles) | Patrimonio final | Exceso neto vs A1 (IC 95 %) |
+| Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre compras brutas + ventas brutas heredadas | Semanas > 0 (de las medibles) | Patrimonio final | Exceso neto vs A1 (IC 95 %) |
 |---|---|---|---|---|---|---|
 | Q0 (`rule:momentum_20_sessions_v1`) | -1.85 % | -0.08 % | +0.95 % | 5/16 | 49,623 TWD | -1.05 % [-6.40 %, +0.16 %] n=12 (variabilidad limitada: 4 semanas fijas) |
 | Q1 (`q1:tabular_ridge_lgbm_rank_v2`) | -0.94 % | +0.30 % | +0.93 % | 6/16 | 60,057 TWD | -0.23 % [-1.44 %, +0.24 %] n=15 |

@@ -33,6 +33,7 @@ REPO_URL = "https://github.com/brayannbegu11/stock"
 SCENARIOS = [
     ("standard", "universe_2026-05-04_2026-09-09", "15_backtest_universo_2026.md"),
     ("user", "user_75kTWD_oddlots_2026", "15b_backtest_universo_2026_lotes_sueltos.md"),
+    ("longhist", "universe_longhist_2021_2026", "15c_backtest_universo_2026_historial_2021.md"),
 ]
 FORECASTERS = ("Q0", "Q1", "A1")
 
