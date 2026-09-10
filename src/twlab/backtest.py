@@ -92,10 +92,21 @@ class MarketData:
 
     @property
     def data_version(self) -> str:
-        """Identifica las capturas que alimentan el mercado (clave de caché de Q1, R10-03)."""
+        """Huella del **contenido** que consume el pronosticador (R10-03, R15-05): capturas, barras (sesión, apertura,
+        cierre, importe, disponibilidad), derechos validados y versión del calendario. Cambiar cualquiera de ellos en
+        memoria, aunque conserve identificadores, cambia la versión."""
         import hashlib
-        ids = sorted(f"{s.price_capture.capture_id}|{getattr(s.dividend_capture, 'capture_id', '')}" for s in self.securities.values())
-        return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()[:16]
+        h = hashlib.sha256()
+        h.update(f"{self.calendar.source_id}@{self.calendar.version}\n".encode("utf-8"))
+        for sec_id in sorted(self.securities):
+            s = self.securities[sec_id]
+            h.update(f"{sec_id}|{s.price_capture.capture_id}|{getattr(s.dividend_capture, 'capture_id', '')}|{s.listing_date}|{s.delisting_date}\n".encode("utf-8"))
+            for b in s.bars:
+                h.update(f"{b.session}:{b.open}:{b.close}:{b.value_twd}:{b.available_at.timestamp()}\n".encode("utf-8"))
+            for e in s.events:
+                h.update(f"{e.event_id}:{e.kind}:{e.cash_per_share}:{e.stock_per_share}:{e.par_value}:{e.stock_ratio}:{e.pay_date}:"
+                         f"{e.known_at.timestamp() if e.known_at else None}:{e.ambiguous}\n".encode("utf-8"))
+        return h.hexdigest()[:16]
 
 
 class ManifestInconsistent(ValueError):
@@ -214,6 +225,80 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
     traded: set[date] = set().union(*[set(m) for m in by_session.values()]) if by_session else set()
     return MarketData(securities, by_symbol, master, calendar, by_session, traded, dropped, manifest_path.name,
                       dropped_before_listing, warnings, par_value)
+
+
+def load_master_file(path: Path) -> SecurityMaster:
+    """Maestro escrito por ``scripts/build_master.py`` (``data/store/master_<fecha>.jsonl``)."""
+    master = SecurityMaster()
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            row = json.loads(line)
+            if row.pop("kind") != "segment":
+                continue
+            for k in ("valid_from", "valid_to"):
+                row[k] = date.fromisoformat(row[k]) if row[k] else None
+            row["recorded_at"] = datetime.fromisoformat(row["recorded_at"])
+            master.add(SecurityVersion(**row))
+    return master
+
+
+def load_market_daily(store: RawStore, calendar: TradingCalendar, master: SecurityMaster, *, as_of: date, start: date, end: date,
+                      par_value: D = D(10)) -> MarketData:
+    """Mercado construido desde las cotizaciones diarias oficiales por fecha (TWSE ``MI_INDEX``, TPEx ``dailyQuotes``).
+
+    Universo y fechas de alta del maestro; una barra por símbolo y sesión desde las capturas por fecha; barras
+    anteriores al alta descartadas; **sin derechos** (la fuente no los trae: se declara en ``warnings`` y en el
+    resumen). Cada documento de barras referencia la captura de su última sesión.
+    """
+    from .sources import twse_daily as td
+    universe = master.universe(as_of=as_of)
+    wanted = {(v.market, v.symbol): v for v in universe}
+    have = {"TWSE": td.captured_sessions(store, "twse", td.TWSE_DATASET), "TPEX": td.captured_sessions(store, "tpex", td.TPEX_DATASET)}
+    readers = {"TWSE": (td.twse_rows, td.bars_twse), "TPEX": (td.tpex_rows, td.bars_tpex)}
+    bars: dict[tuple[str, str], list] = {k: [] for k in wanted}
+    last_capture: dict[tuple[str, str], object] = {}
+    missing: list[str] = []
+    closed_sessions: list[str] = []
+    for s in calendar.sessions_between(start, end):
+        for market in ("TWSE", "TPEX"):
+            rec = have[market].get(s)
+            if rec is None:
+                missing.append(f"{market}:{s.isoformat()}")
+                continue
+            reader, parser = readers[market]
+            rows = reader(store, rec)
+            if rows is None:
+                closed_sessions.append(f"{market}:{s.isoformat()}")
+                continue
+            for sid, bar in parser(s, rows).items():
+                key = (market, sid)
+                if key in wanted:
+                    bars[key].append(bar)
+                    last_capture[key] = rec
+    dropped = 0
+    dropped_before_listing = 0
+    securities: dict[str, Security] = {}
+    by_symbol: dict[str, str] = {}
+    by_session: dict[str, dict[date, finmind.Bar]] = {}
+    for key, v in wanted.items():
+        allb = sorted(bars[key], key=lambda b: b.session)
+        usable = [b for b in allb if b.has_regular_price]
+        dropped += len(allb) - len(usable)
+        kept = [b for b in usable if b.session >= v.valid_from]
+        dropped_before_listing += len(usable) - len(kept)
+        if not kept:
+            continue
+        securities[v.security_id] = Security(v.symbol, v.security_id, v.market, v.name_zh, v.valid_from, v.valid_to, kept, [], last_capture[key], None, [])
+        by_symbol[v.symbol] = v.security_id
+        by_session[v.security_id] = {b.session: b for b in kept}
+    traded: set[date] = set().union(*[set(m) for m in by_session.values()]) if by_session else set()
+    warnings = ["sin derechos: la fuente oficial por fecha no trae dividendos; libro y etiquetas operan sin ellos"]
+    if missing:
+        warnings.append(f"sesiones oficiales sin captura: {len(missing)} (p. ej. {', '.join(missing[:3])})")
+    if closed_sessions:
+        warnings.append(f"sesiones oficiales sin datos (cierres sobrevenidos u otros): {len(closed_sessions)} (p. ej. {', '.join(closed_sessions[:3])})")
+    return MarketData(securities, by_symbol, master, calendar, by_session, traded, dropped,
+                      f"official_daily_quotes:{start.isoformat()}..{end.isoformat()}", dropped_before_listing, warnings, par_value)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -455,6 +540,7 @@ class Runner:
         self.open_slots: dict[str, list] = {n: [] for n in self.forecasters}
         self.ambiguous_positions: dict[str, set[str]] = {n: set() for n in self.forecasters}
         self.ambiguous_claims: dict[str, set[str]] = {n: set() for n in self.forecasters}     # derechos no aplicados: incertidumbre permanente
+        self.ambiguous_hits: dict[str, list[tuple[str, date]]] = {n: [] for n in self.forecasters}   # (valor, fecha ex) de cada derecho ambiguo sufrido
         self.prev_equity = {n: self.initial for n in self.forecasters}
         self.cursor = {n: cfg.start - timedelta(days=1) for n in self.forecasters}
         self.weeks: list[dict] = []
@@ -511,9 +597,11 @@ class Runner:
             at = taipei(exd, PRE_OPEN)
             if e is not None and e.ambiguous:
                 # el derecho no puede aplicarse: desde aquí el patrimonio del libro es incierto (cantidad o efectivo no
-                # registrados) y lo sigue siendo aunque la posición se venda (R13-05, R14-03)
+                # registrados) y lo sigue siendo aunque la posición se venda (R13-05, R14-03). La fecha se conserva para
+                # invalidar sólo los lotes que la tenían en cartera (R15-06).
                 self.ambiguous_positions[name].add(sec)
                 self.ambiguous_claims[name].add(e.event_id)
+                self.ambiguous_hits[name].append((sec, exd))
                 self.weeks[-1].setdefault("ambiguous_rights", []).append(f"{name}:{e.event_id}")
                 continue
             try:
@@ -705,10 +793,15 @@ class Runner:
             chain_return = (equity_end / self.prev_equity[name] - 1) if equity_end is not None and self.prev_equity[name] else None
             invested = sum((s.entry.gross for s in slots if s.entry is not None), D(0))
             costs_twd = _week_costs(slots)
-            amb_secs = self.ambiguous_positions[name]
-            pick_returns = {s.security_id: (float(s.gross_pick_return) if s.gross_pick_return is not None and s.security_id not in amb_secs else None)
+            # una selección sólo pierde su rentabilidad bruta si sufrió un derecho ambiguo mientras la tenía (R14-05, R15-06):
+            # un lote nuevo del mismo valor, comprado después de la fecha ex, conserva su retorno bruto
+            def _hit(slot) -> bool:
+                if slot.entry is None or slot.security_id is None:
+                    return False
+                return any(sec == slot.security_id and slot.entry.at.date() < exd <= exit_s for sec, exd in self.ambiguous_hits[name])
+            pick_returns = {s.security_id: (float(s.gross_pick_return) if s.gross_pick_return is not None and not _hit(s) else None)
                             for s in slots if s.security_id}
-            basket_ambiguous = any(s.security_id in amb_secs for s in slots if s.security_id)   # una selección con derecho ambiguo invalida la media bruta (R14-05)
+            basket_ambiguous = any(_hit(s) for s in slots)
             fr = record["forecasters"][name]
             for p in fr["picks"]:
                 p["gross_return"] = pick_returns.get(p["security_id"])
@@ -867,7 +960,13 @@ def markdown_report(result: dict, *, title: str) -> str:
             pe_txt = f"no estimable: {pe['error']}"
         else:
             pe_txt = "—"
-        equity_txt = f"{e['final_equity']:,.0f} TWD" if e.get("final_equity") is not None else "desconocido: " + str(e.get("final_valuation", {}).get("error", ""))
+        if e.get("final_equity") is None:
+            equity_txt = "desconocido: " + str(e.get("final_valuation", {}).get("error", ""))
+        elif e.get("ambiguous_claims") or any(str(f).startswith(("ambiguous_right", "unresolved_terminal", "price_predates_right"))
+                                              for f in e.get("final_valuation", {}).get("flags", [])):
+            equity_txt = f"≈ {e['final_equity']:,.0f} TWD (contable, INCIERTO: {len(e.get('ambiguous_claims', []))} derechos ambiguos / marcas de valoración)"
+        else:
+            equity_txt = f"{e['final_equity']:,.0f} TWD"
         lines.append(f"| {name} (`{e['model_id']}`) | {fmt(e['mean_weekly_net_return_open_close'])} | {fmt(e['mean_weekly_gross_pick_return'])} | "
                      f"{fmt(e['mean_costs_over_invested'])} | {e['weeks_positive']}/{s['weeks_operated']} | {equity_txt} | {pe_txt} |")
     ew = s["universe_ew"]["mean_weekly_gross_open_close"]

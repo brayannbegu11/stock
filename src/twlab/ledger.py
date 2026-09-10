@@ -137,6 +137,14 @@ class Lot:
         self.exact = value
         self.quantity = D(value.numerator) if value.denominator == 1 else D(value.numerator) / D(value.denominator)
 
+    def whole(self) -> int:
+        """Acciones enteras del lote según la cantidad exacta (nunca según la aproximación decimal, R15-03)."""
+        r = self.rational()
+        return r.numerator // r.denominator
+
+    def fraction(self) -> "Fraction":
+        return self.rational() - self.whole()
+
 
 @dataclass
 class Position:
@@ -155,12 +163,21 @@ class Position:
 
     @property
     def shares(self) -> int:
-        return int(self.total_quantity.to_integral_value(rounding=ROUND_DOWN))
+        """Parte entera de la cantidad exacta total (R05-07: las fracciones se suman; R15-03: sobre el racional, no la aproximación).
+        Las acciones **vendibles** se cuentan por lote y propietario (`Lot.whole`), no con esta cifra."""
+        from fractions import Fraction
+        total = sum((lot.rational() for lot in self.lots), Fraction(0))
+        return total.numerator // total.denominator
 
     @property
     def unresolved_fraction(self) -> Decimal:
-        """Suma de las fracciones de cada lote: las fracciones de distintos propietarios no se cancelan (R05-07)."""
-        return sum((lot.quantity - int(lot.quantity.to_integral_value(rounding=ROUND_DOWN)) for lot in self.lots), ZERO)
+        """Suma de las fracciones exactas de cada lote: las fracciones de distintos propietarios no se cancelan (R05-07).
+        Es positiva si y sólo si algún lote tiene una fracción real, por pequeña que sea (R15-03)."""
+        from fractions import Fraction
+        total = sum((lot.fraction() for lot in self.lots), Fraction(0))
+        if total == 0:
+            return ZERO
+        return max(D(total.numerator) / D(total.denominator), D("1E-27"))
 
     @property
     def cost_twd(self) -> Decimal:
@@ -376,8 +393,9 @@ class PaperLedger:
         if pos.status != "open":
             return self._reject(security_id, "sell", f"exit_blocked_{pos.status}", "position remains in ledger", at, event_id)
         lots = [lot for lot in pos.lots if owner is None or lot.owner == owner]
-        # sólo se venden acciones enteras de cada lote: las fracciones son derechos pendientes, no se consumen (R07-09)
-        available = sum((D(int(lot.quantity.to_integral_value(rounding=ROUND_DOWN))) for lot in lots), ZERO)
+        # sólo se venden acciones enteras de cada lote: las fracciones son derechos pendientes, no se consumen (R07-09);
+        # las enteras se cuentan sobre la cantidad exacta, nunca sobre la aproximación decimal (R15-03)
+        available = sum((D(lot.whole()) for lot in lots), ZERO)
         if D(shares) > available:
             return self._reject(security_id, "sell", "invalid_quantity",
                                 f"shares={shares} whole_held={available} owner={owner or 'any'}", at, event_id)
@@ -395,7 +413,7 @@ class PaperLedger:
         for lot in lots:                                   # FIFO dentro del propietario (o global si owner=None)
             if remaining <= 0:
                 break
-            take = min(D(int(lot.quantity.to_integral_value(rounding=ROUND_DOWN))), remaining)
+            take = min(D(lot.whole()), remaining)
             if take <= 0:
                 continue
             part = q_twd(lot.cost_twd * take / lot.quantity) if lot.quantity else ZERO
@@ -481,14 +499,19 @@ class PaperLedger:
             return
         if action.kind == "cash_dividend":
             # importe por propietario (no por lote de adquisición): fragmentar la compra no cambia el cobro (R05-08)
-            by_owner: dict[str, Decimal] = {}
+            from fractions import Fraction
+            by_owner: dict[str, Fraction] = {}
             for lot in pos.lots:
-                by_owner[lot.owner] = by_owner.get(lot.owner, ZERO) + lot.quantity
-            for owner, qty in by_owner.items():
-                amount = self.costs.round(D(action.per_share_cash) * qty)
+                by_owner[lot.owner] = by_owner.get(lot.owner, Fraction(0)) + lot.rational()
+            for owner, qty_exact in by_owner.items():
+                # importe sobre la cantidad exacta: 3 TWD × 4.000/3 acciones = 4.000 TWD, no 3.999 (R15-04)
+                gross_exact = Fraction(D(action.per_share_cash)) * qty_exact
+                gross = D(gross_exact.numerator) / D(gross_exact.denominator)
+                amount = self.costs.round(gross)
+                qty = D(qty_exact.numerator) / D(qty_exact.denominator)
                 key = (action.security_id, owner)
                 # atribución de referencia sin redondear; el efectivo cobrado sí se redondea (R06-10)
-                self._declared_dividends[key] = self._declared_dividends.get(key, ZERO) + D(action.per_share_cash) * qty
+                self._declared_dividends[key] = self._declared_dividends.get(key, ZERO) + gross
                 self.receivables.append(Receivable(action.security_id, amount, action.pay_at, action.event_id, owner))
                 when = to_utc(action.pay_at).isoformat() if action.pay_at else "UNKNOWN (not spendable until set_payment_date)"
                 self._log("cash_dividend_declared", action.effective_at, action.security_id, ZERO,

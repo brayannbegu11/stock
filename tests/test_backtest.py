@@ -271,15 +271,51 @@ def test_r14_03_r14_05_r14_08_ambiguity_survives_liquidation_and_voids_gross_ret
     assert not any(w.get("action_errors") for w in res["weeks"])                # R14-08: la forma exacta se aplica sin errores del libro
 
 
-def test_r14_06_forecaster_refuses_a_market_that_changed_underneath(tmp_path):
+def test_r14_06_r15_05_forecaster_refuses_a_market_whose_content_changed_underneath(tmp_path):
+    from dataclasses import replace
+    from twlab.models import q1
     store, path = make_market(tmp_path, end=date(2024, 6, 28))
+    for mutate in ("capture", "bar", "event", "calendar"):
+        m = load_market(store, path, CAL)
+        f = TabularForecaster(m, min_weeks=10)
+        f.maybe_train(taipei(date(2024, 3, 3), time(18, 0)))
+        sec = next(iter(m.securities.values()))
+        if mutate == "capture":
+            sec.price_capture = archive(store, "TaiwanStockPrice", sec.symbol, price_rows(sec.symbol, date(2023, 1, 2), date(2024, 6, 28), seed=7))
+        elif mutate == "bar":                                    # mismo identificador de captura, otro cierre en memoria
+            b = sec.bars[-100]
+            sec.bars[-100] = replace(b, close=b.close * 2)
+        elif mutate == "event":                                  # un derecho que aparece o cambia sin cambiar capturas
+            sec.events.append(q1.DividendLike("x:cash:2024-01-10:2024", date(2024, 1, 10), "cash", cash_per_share=D(10), known_at=taipei(date(2023, 12, 1))))
+        else:                                                    # otro calendario con la misma versión declarada
+            m.calendar = TradingCalendar(start=CAL.start, end=CAL.end, closures=[date(2024, 1, 12)], source_id="synthetic", recorded_at=CAL.recorded_at, version="2")
+        with pytest.raises(ValueError, match="changed"):
+            f.maybe_train(taipei(date(2024, 3, 10), time(18, 0)))
+
+
+def test_r15_06_r15_07_new_lots_keep_gross_returns_and_the_report_flags_uncertain_equity(tmp_path):
+    from twlab.backtest import markdown_report
+    def stock_row(per_share):
+        return {"stock_id": "A", "year": "2024", "AnnouncementDate": "2023-12-01", "AnnouncementTime": "8:0:0", "CashEarningsDistribution": 0,
+                "CashStatutorySurplus": 0, "StockEarningsDistribution": per_share, "StockStatutorySurplus": 0, "CashExDividendTradingDate": "",
+                "CashDividendPaymentDate": "", "StockExDividendTradingDate": "2024-01-10"}
+    store, path = make_market(tmp_path, dividends={"A": [stock_row(10.0), stock_row(0)]}, end=date(2024, 3, 29))
     m = load_market(store, path, CAL)
-    f = TabularForecaster(m, min_weeks=10)
-    f.maybe_train(taipei(date(2024, 3, 3), time(18, 0)))
-    sec = next(iter(m.securities.values()))
-    sec.price_capture = archive(store, "TaiwanStockPrice", sec.symbol, price_rows(sec.symbol, date(2023, 1, 2), date(2024, 6, 28), seed=7))
-    with pytest.raises(ValueError, match="changed"):
-        f.maybe_train(taipei(date(2024, 3, 10), time(18, 0)))
+
+    class AlwaysA:
+        name, model_id, version = "Q0", "rule:always_a", "t"
+
+        def forecast(self, view, plan, candidates, *, slots):
+            from twlab.backtest import Selection
+            c = next(c for c in candidates if c.symbol == "A")
+            return [Selection(c.security_id, 1.0, [c.doc_id])], {"training_manifest_id": None}
+    res = Runner(store, m, BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 19), label="t", slots=1), [AlwaysA(), RandomForecaster(1)]).run()
+    q2, q3 = res["weeks"][0]["forecasters"]["Q0"], res["weeks"][1]["forecasters"]["Q0"]
+    assert q2["picks"][0]["gross_return"] is None                              # el lote que sufrió el derecho ambiguo
+    assert q3["picks"][0]["gross_return"] is not None and q3["mean_gross_pick_return"] is not None   # R15-06: el lote nuevo conserva su bruto
+    assert any(f.startswith("ambiguous_right:") for f in q3["stale_prices"])    # pero el patrimonio sigue incierto
+    md = markdown_report(res, title="t")
+    assert "INCIERTO" in md                                                    # R15-07: el patrimonio final se publica calificado
 
 
 def test_r13_06_unresolved_delisting_makes_the_interval_unmeasurable(tmp_path):

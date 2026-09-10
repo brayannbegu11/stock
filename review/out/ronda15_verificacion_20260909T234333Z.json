@@ -1,0 +1,279 @@
+{
+  "ronda": "15",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: siete hallazgos nuevos, cuatro altos y tres medios. Pasan las 280 pruebas de aceptación y 58 verificaciones adaptadas; la batería adversarial final produce 15 fallos y 14 controles aprobados. Reproduje exactamente el JSON de la muestra, el informe 14 y los resúmenes Q0/A1 de la demo. Auditados 103 paquetes y 6.901 documentos: ninguna barra futura ni diferencia de características. Las cifras de los informes 11, 14 y README se sostienen; el informe 18 incorpora su nota de vigencia. Las garantías sobre metadatos, exactitud e inmutabilidad de los informes 19/20 y README siguen siendo excesivas. Evidencias: review/out/astra_scratch/r15_accept_log.txt, r15_verify_log.txt, r15_attack_final2_log.txt y r15_real/audit.json. No modifiqué código ni informes; todas las escrituras quedaron bajo astra_scratch.",
+  "hallazgos": [
+    {
+      "id": "R09-03/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 141,
+      "afirmacion": "Parcial: la anonimización de rechazos funciona; quedan canales de metadatos en R15-01.",
+      "contraejemplo": "El identificador rechazado profit-in-2099-999-buy-A desaparece de la vista; period_end y availability_quality todavía transportan texto arbitrario.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_verifications.py -k rejected_doc_id --basetemp=review/out/astra_scratch/repro15_r09",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R12-01/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 373,
+      "afirmacion": "Parcial: la lista compartida invalida las contradicciones originales; la caché aún puede conservar etiquetas incompatibles con ella, R15-05.",
+      "contraejemplo": "Los casos 10/0, 10/−1, Infinity, NaN, periodos, anuncios y pagos contradictorios quedan ambiguos; cambiar posteriormente events sin cambiar captura conserva las filas anteriores.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_verifications.py -k 'shared_ambiguous or identical_events' --basetemp=review/out/astra_scratch/repro15_r12",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-01/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 141,
+      "afirmacion": "Parcial: se rechazan los campos atacados anteriormente, pero no todos los metadatos; R15-01.",
+      "contraejemplo": "packet_id, evidence_class, calendar_version, kind, supersedes, source_id y derivation rechazan el marcador; period_end y availability_quality lo admiten.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_verifications.py -k 'free_packet_metadata or metadata_constructor' --basetemp=review/out/astra_scratch/repro15_r13_01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-05/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 506,
+      "afirmacion": "Corregida la pérdida original: la reclamación persiste tras vender, excluye el emparejamiento y llega a la valoración final, también con pending_outcome.",
+      "contraejemplo": "Un derecho 10/0 permanece como una sola reclamación durante tres semanas, afecte a Q0 o a A1; cambiar de A a B no restaura un intervalo medible.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k 'ambiguity_persists or pending_week or ambiguous_claim_still' --basetemp=review/out/astra_scratch/repro15_r13_05",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R13-07/verificacion",
+      "severidad": "alta",
+      "categoria": "unidades",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 499,
+      "afirmacion": "Parcial: los encadenamientos originales son exactos; ventas y cobros todavía consumen aproximaciones, R15-03 y R15-04.",
+      "contraejemplo": "3.000 × 4/3 produce 4.000; 1.000 × 4/3 × 6 produce y vende 8.000. Sin embargo, 4.000/3 acciones por 3 TWD cobra 3.999.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py -k 'fractional_quantity or fractional_chain' --basetemp=review/out/astra_scratch/repro15_r13_07",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-01/verificacion",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 141,
+      "afirmacion": "Parcial: version, capture_id, source_sha256 y security_ids rechazan el texto original; quedan period_end y availability_quality, R15-01.",
+      "contraejemplo": "Pasan los cinco ataques originales y la retirada de open/close/adjusted del catálogo; fallan cuatro ataques nuevos sobre los dos campos restantes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py review/out/astra_scratch/test_r15_verifications.py -k 'unchecked_document_metadata or catalog_price_kinds' --basetemp=review/out/astra_scratch/repro15_r14_01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-02/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 325,
+      "afirmacion": "Parcial: se verifica el payload histórico con evidencia, pero también se exige indebidamente ingestión anterior al corte, R15-02.",
+      "contraejemplo": "Se rechazan payload 999 frente a bytes 100, captura ausente, fuente distinta y first_seen_at contradictorio; también se rechaza el documento fiel de 2024 capturado en 2026.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k 'historical_provenance_rejections or historical_faithful_payload' --basetemp=review/out/astra_scratch/repro15_r14_02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-03/verificacion",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 473,
+      "afirmacion": "Corregida la persistencia en el JSON: vender las acciones registradas no elimina la reclamación ni sus marcas finales.",
+      "contraejemplo": "Tras vender 1.000 acciones y comprar B, queda una reclamación, no se emparejan las semanas posteriores y final_valuation.flags conserva ambiguous_right; el Markdown tiene la omisión R15-07.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py -k 'final_valuation_does_not_lose or new_security_cannot' --basetemp=review/out/astra_scratch/repro15_r14_03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-04/verificacion",
+      "severidad": "alta",
+      "categoria": "unidades",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 135,
+      "afirmacion": "Parcial: Lot.exact corrige el encadenamiento original, pero la cantidad aproximada sigue gobernando disponibilidad, fracciones y cobros.",
+      "contraejemplo": "El recorrido original termina con 800.000 TWD y ninguna posición; los contraejemplos nuevos de R15-03 y R15-04 siguen fallando.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py -k 'fractional_quantity or fractional_chain' --basetemp=review/out/astra_scratch/repro15_r14_04",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-05/verificacion",
+      "severidad": "alta",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 708,
+      "afirmacion": "Parcial: se anulan las rentabilidades brutas afectadas, pero también las de compras nuevas posteriores a la fecha ex, R15-06.",
+      "contraejemplo": "La semana del derecho 10/0 publica gross_return y media null; la compra limpia de A del lunes siguiente también publica null, mientras una compra equivalente de B publica cero.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py -k ambiguous_pick --basetemp=review/out/astra_scratch/repro15_r14_05",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-06/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 94,
+      "afirmacion": "Parcial: cambiar la captura detiene al pronosticador; cambiar su contenido en memoria sin cambiar identificadores elude el control, R15-05.",
+      "contraejemplo": "La sustitución de dividend_capture produce ValueError; editar events o bars conserva data_version y las 134 filas previas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py -k tabular_forecaster_refresh --basetemp=review/out/astra_scratch/repro15_r14_06",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-07/verificacion",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 291,
+      "afirmacion": "Corregido: cambiar label_known_at cambia training_manifest_id.",
+      "contraejemplo": "La misma fila conocida el 13-01 frente al 01-02 produce manifiestos distintos al entrenar el 04-02.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py -k training_manifest_covers --basetemp=review/out/astra_scratch/repro15_r14_07",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R14-08/verificacion",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/models/q1.py",
+      "linea": 69,
+      "afirmacion": "Corregido: DividendLike deriva stock_ratio y Runner pasa la forma exacta sin el cero incompatible.",
+      "contraejemplo": "stock_per_share=1 y par_value=10 derivan stock_ratio=0,1; etiqueta y recorrido producen +10 %, sin action_errors.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_previous_attacks.py -k exact_dividendlike --basetemp=review/out/astra_scratch/repro15_r14_08",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-01",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "src/twlab/packet.py",
+      "linea": 141,
+      "afirmacion": "Document no valida period_end ni el dominio de availability_quality: ambos transportan texto arbitrario al predictor fuera del payload.",
+      "contraejemplo": "period_end='profit in 2099 = 999; buy A' y el mismo texto en availability_quality pasan Document, build_packet, packet_to_json y readmission_problems=[] en ambos modos, con extractor que sólo devuelve revenue=100. PredictorView los expone. La recuperación mediante packet_from_json sí los rechaza; el fallo está en la ruta directa. Refuta el informe 20, línea 11, el informe 19, línea 11, y la garantía de metadatos del README.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k all_visible_document_metadata --basetemp=review/out/astra_scratch/repro15_metadata",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r15_attacks import historic\nfrom twlab.packet import build_packet, readmission_problems, PredictorView\n\ndef test_period_end_is_not_free_text(tmp_path):\n    marker = 'profit in 2099 = 999; buy A'\n    try:\n        store, rec, doc, cutoff, extractors = historic(tmp_path, day=2026, period_end=marker)\n    except (ValueError, TypeError):\n        return\n    packet = build_packet(packet_id='p', cutoff_at=cutoff, documents=[doc], mode='prospective',\n        evidence_class='prospective_registered', captures={rec.capture_id: rec},\n        read_bytes=store.read, extractors=extractors)\n    assert readmission_problems(packet, store=store, extractors=extractors) or marker not in str(PredictorView(packet).packet().admitted)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-02",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/packet.py",
+      "linea": 325,
+      "afirmacion": "La verificación histórica exige también ingestión anterior al corte, confundiendo reconstrucción histórica con operación prospectiva.",
+      "contraejemplo": "Documento disponible el 02-01-2024, corte 07-01-2024 18:00 Taipei, bytes y payload revenue=100, captura real del 09-09-2026: con archivo y extractor se rechaza por not_received_before_cutoff; sin ellos se admite. Declarar first_seen_at igual a la captura real tampoco permite readmitirlo: líneas 399 y 412. Contradice PIT-04 y la separación explícita de relojes de CONTRATOS_DATOS §2 e INVESTIGACION §7.1. La prueba del constructor usa corte 2030 y no ejercita una captura posterior al corte histórico.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k 'historical_capture_can or historical_readmission_does' --basetemp=review/out/astra_scratch/repro15_historical",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r15_attacks import historic\nfrom twlab.packet import build_packet\n\ndef test_historical_source_can_be_captured_today(tmp_path):\n    store, rec, doc, cutoff, extractors = historic(tmp_path)\n    packet = build_packet(packet_id='p', cutoff_at=cutoff, documents=[doc], mode='historical',\n        evidence_class='historical_numeric_temporally_controlled', captures={rec.capture_id: rec},\n        read_bytes=store.read, extractors=extractors)\n    assert packet.admitted, packet.rejected\n    assert packet.admitted[0].first_seen_at == rec.ingested_at_dt\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-03",
+      "severidad": "alta",
+      "categoria": "unidades",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 380,
+      "afirmacion": "Las ventas y unresolved_fraction usan el Decimal aproximado, permitiendo vender más acciones que la cantidad racional exacta y eliminar un saldo negativo.",
+      "contraejemplo": "Caso límite sintético: 1.000 acciones reciben contrasplit 0.99999999999999999999999999999. Lot.exact queda en 1.000−10⁻²⁶, pero quantity redondea a 1.000 y unresolved_fraction=0. Se acepta vender 1.000 por 100.000 TWD; el lote queda en −10⁻²⁶ y se elimina de positions. La cantidad disponible real sólo tiene 999 acciones enteras. Refuta la garantía del informe 20 de que una fracción real sigue siendo fracción.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k 'reverse_split_cannot or unresolved_fraction_uses' --basetemp=review/out/astra_scratch/repro15_fraction",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r15_attacks import ledger\nfrom review.out.astra_scratch.r10_support import D, date, taipei\nfrom twlab.ledger import CorporateAction, Fill\n\ndef test_sale_cannot_exceed_exact_holding():\n    lg = ledger()\n    lg.apply_corporate_action(CorporateAction('rs', 'A', 'split', taipei(date(2024,1,9)),\n        split_ratio=D('0.99999999999999999999999999999')))\n    assert lg.positions['A'].lots[0].rational() < 1000\n    result = lg.sell(security_id='A', price=D(100), shares=1000,\n        at=taipei(date(2024,1,10)), event_id='sell')\n    assert not isinstance(result, Fill)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-04",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/ledger.py",
+      "linea": 486,
+      "afirmacion": "Los dividendos en efectivo se calculan desde quantity aproximada, perdiendo dinero incluso cuando el importe racional es entero.",
+      "contraejemplo": "1.000 acciones reciben reparto nominal 1 con nominal 3: Lot.exact=4.000/3. Un dividendo posterior de 3 TWD debe declarar 4.000 TWD; declara 3.999 por aproximación seguida de floor. Tras vender parcialmente 1.000 acciones, quedan exactamente 1.000/3 y el mismo dividendo declara 999 en vez de 1.000. La venta parcial conserva el racional; el error ocurre al calcular el cobro.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k 'cash_from_rational or partial_sale_then_cash' --basetemp=review/out/astra_scratch/repro15_cash",
+      "prueba_propuesta": "from fractions import Fraction\nfrom review.out.astra_scratch.test_r15_attacks import ledger, action\nfrom review.out.astra_scratch.r10_support import D, date, taipei\nfrom twlab.ledger import CorporateAction\n\ndef test_exact_cash_entitlement():\n    lg = ledger()\n    action(lg, 's', 9, 1, 3)\n    assert lg.positions['A'].lots[0].rational() == Fraction(4000, 3)\n    lg.apply_corporate_action(CorporateAction('c', 'A', 'cash_dividend',\n        taipei(date(2024,1,10)), per_share_cash=D(3)))\n    assert lg.receivables[0].amount == D(4000)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-05",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 94,
+      "afirmacion": "data_version sólo identifica capturas; no garantiza la inmutabilidad del contenido que consume TabularForecaster.",
+      "contraejemplo": "Entreno 134 filas al 14-01. Sin cambiar capturas, convierto el derecho de 10 TWD en ambiguo, o cambio el cierre del 12-01 de 100 a 200. Al entrenar el 21-01 no hay ValueError y permanece el manifiesto con data=fffc0aaf5753ac27. Reemplazar el calendario por otro con cierre el 12-01 y la misma versión también reutiliza filas. Con versión de calendario nueva sí se reconstruyen: ese control pasa, aunque MarketData.data_version tampoco cambia. Refuta el informe 20 §2 P5 y §3.2.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k market_mutation_without --basetemp=review/out/astra_scratch/repro15_market",
+      "prueba_propuesta": "from dataclasses import replace\nfrom review.out.astra_scratch.r10_support import fixture, date, time, taipei\nfrom review.out.astra_scratch.test_r13_attacks import cash\nfrom twlab.backtest import TabularForecaster\n\ndef test_changed_right_cannot_reuse_training(tmp_path):\n    _, market = fixture(tmp_path, end='2024-01-12', dividends=[cash(10)])\n    f = TabularForecaster(market, min_weeks=1, retrain_every_weeks=1)\n    f.maybe_train(taipei(date(2024,1,14), time(18)))\n    previous = f.model.training_manifest_id\n    security = next(iter(market.securities.values()))\n    security.events[0] = replace(security.events[0], ambiguous=True)\n    try:\n        f.maybe_train(taipei(date(2024,1,21), time(18)))\n    except ValueError:\n        return\n    assert f.model.training_manifest_id != previous\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-06",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 708,
+      "afirmacion": "La invalidación bruta permanente se aplica por security_id, contaminando lotes nuevos que nunca tuvieron el derecho ambiguo.",
+      "contraejemplo": "Se compran 1.000 A el 08-01; el derecho 10/0 ocurre el 10-01 y las acciones registradas se venden el 12-01. Se compran otras 1.000 A el 15-01 y se venden el 19-01, ambas ejecuciones a 100, sin derechos nuevos. Esta selección tiene retorno bruto conocido cero, pero gross_return y mean_gross_pick_return son null. Una compra equivalente de B sí conserva cero. La incertidumbre del patrimonio debe permanecer, pero no convierte el retorno aislado del lote nuevo en desconocido.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k new_lot_after --basetemp=review/out/astra_scratch/repro15_new_lot",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner\nfrom review.out.astra_scratch.test_r13_attacks import stock\n\ndef test_new_purchase_has_its_own_gross_return(tmp_path):\n    result = runner(tmp_path, end='2024-01-19', dividends=[stock(10), stock(0)]).run()\n    old, new = [w['forecasters']['Q0'] for w in result['weeks']]\n    assert old['picks'][0]['gross_return'] is None\n    assert new['filled'] == 1\n    assert new['portfolio_net_return_open_close'] is None\n    assert new['picks'][0]['gross_return'] == 0\n    assert new['mean_gross_pick_return'] == 0\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R15-07",
+      "severidad": "media",
+      "categoria": "especificacion",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 870,
+      "afirmacion": "El informe Markdown omite la incertidumbre de la valoración final aunque el JSON conserve ambiguous_claims y sus banderas.",
+      "contraejemplo": "Con 1.000 acciones a 100 y derecho en acciones 10/0, el patrimonio económico podría incluir otras 1.000 acciones. El JSON conserva la reclamación y marca final_valuation, pero la tabla publica Patrimonio final = 100,000 TWD sin calificativo. Además, total_net_return y el retorno encadenado son cero contable. La advertencia genérica sobre etiquetas e intervalos no identifica el patrimonio final como incierto. Los informes 11/14 actuales no contienen derechos ambiguos y sus cifras siguen reproduciéndose.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r15_attacks.py -k markdown_final_wealth --basetemp=review/out/astra_scratch/repro15_markdown",
+      "prueba_propuesta": "from review.out.astra_scratch.r10_support import runner\nfrom review.out.astra_scratch.test_r13_attacks import stock\nfrom twlab.backtest import markdown_report\n\ndef test_final_equity_table_preserves_uncertainty(tmp_path):\n    result = runner(tmp_path, end='2024-01-12', dividends=[stock(10), stock(0)]).run()\n    assert result['summary']['forecasters']['Q0']['ambiguous_claims']\n    report = markdown_report(result, title='test')\n    row = next(line for line in report.splitlines() if line.startswith('| Q0 (`'))\n    assert any(word in row.lower() for word in ('inciert', 'ambigu', 'provisional', 'no medible', 'desconocid'))\n",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [
+    "¿Se impedirá modificar el contenido de MarketData o se ampliará su versión para cubrir barras, derechos y calendario, incluyendo sustituciones que conservan identificadores?",
+    "¿Se añadirá al informe 19 una nota de vigencia que remita al 20 para las recetas de cantidades y persistencia, como ya se hizo en el informe 18?"
+  ],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "rechazo",
+      "argumento": "Persisten metadatos sin validar y la nueva verificación histórica aplica una restricción prospectiva incompatible con PIT-04: R15-01 y R15-02."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "El registro de verificadores de producción sigue vacío y de sólo lectura. Mantener la distinción entre reconstrucción histórica y evidencia prospectiva acreditada."
+    },
+    {
+      "id": "P3",
+      "posicion": "rechazo",
+      "argumento": "La reclamación permanente funciona, pero los consumidores del racional todavía permiten sobreventa y cobros incorrectos; la invalidación bruta afecta también a lotes nuevos: R15-03, R15-04 y R15-06."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Verificada la persistencia tras liquidar, el efecto sobre A1 y la valoración final con pending_outcome. Falta trasladar la incertidumbre al patrimonio mostrado por el informe Markdown: R15-07."
+    },
+    {
+      "id": "P5",
+      "posicion": "rechazo",
+      "argumento": "label_known_at ya identifica el entrenamiento y DividendLike deriva correctamente su ratio. La supuesta inmutabilidad del mercado sólo detecta cambios de captura y deja reutilizar filas obsoletas: R15-05."
+    }
+  ],
+  "veredicto": "rechazado"
+}

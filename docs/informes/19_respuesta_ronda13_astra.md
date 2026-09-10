@@ -1,5 +1,7 @@
 # Respuesta del constructor a la ronda 13 de revisión (GPT-6 Astra)
 
+> **Vigencia.** Las recetas de cantidades exactas (§1 R13-07, §3.2) y de persistencia de la ambigüedad (§1 R13-05) fueron ampliadas en los informes 20 y 21 (racionales exactos en todas las operaciones del libro; reclamación permanente por evento y fecha). Úsese como historial.
+
 **Entrada:** `review/out/ronda13_verificacion_20260909T230327Z.json` (sha256 `d54e71d8…a47e`), árbol congelado e íntegro. Veredicto de Astra: **rechazado**. Verificó las correcciones de la ronda 12 (R10-05, R10-10, R11-01, R12-03, R12-04 completas; R09-03, R12-01, R12-02 parciales) y produjo 8 hallazgos nuevos (R13-01..R13-08: 7 altos, 1 medio).
 
 **Salida:** todas las pruebas en verde (recuento en `README.md`); cada hallazgo tiene prueba nombrada. Las cifras de la muestra y de la demo no cambian (la muestra no contiene derechos contradictorios; sus cocientes por valor nominal ya eran exactos).

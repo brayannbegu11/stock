@@ -923,6 +923,29 @@ def test_r13_07_exact_par_ratio_keeps_whole_lots_sellable():
         lg.apply_corporate_action(CorporateAction("bad", "A", "stock_dividend", FRI, stock_per_share=D(1)))   # sin valor nominal
 
 
+def test_r15_03_r15_04_whole_shares_and_cash_rights_follow_the_exact_quantity():
+    from datetime import timedelta
+    lg = ledger("1000000", FREE)
+    lg.buy(security_id="A", price=D(100), shares=1000, at=MON, event_id="b", owner="w1")
+    # contrasplit casi neutro: la cantidad exacta es 1.000 − 10⁻²⁹; sólo hay 999 acciones enteras
+    lg.apply_corporate_action(CorporateAction("rs", "A", "split", MON + timedelta(days=1), split_ratio=D("0.99999999999999999999999999999")))
+    pos = lg.positions["A"]
+    assert pos.shares == 999 and pos.unresolved_fraction > 0
+    assert isinstance(lg.sell(security_id="A", price=D(100), shares=1000, at=FRI, event_id="s", owner="w1"), Rejection)
+    # dividendo en efectivo sobre una cantidad racional: 3 TWD × 4.000/3 = 4.000 TWD exactos
+    lg2 = ledger("1000000", FREE)
+    lg2.buy(security_id="A", price=D(100), shares=1000, at=MON, event_id="b", owner="w1")
+    lg2.apply_corporate_action(CorporateAction("sd", "A", "stock_dividend", MON + timedelta(days=1), stock_per_share=D(1), par_value=D(3)))
+    before = lg2.cash
+    lg2.apply_corporate_action(CorporateAction("cd", "A", "cash_dividend", MON + timedelta(days=2), per_share_cash=D(3), pay_at=MON + timedelta(days=2)))
+    assert lg2.cash - before == D(4000) and lg2.declared_dividends("A", "w1") == D(4000)
+    # venta parcial: quedan exactamente 1.000/3 acciones; el siguiente dividendo abona 1.000 TWD
+    lg2.sell(security_id="A", price=D(100), shares=1000, at=MON + timedelta(days=3), event_id="s", owner="w1")
+    before = lg2.cash
+    lg2.apply_corporate_action(CorporateAction("cd2", "A", "cash_dividend", MON + timedelta(days=4), per_share_cash=D(3), pay_at=MON + timedelta(days=4)))
+    assert lg2.cash - before == D(1000) and lg2.declared_dividends("A", "w1") == D(5000)
+
+
 def test_r14_04_chained_periodic_ratios_stay_exact():
     from datetime import timedelta
     lg = ledger("1000000", FREE)
@@ -943,7 +966,7 @@ def test_r14_04_chained_periodic_ratios_stay_exact():
 def test_r14_01_r14_02_document_fields_are_typed_and_historical_payloads_are_verified_when_evidence_exists(tmp_path):
     import json
     from dataclasses import replace
-    from datetime import date, timedelta
+    from datetime import date, time, timedelta
     from twlab.packet import Document, build_packet, readmission_problems
     from twlab.store import RawStore
     from twlab.timeutil import AvailabilityQuality, taipei
@@ -974,6 +997,26 @@ def test_r14_01_r14_02_document_fields_are_typed_and_historical_payloads_are_ver
     unverified = build_packet(packet_id="pkt-u", cutoff_at=CUTOFF_2030, documents=[forged], mode="historical",
                               evidence_class="historical_numeric_temporally_controlled", calendar=CAL_2030)
     assert unverified.admitted_ids() == {"d2"}
+    # R15-01: period_end y availability_quality tampoco son texto libre
+    with pytest.raises(ValueError):
+        Document(**{**base, "period_end": smuggle})
+    with pytest.raises(ValueError):
+        Document(**{**base, "availability_quality": smuggle})
+    assert Document(**{**base, "availability_quality": "verified_original"}).availability_quality is AvailabilityQuality.VERIFIED_ORIGINAL
+    # R15-02: en histórico, una captura posterior al corte es lo normal (relojes separados, PIT-04): no se rechaza por ingestión
+    from twlab.calendar import TradingCalendar
+    cal_2024 = TradingCalendar(start=date(2024, 1, 1), end=date(2024, 12, 31), closures=[], source_id="synthetic-2024", recorded_at=taipei(date(2024, 1, 1)))
+    cutoff_2024 = taipei(date(2024, 1, 7), time(18, 0))
+    old_doc = replace(honest, available_at=taipei(date(2024, 1, 2)))
+    hist = build_packet(packet_id="pkt-2024", cutoff_at=cutoff_2024, documents=[old_doc], mode="historical",
+                        evidence_class="historical_numeric_temporally_controlled", calendar=cal_2024,
+                        captures={rec.capture_id: rec}, read_bytes=store.read, extractors=ext)
+    assert hist.admitted_ids() == {"d1"} and hist.rejected == ()
+    assert readmission_problems(hist, store=store, extractors=ext) == []
+    # y en prospectivo la misma captura (posterior al corte) sí se rechaza
+    pro = build_packet(packet_id="pkt-2024p", cutoff_at=cutoff_2024, documents=[old_doc], mode="prospective",
+                       evidence_class="prospective_registered", calendar=cal_2024, captures={rec.capture_id: rec}, read_bytes=store.read, extractors=ext)
+    assert [r.reason for r in pro.rejected] == ["not_received_before_cutoff"]
 
 
 def test_r13_01_packet_metadata_are_catalogued_or_identifiers_never_free_text():

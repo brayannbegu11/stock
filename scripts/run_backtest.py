@@ -22,14 +22,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from twlab.backtest import BacktestConfig, MomentumForecaster, RandomForecaster, Runner, TabularForecaster, load_market, markdown_report  # noqa: E402
+from twlab.backtest import (  # noqa: E402
+    BacktestConfig, MomentumForecaster, RandomForecaster, Runner, TabularForecaster, load_market, load_market_daily, load_master_file,
+    markdown_report,
+)
 from twlab.calendar import load_twse_reference_calendar  # noqa: E402
 from twlab.store import RawStore  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--manifest", default="sample", help="sample | universe | ruta a un manifiesto")
+    ap.add_argument("--manifest", default="sample", help="sample | universe | daily (cotizaciones oficiales por fecha) | ruta a un manifiesto")
+    ap.add_argument("--lookback-start", default="2024-07-01", help="daily: primera sesión cargada para historial y entrenamiento")
     ap.add_argument("--start")
     ap.add_argument("--end")
     ap.add_argument("--weeks-back", type=int, default=0, help="si se da, start = hoy - N semanas y end = hoy")
@@ -60,7 +64,13 @@ def main() -> int:
     cfg = BacktestConfig(start=start, end=end, slots=args.slots, notional=args.notional, sizing=args.sizing,
                          exposure_tolerance=D(args.exposure_tolerance), block_length=args.block_length, seed=args.seed,
                          commission_per_side=D(args.commission), slippage_bps=args.slippage_bps, label=label)
-    market = load_market(store, manifest, calendar, par_value=cfg.par_value)
+    if args.manifest == "daily":
+        # universo completo desde las cotizaciones oficiales por fecha (sin derechos); historial desde --lookback-start
+        master = load_master_file(sorted((ROOT / "data" / "store").glob("master_*.jsonl"))[-1])
+        market = load_market_daily(store, calendar, master, as_of=today, start=date.fromisoformat(args.lookback_start), end=end,
+                                   par_value=cfg.par_value)
+    else:
+        market = load_market(store, manifest, calendar, par_value=cfg.par_value)
     if market.warnings:
         print("avisos del mercado:", *market.warnings[:20], sep="\n  ")
     names = [n.strip() for n in args.forecasters.split(",") if n.strip()]

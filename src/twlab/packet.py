@@ -158,6 +158,14 @@ class Document:
             raise ValueError("source_sha256 must be 64 lowercase hex characters (R14-01)")
         if not all(is_valid_doc_id(s) for s in self.security_ids):
             raise ValueError("security_ids must be identifiers (R14-01)")
+        if isinstance(self.availability_quality, str) and not isinstance(self.availability_quality, AvailabilityQuality):
+            object.__setattr__(self, "availability_quality", AvailabilityQuality(self.availability_quality))   # ValueError si no es del catálogo
+        if not isinstance(self.availability_quality, AvailabilityQuality):
+            raise ValueError("availability_quality must be an AvailabilityQuality (R15-01)")
+        if self.period_end is not None and (not isinstance(self.period_end, date) or isinstance(self.period_end, datetime)):
+            raise ValueError("period_end must be a date (R15-01)")
+        if not isinstance(self.payload, Mapping):
+            raise ValueError("payload must be a mapping")
         ensure_aware(self.available_at, f"{self.doc_id}.available_at")
         for name in ("published_at", "first_seen_at", "scheduled_for"):
             v = getattr(self, name)
@@ -322,15 +330,18 @@ def build_packet(
                 rejected.append(Rejection(d.doc_id, R_DERIVATION_MISMATCH, "security_ids do not equal the extracted identities"))
                 continue
             ingested = rec.ingested_at_dt
-            if is_after(ingested, cutoff_at):
-                rejected.append(Rejection(d.doc_id, R_NOT_RECEIVED_BEFORE_CUTOFF,
-                                          f"ingested_at={ingested.isoformat()} > cutoff={to_utc(cutoff_at).isoformat()}"))
-                continue
-            if d.first_seen_at is not None and to_utc(d.first_seen_at) != to_utc(ingested):
-                rejected.append(Rejection(d.doc_id, R_INCONSISTENT_METADATA,
-                                          f"first_seen_at={to_utc(d.first_seen_at).isoformat()} != capture ingested_at={ingested.isoformat()}"))
-                continue
-            d = replace(d, first_seen_at=ingested)
+            if mode == MODE_PROSPECTIVE:
+                # sólo en prospectivo el reloj de ingestión acota el corte; en histórico la captura es posterior por
+                # construcción (PIT-04: relojes separados) y no es motivo de rechazo (R15-02)
+                if is_after(ingested, cutoff_at):
+                    rejected.append(Rejection(d.doc_id, R_NOT_RECEIVED_BEFORE_CUTOFF,
+                                              f"ingested_at={ingested.isoformat()} > cutoff={to_utc(cutoff_at).isoformat()}"))
+                    continue
+                if d.first_seen_at is not None and to_utc(d.first_seen_at) != to_utc(ingested):
+                    rejected.append(Rejection(d.doc_id, R_INCONSISTENT_METADATA,
+                                              f"first_seen_at={to_utc(d.first_seen_at).isoformat()} != capture ingested_at={ingested.isoformat()}"))
+                    continue
+                d = replace(d, first_seen_at=ingested)
         admitted.append(d)
     admitted.sort(key=lambda x: (to_utc(x.available_at), x.doc_id))
     week = plan_week(cutoff_at, calendar) if calendar is not None else None
@@ -396,7 +407,8 @@ def readmission_problems(
         if d.capture_id is None or d.source_sha256 is None or d.derivation is None:
             problems.append(f"{d.doc_id}: {R_NO_CAPTURE_EVIDENCE}")
             continue
-        if d.first_seen_at is None or is_after(d.first_seen_at, packet.cutoff_at):
+        prospective = packet.mode == MODE_PROSPECTIVE
+        if prospective and (d.first_seen_at is None or is_after(d.first_seen_at, packet.cutoff_at)):
             problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
         if store is None:
             continue
@@ -409,8 +421,9 @@ def readmission_problems(
             problems.append(f"{d.doc_id}: {R_PROVENANCE_MISMATCH}")
         if rec.clock_source != "system":
             problems.append(f"{d.doc_id}: {R_SYNTHETIC_CAPTURE}")
-        if is_after(rec.ingested_at_dt, packet.cutoff_at) or (d.first_seen_at is not None and to_utc(d.first_seen_at) != to_utc(rec.ingested_at_dt)):
-            problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")
+        if prospective and (is_after(rec.ingested_at_dt, packet.cutoff_at)
+                            or (d.first_seen_at is not None and to_utc(d.first_seen_at) != to_utc(rec.ingested_at_dt))):
+            problems.append(f"{d.doc_id}: {R_NOT_RECEIVED_BEFORE_CUTOFF}")     # reloj de ingestión: sólo prospectivo (R15-02)
         try:                                                    # integridad real de los bytes archivados (R09-01)
             raw = (read_bytes or store.read)(rec)
             if hashlib.sha256(raw).hexdigest() != rec.sha256:
