@@ -1,41 +1,62 @@
 # taiwan-ia-lab
 
-Laboratorio vivo de inteligencia y evaluación bursátil para todas las acciones ordinarias de TWSE y TPEx, con control temporal estricto. Sólo análisis y carteras simuladas: sin órdenes reales, sin intermediarios.
+**Author: Brayann Benavides.** A living stock-forecasting lab for every common stock on TWSE and TPEx (Taiwan), run under a strict point-in-time clock and reviewed adversarially by an independent model. Analysis and simulated portfolios only: no real orders, no brokers, no credentials.
 
-- Especificación recibida (GPT-6 Pro, v2.0, 9-09-2026): `docs/spec/v2/`
-- Informes del constructor (Fable 5.1): `docs/informes/`
-- Revisiones del revisor independiente (GPT-6 Astra vía Codex CLI): `review/out/`
+- **Website (Spanish · English · 繁體中文):** `docs/index.html`, served by GitHub Pages at https://brayannbegu11.github.io/stock/ once Pages is enabled (Settings → Pages → *Deploy from a branch* → `main` → `/docs`). The page embeds its own data, so it also opens directly from disk.
+- Specification received (GPT-6 Pro, v2.0, 9 Sep 2026): `docs/spec/v2/`
+- Builder's reports (Spanish): `docs/informes/`
+- Independent review rounds (GPT-6 Astra via Codex CLI): `review/out/`
 
-## Empezar
+## Getting started
 
 ```bash
 python -m pip install -e ".[dev,model]"
-python -m pytest -q -p no:cacheprovider   # 285 pruebas de aceptación, sin red
-python scripts/capture_daily.py           # captura diaria a data/raw (OpenAPI TWSE/TPEx + FinMind), con ingested_at real
-python scripts/build_master.py            # maestro SCD2 y censo desde las capturas → data/store, docs/informes/10_censo_<fecha>.md
-python scripts/fetch_history_sample.py    # muestra estratificada del censo con barras y dividendos de FinMind (red, ~5 min)
-python scripts/fetch_universe_history.py  # histórico FinMind del universo (red; el nivel gratuito limita a ~300 peticiones/hora)
-python scripts/fetch_universe_daily.py --start 2024-07-01   # cotizaciones oficiales por fecha de todo el mercado (red, ~2 h; reanudable; sin dividendos)
-python scripts/run_q0_demo.py --start 2024-01-01 --end 2025-12-31   # demo de extremo a extremo (sin red)
-python scripts/run_backtest.py --manifest sample --start 2024-01-01 --end 2025-12-31 --forecasters Q0,Q1,A1   # backtest con Q1
-python scripts/run_backtest.py --manifest daily --lookback-start 2024-07-01 --weeks-back 18 --forecasters Q0,Q1,A1 --min-train-weeks 40 --report 15_backtest_universo_2026.md
+python -m pytest -q -p no:cacheprovider            # 290 acceptance tests, no network
+python scripts/capture_daily.py                    # daily capture to data/raw (TWSE/TPEx OpenAPI + FinMind), real ingested_at
+python scripts/build_master.py                     # SCD2 security master and census -> data/store, docs/informes/10_censo_<date>.md
+python scripts/fetch_history_sample.py             # stratified census sample with FinMind bars and dividends (network, ~5 min)
+python scripts/fetch_universe_daily.py --start 2024-07-01   # official per-date quotes for the whole market (network, ~2 h; resumable; no dividends)
+python scripts/run_q0_demo.py --start 2024-01-01 --end 2025-12-31          # end-to-end demo (no network)
+python scripts/run_backtest.py --manifest sample --start 2024-01-01 --end 2025-12-31 --forecasters Q0,Q1,A1
+python scripts/run_backtest.py --manifest daily --lookback-start 2024-07-01 --start 2026-05-04 --end 2026-09-09 --forecasters Q0,Q1,A1 --min-train-weeks 40 --report 15_backtest_universo_2026.md
+python scripts/run_backtest.py --manifest daily --lookback-start 2024-07-01 --start 2026-05-04 --end 2026-09-09 --forecasters Q0,Q1,A1 --min-train-weeks 40 --notional 15000 --lot-size 1 --min-commission 20 --slippage-bps 20 --label user_75kTWD_oddlots_2026 --report 15b_backtest_universo_2026_lotes_sueltos.md
+python scripts/export_site_data.py                 # refresh docs/site/data.json and embed it in docs/index.html
 ```
 
-El último corte sin desenlace se emite como `pending_outcome`: es la lista de la semana en curso (cinco valores por pronosticador), archivada en `data/raw` con hora real.
+The last cutoff without an outcome is emitted as `pending_outcome`: that is the current week's list (five securities per forecaster), archived in `data/raw` with a real timestamp.
 
-La captura diaria está registrada como tarea de Windows desde el 9-09-2026 (18:30 hora local) mediante `scripts/register_daily_capture.ps1`; se elimina con `-Eliminar`.
+The daily capture runs as a Windows scheduled task since 9 Sep 2026 (18:30 local time) via `scripts/register_daily_capture.ps1`; remove it with `-Eliminar`.
 
-Revisión adversarial con Astra (requiere Codex CLI autenticado; lanzar desde PowerShell 7):
+Adversarial review with Astra (requires an authenticated Codex CLI; launch from PowerShell 7). The runner freezes a hash of the reviewable tree before the round and refuses any change made while it runs:
 
 ```powershell
-.\review\run_astra.ps1 -Ronda ronda16_verificacion -Effort high
+.\review\run_astra.ps1 -Ronda ronda17_verificacion -Effort high
 ```
 
-## Estado (9-09-2026)
+## Status (10 Sep 2026)
 
-- **Núcleo determinista** (`src/twlab/`): calendario oficial versionado (2026 zh; 2021-2026 en) con clasificador de frases catalogadas que rehúsa adivinar, plan semanal del protocolo, maestro SCD2 con identidad símbolo+fecha de alta y universo del tablero principal por defecto, archivo sólo anexado con sellos, paquetes por corte con plan, archivo JSON y readmisión documento a documento al recuperarlos (en modo prospectivo con archivo obligatorio, integridad de bytes y re-derivación por extractor; en histórico sólo cuando se aporta archivo y registro de extractores, y si no, el documento queda declarado como no verificado), metadatos de paquete y documento restringidos a catálogos e identificadores, validación del contrato de predicción, libro por lotes y propietarios, cesta semanal, exceso emparejado con tolerancia de exposición declarada y bootstrap por bloques dentro de tramos con pesos exactos por longitud. 285 pruebas sintéticas en verde, incluidos los contraejemplos de las rondas 1 a 15 de Astra.
-- **Datos reales**: 37 endpoints capturados a diario (tarea programada de Windows registrada el 9-09-2026); maestro con 2.348 segmentos y universo simulable por defecto de 1.937 acciones ordinarias del tablero principal (informe 10); muestra archivada de 67 valores TWSE 2021-2025 con identidad de captura comprobada; histórico del universo completo en descarga; demo Q0 de 102 semanas 2024-2025 con paquete, predicción validada, libro y evaluación (informe 11). La demo prueba que la cadena funciona; **no** mide rentabilidad ni ejercita la gestión de cierres sobrevenidos.
-- **Backtest con pronosticadores** (`twlab/backtest.py`, `twlab/models/q1.py`): recorrido semanal con Q0 (momentum), Q1 (ridge + LightGBM sobre rangos de retorno total semanal, entrenado sólo con etiquetas cuya apertura y cierre estaban disponibles al corte, reentrenado cada 4 semanas, con identificador de entrenamiento por hash de filas y configuración) y A1 (aleatorio emparejado); límite de simulación = mín(fin del periodo, último dato). Sobre la muestra 2024-2025 (informe 14) Q1 supera a A1 en +0,08 % semanal neto con IC 95 % [−0,31 %, +0,35 %]: no distinguible de cero, y los costes ilustrativos dejan a los tres en negativo.
-- **Universo completo con la fuente oficial por fecha** (`twlab/sources/twse_daily.py`, informe 15): 1.937 acciones, mayo-septiembre 2026 (17 semanas operadas, 1 pendiente), Q0/Q1/A1 **sin dividendos** (la fuente no los trae). Con 17 semanas el exceso emparejado es degenerado (no estimable); el resultado útil es operativo: con dimensionado proporcional (nocional por puesto = efectivo disponible / 5, unos 0,8-1 M TWD) no cabe un lote de 1.000 acciones de los valores más caros (16 de 80 entradas de Q1 fallidas), y esa decisión de protocolo pesa más que el modelo. El escenario del capital real del usuario (75.000 TWD, lotes sueltos, comisión mínima de 20 TWD) está en el informe 15b.
-- **No existe todavía**: adaptadores criptográficos de sello (el registro de producción está vacío), extractores de noticias/anuncios, pronosticadores con LLM (L1/L2), dividendos históricos del universo completo, política de cierres sobrevenidos, adaptador de lotes menores, maestro histórico completo, módulo de informe estadístico, interfaz.
-- Los bloqueantes que requieren decisión del usuario están en `docs/informes/01_entendimiento_bloqueantes_y_plan.md` §4.2, `docs/informes/11_demo_q0_2024-2025.md` §4 y `docs/informes/21_respuesta_ronda15_astra.md` §4. Última ronda de Astra respondida: 15 (informe 21); 285 pruebas incluyen sus contraejemplos.
+- **Deterministic core** (`src/twlab/`): versioned official calendar (2026 zh; 2021–2026 en) with a phrase classifier that refuses to guess; weekly protocol plan; SCD2 security master keyed by symbol + listing date, main-board universe by default; append-only archive with seals; per-cutoff packets with plan, JSON archive and document-by-document readmission on reload (in prospective mode the archive is mandatory, with byte integrity and extractor re-derivation; in historical mode only when archive and extractor registry are supplied, otherwise the document is declared unverified); packet and document metadata restricted to catalogues and identifiers; prediction-contract validation; lot-based ledger with owners and exact rational arithmetic; weekly basket; paired excess with a declared exposure tolerance and block bootstrap within segments. 290 synthetic tests pass, including the counterexamples from Astra's rounds 1–16.
+- **Real data**: 37 endpoints captured daily; master with 2,348 segments and a default simulable universe of 1,937 main-board common stocks (report 10); archived sample of 67 TWSE securities 2021–2025 with verified capture identity; official per-date quotes for the whole market from July 2024 (`twlab/sources/twse_daily.py`; Astra verified that 15,538 TWSE–FinMind pairs from 2025 match exactly), second phase (2021–2024) downloading; Q0 demo over 102 weeks 2024–2025 (report 11).
+- **Backtest with forecasters** (`twlab/backtest.py`, `twlab/models/q1.py`): weekly walk with Q0 (momentum), Q1 (ridge + LightGBM on weekly total-return ranks, trained only on labels whose open and close were available at the cutoff, retrained every 4 weeks, training id = hash of rows and config) and A1 (paired random control); simulation bound = min(period end, last data day). On the 2024–2025 sample (report 14) Q1 beats A1 by +0.08% weekly net with a 95% CI of [−0.31%, +0.35%]: indistinguishable from zero.
+- **Full universe, official per-date source** (report 15): 1,937 stocks, May–September 2026 (17 traded weeks, 1 pending), Q0/Q1/A1 **without dividends** (the source does not carry them). Net weekly means: Q0 −0.87%, Q1 −1.04%, A1 +0.35%; eligible universe +1.23% gross. The paired excess is degenerate (not estimable) with 17 weeks. The useful result is operational: with proportional sizing (cash / 5 per slot, about NT$0.8–1M) a 1,000-share lot of the most expensive stocks does not fit (16 of 80 Q1 entries failed). The scenario sized like the author's real capital (NT$75,000, odd lots, NT$20 minimum commission, 20 bp slippage) is report 15b.
+- **Website** (`docs/index.html`): trilingual single page (es / en / zh-Hant) with the current week's lists, both scenarios week by week, the protocol, the 16 review rounds, data coverage, limits and next steps. Data come from `docs/site/data.json`, exported by `scripts/export_site_data.py` from the backtest JSONs and the review outputs; nothing on the page is typed by hand.
+- **Not built yet**: cryptographic seal adapters (the production registry is empty), news/announcement extractors, LLM forecasters (L1/L2), historical dividends for the full universe, a policy for unscheduled closures, an official odd-lot adapter, a full historical master, a statistical reporting module.
+- Decisions that belong to the author are listed in `docs/informes/01_entendimiento_bloqueantes_y_plan.md` §4.2, `docs/informes/11_demo_q0_2024-2025.md` §4 and `docs/informes/21_respuesta_ronda15_astra.md` §4. Last Astra round answered: 16 (report 22).
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `src/twlab/` | Core library: calendar, master, store, packet, ledger, evaluation, backtest, models, sources |
+| `tests/` | Acceptance tests (synthetic, offline) |
+| `scripts/` | Capture, master build, fetches, backtest, site export |
+| `docs/spec/v2/` | Specification package received |
+| `docs/informes/` | Builder's reports and responses to each review round (Spanish) |
+| `docs/index.html`, `docs/site/` | Website and its exported data |
+| `review/` | Astra runner, prompts, schemas and outputs |
+| `data/reference/`, `data/audit/` | Versioned reference data and audit records |
+| `data/raw/`, `data/store/` | Captures and derived stores (not committed) |
+
+## Disclaimer
+
+Everything here is a simulation for research. Nothing is a recommendation to buy or sell any security. Costs are illustrative, the history is short, dividends are missing from the full-universe runs and no forecaster has beaten the random control so far.
