@@ -1,10 +1,10 @@
 # Backtest del universo completo, mayo-septiembre 2026 (Q0, Q1, A1; sin dividendos)
 
-**Qué es:** el primer recorrido del protocolo sobre **todas** las acciones ordinarias del tablero principal de TWSE y TPEx (1.937 valores del maestro, informe 10), con las cotizaciones oficiales diarias por fecha (`twlab/sources/twse_daily.py`: TWSE `MI_INDEX`, TPEx `dailyQuotes`, capturadas el 9 y 10 de septiembre de 2026 para las 540 sesiones desde julio de 2024; Astra comprobó que 15.538 pares TWSE–FinMind de 2025 coinciden exactamente). Periodo: cortes dominicales del 10 de mayo al 6 de septiembre de 2026 (18 semanas: 17 operadas y la semana en curso, pendiente de desenlace). La corrida no usa ningún LLM; es una reconstrucción histórica con datos archivados hoy, **no** evidencia prospectiva (véase la lista de la semana más abajo).
+**Qué es:** el primer recorrido del protocolo sobre **todas** las acciones ordinarias del tablero principal de TWSE y TPEx (1,937 valores del maestro, informe 10), con las cotizaciones oficiales diarias por fecha (`twlab/sources/twse_daily.py`: TWSE `MI_INDEX`, TPEx `dailyQuotes`, capturadas el 9 y 10 de septiembre de 2026 para las sesiones desde julio de 2024; Astra comprobó que 15.538 pares TWSE–FinMind de 2025 coinciden exactamente). Periodo: cortes dominicales del 10 de mayo al 6 de septiembre de 2026 (18 semanas: 17 operadas y la semana en curso, pendiente de desenlace). La corrida no usa ningún LLM; es una reconstrucción histórica con datos archivados después de los cortes, **no** evidencia prospectiva (véase la lista de la semana más abajo). Etiqueta: `universe_2026-05-04_2026-09-09`; cifras tomadas de `data/store/backtest_universe_2026-05-04_2026-09-09.json`, generado con el código corregido en la ronda 17 (dimensionado exacto con comisión, estados de entrada de la semana pendiente).
 
-**Qué demuestra:** que la cadena completa (paquete → predicción validada → libro → emparejamiento) funciona sobre el universo real, con unas 835 acciones elegibles por semana; que gestiona una sesión oficial sin datos (viernes 10-07-2026: ninguna de las 1.937 acciones tiene cotización en ninguna de las dos fuentes; no hay anuncio de cierre archivado, sólo la ausencia de datos; las salidas quedaron bloqueadas y se reintentaron la semana siguiente, y la semana 2026-W28 quedó fuera de la estadística); y que emite y archiva la lista de la semana en curso.
+**Qué demuestra:** que la cadena completa (paquete → predicción validada → libro → emparejamiento) funciona sobre el universo real, con unos 835 valores elegibles por semana de media; que gestiona una sesión oficial sin datos (viernes 10-07-2026: ninguna de las 1,937 acciones tiene cotización en ninguna de las dos fuentes; no hay anuncio de cierre archivado, sólo la ausencia de datos; las salidas quedaron bloqueadas y se reintentaron la semana siguiente, y la semana 2026-W28 quedó fuera de la estadística); y que emite y archiva la lista de la semana en curso.
 
-**Qué NO demuestra:** rentabilidad. Diecisiete semanas no bastan; la fuente no trae dividendos (mayo-septiembre es la temporada de reparto en Taiwán: los retornos, las etiquetas de Q1 y las comparaciones están **sesgados a la baja**; el control 100→90 con dividendo de 10 rinde 0 % con derechos y −10 % sin ellos); el universo es el censo vigente (supervivencia); los costes son ilustrativos; y el exceso emparejado es **degenerado** (pocas semanas emparejables, porque las entradas fallidas de Q0 y Q1 dejan exposiciones muy distintas de las de A1): no hay intervalo de confianza que publicar.
+**Qué NO demuestra:** rentabilidad. 17 semanas no bastan; la fuente no trae dividendos (mayo-septiembre es la temporada de reparto en Taiwán: los retornos, las etiquetas de Q1 y las comparaciones están **sesgados a la baja**; el control 100→90 con dividendo de 10 rinde 0 % con derechos y −10 % sin ellos); el universo es el censo vigente (supervivencia); los costes son ilustrativos; y el exceso emparejado es **degenerado** cuando quedan pocas semanas emparejables (las entradas fallidas de Q0 y Q1 dejan exposiciones muy distintas de las de A1): en ese caso no hay intervalo de confianza que publicar.
 
 ## Resultado en una tabla (17 semanas operadas, 2026-W20 a 2026-W36)
 
@@ -12,26 +12,27 @@
 |---|---|---|---|---|
 | Media semanal bruta de las selecciones | −0,64 % | −0,65 % | +2,35 % | +1,23 % |
 | Media semanal neta de la cartera (apertura→cierre) | −0,87 % | −1,04 % | +0,35 % | — |
-| Semanas con neto > 0 | 5/17 | 6/17 | 9/17 | — |
+| Semanas con neto > 0 | 5/16 | 6/16 | 9/16 | — |
 | Entradas fallidas (lote más caro que el nocional del puesto) | 9 de 80 | 16 de 80 | 4 de 80 | — |
+| Coste medio sobre lo invertido | 0,75 % | 0,75 % | 0,76 % | — |
 | Patrimonio final (inicial 5.000.000 TWD) | 3.969.855 (−20,6 %) | 3.962.879 (−20,7 %) | 4.786.273 (−4,3 %) | — |
-| Exceso neto emparejado frente a A1 | +0,80 % con 7 semanas emparejables: **no estimable** | −0,34 % con 5 semanas: **no estimable** | — | — |
+| Exceso neto emparejado frente a A1 | +0,80 % con 7 semanas emparejables: **no estimable** | −0,34 % con 5 semanas emparejables: **no estimable** | — | — |
 
-Lectura correcta: en un mercado que subió con fuerza (+1,2 % semanal el universo elegible), las dos reglas de precios lo hicieron peor que el azar, y el azar peor que el mercado. La diferencia media neta A1−Q1 (1,39 puntos por semana) es mayor que el coste medio (≈ 0,76 % del importe invertido): los costes no la explican por sí solos; pero con 17 semanas, sin dividendos y sin intervalo, tampoco puede atribuirse a la señal. Lo que sí es un hecho operativo:
+Lectura correcta: en un mercado que subió (+1,23 % semanal el universo elegible, bruto), las dos reglas de precios lo hicieron peor que el azar, y el azar peor que el mercado. La diferencia media neta A1−Q1 (+1,39 % por semana) es mayor que el coste medio (0,75 % del importe invertido); con 17 semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
 
-1. **El dimensionado proporcional (efectivo disponible / 5 por puesto, ≈ 0,8-1 M TWD) no puede comprar un lote de 1.000 acciones de los valores más caros.** Q1 elige con frecuencia 台積電 (2330, ≈ 2.400 TWD), 鴻海, 緯穎 o 欣興 (3037, 939 TWD en la última semana, con 796 k TWD por puesto): 16 entradas fallidas de 80. Hay que decidir: subir el capital, admitir lotes sueltos (零股; escenario del informe 15b) o filtrar el universo por precio. Es una decisión de protocolo y cambia el universo elegible.
-2. **La regla de emparejamiento (misma exposición ±0,10) deja fuera a la mayoría de las semanas** cuando un pronosticador falla entradas y el otro no. O se corrige el dimensionado (punto 1) o el emparejamiento debe definirse de otro modo.
-3. Los costes ilustrativos (≈ 0,75 % semanal sobre lo invertido) son del orden de las diferencias semanales entre pronosticadores.
+1. **El dimensionado proporcional (efectivo disponible / 5 por puesto, ≈ 0,8-1 M TWD) no puede comprar un lote de 1.000 acciones de los valores más caros.** Q1 elige con frecuencia 台積電 (2330, ≈ 2.400 TWD), 鴻海, 緯穎 o 欣興: 16 entradas fallidas de 80. Hay que decidir: subir el capital, admitir lotes sueltos (零股; escenario del informe 15b) o filtrar el universo por precio. Es una decisión de protocolo y cambia el universo elegible.
+2. **La regla de emparejamiento (misma exposición ±0.10) deja fuera a la mayoría de las semanas** cuando un pronosticador falla entradas y el otro no. O se corrige el dimensionado (punto 1) o el emparejamiento debe definirse de otro modo.
+3. Los costes ilustrativos (≈ 0,76 % semanal sobre lo invertido) son del orden de las diferencias semanales entre pronosticadores.
 
-## Lista de la semana en curso (corte domingo 6-09-2026 18:00 Taipei; semana 2026-W37)
+## Lista de la semana en curso (corte 2026-09-06 18:00 Taipei; semana 2026-W37)
 
-Emitida y archivada con hora real el **10-09-2026**, es decir, **después** de la entrada simulada del lunes 7-09 (`forecast/universe_2026-05-04_2026-09-09/<pronosticador>/2026-W37` en `data/raw`): es una reconstrucción, no una predicción prospectiva. La primera lista prospectiva será la del corte del domingo 13-09, emitida antes de la apertura del lunes 14. Entrada simulada en la apertura del lunes 7-09; salida prevista el viernes 11-09 (pendiente).
+Emitida y archivada con hora real **después** de la entrada simulada del lunes siguiente al corte (`forecast/universe_2026-05-04_2026-09-09/<pronosticador>/2026-W37` en `data/raw`): es una reconstrucción, no una predicción prospectiva. La primera lista prospectiva será la del corte del domingo 13-09, emitida antes de la apertura del lunes 14. Entrada simulada en la primera apertura tras el plazo; salida prevista en el último cierre de la semana (pendiente).
 
 | Pronosticador | Selección (símbolo, nombre) | Estado de la entrada simulada |
 |---|---|---|
-| Q0 momentum 20 sesiones | 6538 倉和 · 2221 大甲 · 3406 玉晶光 · 6933 AMAX-KY · 3234 光環 | 4 de 5 ejecutadas; 1 sin lote posible |
-| Q1 tabular | 6669 緯穎 · 2330 台積電 · 3037 欣興 · 2317 鴻海 · 2412 中華電 | 2 de 5 ejecutadas; 3 sin lote posible (lote > 796 k TWD) |
-| A1 azar (control) | 1809 中釉 · 2316 楠梓電 · 2880 華南金 · 3293 鈊象 · 3088 艾訊 | 5 de 5 |
+| Q0 momentum 20 sesiones | 6538 倉和 · 2221 大甲 · 3406 玉晶光 · 6933 AMAX-KY · 3234 光環 | 4 de 5 ejecutadas; sin lote posible: 3406 |
+| Q1 tabular | 6669 緯穎 · 2330 台積電 · 3037 欣興 · 2317 鴻海 · 2412 中華電 | 2 de 5 ejecutadas; sin lote posible: 6669, 2330, 3037 |
+| A1 azar (control) | 1809 中釉 · 2316 楠梓電 · 2880 華南金 · 3293 鈊象 · 3088 艾訊 | 5 de 5 ejecutadas |
 
 Estas listas son la salida del laboratorio, no una recomendación: los dos pronosticadores han quedado por debajo del azar en las 17 semanas anteriores.
 
@@ -39,8 +40,8 @@ Estas listas son la salida del laboratorio, no una recomendación: los dos prono
 
 - Sin dividendos: la fuente oficial por fecha no los trae; libro, etiquetas de Q1 y comparaciones operan sin derechos (FinMind, que sí los trae, limita a ~300 peticiones por hora en el nivel gratuito).
 - Q1 entrenado con un mínimo de 40 semanas de etiqueta (no 52): el historial descargado empieza en julio de 2024; la segunda fase de descarga (2021-2024) lo ampliará.
-- 8.787 barras sin precio de sesión regular excluidas; 12 sesiones oficiales sin datos en ambas fuentes (cierres por tifón de 2024 y el 10-07-2026, sin anuncio archivado).
-- Procedencia de los paquetes: cada documento de barras declara la fuente (`twse`/`tpex`), el extractor (`twse_mi_index_daily_v1`/`tpex_daily_quotes_v1`) y la captura de cada sesión de su ventana; la readmisión verificada de series multi-captura queda pendiente (extractor por escribir).
+- 8,787 barras sin precio de sesión regular excluidas; sesiones oficiales sin datos en ambas fuentes según `market_warnings` del JSON (cierres por tifón de 2024 y el 10-07-2026, sin anuncio archivado).
+- Procedencia de los paquetes: cada documento de barras declara la fuente (`twse`/`tpex`), el extractor y, por fuente, el manifiesto de capturas de cada sesión de su ventana; una serie con sesiones sin captura enumerada no se admite (ronda 17). La readmisión verificada de series multi-captura queda pendiente (extractor por escribir).
 - Todo lo demás: informe 11 §4-5 (costes, dimensionado, tolerancia de exposición, liquidez, tablero de innovación, disponibilidad de barras por política de 24 h, calendario capturado en 2026).
 
 ---
@@ -89,4 +90,4 @@ Referencia equiponderada del universo elegible (bruta, apertura→cierre): +1.23
 | 2026-W34 | 3081 聯亞 (sin ejecutar: notional_below_one_lot), 3605 宏致 -17.5 %, 7711 永擎 -3.0 %, 2059 川湖 (sin ejecutar: notional_below_one_lot), 3653 健策 (sin ejecutar: notional_below_one_lot) → neto -3.75 % | 2412 中華電 +1.1 %, 2618 長榮航 +6.4 %, 1216 統一 +2.8 %, 2884 玉山金 +1.9 %, 2892 第一金 +1.7 % → neto +1.90 % | 2363 矽統 -4.9 %, 2207 和泰車 +0.8 %, 9914 美利達 +0.3 %, 1563 巧新 -2.2 %, 2465 麗臺 -10.4 % → neto -3.82 % |
 | 2026-W35 | 3490 單井 -12.4 %, 2059 川湖 (sin ejecutar: notional_below_one_lot), 3498 陽程 -0.8 %, 3441 聯一光電 +14.5 %, 3081 聯亞 (sin ejecutar: notional_below_one_lot) → neto -0.20 % | 2412 中華電 -0.7 %, 2330 台積電 (sin ejecutar: notional_below_one_lot), 3231 緯創 +1.1 %, 2633 台灣高鐵 +0.6 %, 2002 中鋼 -2.3 % → neto -0.84 % | 2360 致茂 (sin ejecutar: notional_below_one_lot), 5475 德宏 +16.9 %, 5284 jpp-KY -3.3 %, 2340 台亞 +10.7 %, 4764 雙鍵 +15.0 % → neto +7.29 % |
 | 2026-W36 | 2491 吉祥全 -17.3 %, 6213 聯茂 -8.2 %, 3498 陽程 +1.6 %, 3081 聯亞 (sin ejecutar: notional_below_one_lot), 8039 台虹 -13.3 % → neto -6.92 % | 2330 台積電 (sin ejecutar: notional_below_one_lot), 2603 長榮 -0.4 %, 2412 中華電 +1.1 %, 2891 中信金 +7.7 %, 2633 台灣高鐵 -0.6 % → neto +0.91 % | 6199 天品 +3.0 %, 6829 千附精密 +3.4 %, 6588 東典光電 -1.4 %, 3596 智易 -0.9 %, 5607 遠雄港 +10.1 % → neto +1.97 % |
-| 2026-W37 | 6538 倉和, 2221 大甲, 3406 玉晶光, 6933 AMAX-KY, 3234 光環 → pendiente | 6669 緯穎, 2330 台積電, 3037 欣興, 2317 鴻海, 2412 中華電 → pendiente | 1809 中釉, 2316 楠梓電, 2880 華南金, 3293 鈊象, 3088 艾訊 → pendiente |
+| 2026-W37 | 6538 倉和, 2221 大甲, 3406 玉晶光 (sin ejecutar: notional_below_one_lot), 6933 AMAX-KY, 3234 光環 → pendiente | 6669 緯穎 (sin ejecutar: notional_below_one_lot), 2330 台積電 (sin ejecutar: notional_below_one_lot), 3037 欣興 (sin ejecutar: notional_below_one_lot), 2317 鴻海, 2412 中華電 → pendiente | 1809 中釉, 2316 楠梓電, 2880 華南金, 3293 鈊象, 3088 艾訊 → pendiente |

@@ -6,8 +6,8 @@ Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad
 
 | Pronosticador | Media semanal neta apertura→cierre | Media bruta de las selecciones | Costes/semana sobre invertido | Semanas > 0 | Patrimonio final | Exceso neto vs A1 (IC 95 %) |
 |---|---|---|---|---|---|---|
-| Q0 (`rule:momentum_20_sessions_v1`) | -0.81 % | -0.05 % | +0.78 % | 34/102 | 2,021,351 TWD | -0.04 % [-0.65 %, +0.70 %] n=100 (variabilidad limitada: 1 semanas fijas) |
-| Q1 (`q1:tabular_ridge_lgbm_rank_v2`) | -0.70 % | +0.06 % | +0.78 % | 28/102 | 2,378,415 TWD | +0.08 % [-0.31 %, +0.35 %] n=100 (variabilidad limitada: 1 semanas fijas) |
+| Q0 (`rule:momentum_20_sessions_v1`) | -0.81 % | -0.05 % | +0.78 % | 34/102 | 2,021,351 TWD (PROVISIONAL: fracción sin resolver en TWSE:1436) | -0.04 % [-0.65 %, +0.70 %] n=100 (variabilidad limitada: 1 semanas fijas) |
+| Q1 (`q1:tabular_ridge_lgbm_rank_v2`) | -0.70 % | +0.06 % | +0.78 % | 28/102 | 2,378,415 TWD (PROVISIONAL: fracciones sin resolver en TWSE:2812 y TWSE:2801) | +0.08 % [-0.31 %, +0.35 %] n=100 (variabilidad limitada: 1 semanas fijas) |
 | A1 (`rule:random_eligible_v1`) | -0.77 % | -0.02 % | +0.78 % | 34/102 | 2,175,966 TWD | — |
 
 Referencia equiponderada del universo elegible (bruta, apertura→cierre): -0.09 % semanal.
@@ -127,3 +127,5 @@ Referencia equiponderada del universo elegible (bruta, apertura→cierre): -0.09
 | 2025-W51 | 2006 東和鋼鐵 -8.9 %, 2323 中環 -2.8 %, 2303 聯電 +4.8 %, 1303 南亞 -0.2 %, 1802 台玻 -7.2 % → neto -3.23 % | 2801 彰銀 +2.4 %, 2903 遠百 -2.0 %, 1708 東鹼 +0.0 %, 2812 台中銀 +0.9 %, 2002 中鋼 -0.3 % → neto -0.51 % | 1504 東元 -2.4 %, 1802 台玻 -7.2 %, 1316 上曜 +9.3 %, 1102 亞泥 -4.6 %, 2303 聯電 +4.8 % → neto -0.74 % |
 | 2025-W52 | 2349 錸德 +5.3 %, 1316 上曜 -4.8 %, 2323 中環 -1.4 %, 1303 南亞 -5.3 %, 2303 聯電 -2.1 % → neto -2.14 % | 1720 生達 -1.3 %, 2801 彰銀 -2.8 %, 2006 東和鋼鐵 -2.6 %, 1402 遠東新 -1.9 %, 2812 台中銀 -2.1 % → neto -2.82 % | 3708 上緯投控 +2.2 %, 2349 錸德 +5.3 %, 2006 東和鋼鐵 -2.6 %, 2812 台中銀 -2.1 %, 1802 台玻 +1.7 % → neto +0.09 % |
 | 2026-W01 | 2349 錸德, 2323 中環, 2303 聯電, 1802 台玻, 3708 上緯投控 → pendiente | 2801 彰銀, 1708 東鹼, 2303 聯電, 2812 台中銀, 1402 遠東新 → pendiente | 2312 金寶, 1503 士電, 2347 聯強, 2812 台中銀, 2101 南港 → pendiente |
+
+*Nota (ronda 17, R17-12): los patrimonios finales de Q0 y Q1 llevan marcas `fractional_shares_unresolved` en `final_valuation.flags` del JSON de la muestra; se califican como PROVISIONALES, como ya hace el generador actual (R16-07).*

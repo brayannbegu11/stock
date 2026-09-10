@@ -1087,3 +1087,22 @@ def test_sta04_invalid_runs_are_counted_not_hidden():
     weeks = [obs("2026-W30", 0.01), obs("2026-W31", None, valid=False), obs("2026-W32", 0.02)]
     r = block_bootstrap_mean(weeks, block_length=1, n_boot=50, seed=1)
     assert r.n_used == 2 and r.n_invalid_excluded == 1
+
+
+def test_r17_01_slot_sizing_includes_minimum_commission_and_ledger_rounding():
+    """R17-01: con comisión mínima, el nocional del puesto no puede excederse y no se rechaza una compra que cabría con menos acciones."""
+    from twlab.simulation import enter_basket, affordable_shares, entry_cost
+    costs = CostModel(commission_per_side=D("0.001425"), sell_tax=D("0.003"), slippage_bps_per_side=20, min_commission_twd=D(20))
+    lg = PaperLedger(ledger_id="r17", initial_cash=D(5000), cost_model=costs, lot_size=1)
+    picks = [f"TWSE:{i}@2000-01-01" for i in range(1, 6)]
+    at = taipei(date(2026, 5, 4), time(9, 0))
+    slots = enter_basket(lg, picks=picks, slots=5, notional_per_slot=D(1000), open_prices={p: D(10) for p in picks}, at=at, week_id="2026-W19")
+    assert [s.status for s in slots] == ["filled"] * 5
+    assert all(-s.entry.cash_delta <= D(1000) for s in slots)
+    assert all(s.entry.shares == 97 for s in slots)
+    assert entry_cost(lg, price=D(10), shares=98) > D(1000) >= entry_cost(lg, price=D(10), shares=97)
+    # sin comisión mínima la estimación proporcional y la exacta coinciden salvo redondeos, y nunca superan el presupuesto
+    lg2 = PaperLedger(ledger_id="r17b", initial_cash=D(5_000_000), cost_model=CostModel(commission_per_side=D("0.001425"), sell_tax=D("0.003"), slippage_bps_per_side=10), lot_size=1000)
+    n = affordable_shares(lg2, price=D("939"), budget=D(1_000_000))
+    assert n == 1000 and entry_cost(lg2, price=D("939"), shares=n) <= D(1_000_000)
+    assert affordable_shares(lg2, price=D("2400"), budget=D(1_000_000)) == 0

@@ -537,3 +537,69 @@ def test_end_to_end_synthetic_run_pairs_forecasters_and_reproduces_with_the_same
     for w1, w2 in zip(res["weeks"], res2["weeks"]):
         if w1["status"] == "valid":
             assert w1["forecasters"]["A1"]["picks"] == w2["forecasters"]["A1"]["picks"]
+
+
+def _daily_market(tmp_path):
+    """Mercado diario mínimo (dos fuentes, dos sesiones) con capturas por sesión, como en el R16-02."""
+    from twlab.backtest import load_market_daily
+    from twlab.master import SecurityMaster, SecurityVersion, security_id_for
+    from twlab.sources import twse_daily as td
+    from tests.test_twse_daily import _put, twse_body, tpex_body
+    store = RawStore(tmp_path)
+    master = SecurityMaster()
+    for market, sym in (("TWSE", "2035"), ("TPEX", "6488")):
+        sid = security_id_for(market, sym, date(2023, 1, 2))
+        master.add(SecurityVersion(security_id=sid, issuer_id=sid, symbol=sym, name_zh=sym, market=market, board="main",
+                                   instrument_type="ordinary_equity", valid_from=date(2023, 1, 2), valid_to=None, recorded_at=taipei(date(2024, 1, 1)), source_id="t"))
+    for d in (date(2024, 1, 4), date(2024, 1, 5)):
+        row = ["2035", "x", "1,000", "1", "100,000", "100", "100", "100", "100", "+", "0"]
+        _put(store, "twse", f"{td.TWSE_DATASET}/{d.isoformat()}", twse_body(d.strftime("%Y%m%d"), [row]))
+        trow = ["6488", "y", "50", "+1", "50", "50", "50", "50", "1,000", "50,000", "1"] + [""] * 6
+        _put(store, "tpex", f"{td.TPEX_DATASET}/{d.isoformat()}", tpex_body(d.strftime("%Y%m%d"), [trow]))
+    market = load_market_daily(store, CAL, master, as_of=date(2024, 1, 10), start=date(2024, 1, 4), end=date(2024, 1, 5))
+    return store, market
+
+
+def test_r17_02_replacing_a_session_capture_changes_data_version_and_stops_q1(tmp_path):
+    from twlab.backtest import TabularForecaster
+    _, market = _daily_market(tmp_path)
+    sec = market.securities[market.by_symbol["6488"]]
+    before = market.data_version
+    f = TabularForecaster(market, min_weeks=1)
+    sec.bar_captures[date(2024, 1, 4)] = sec.bar_captures[date(2024, 1, 5)]
+    assert market.data_version != before
+    with pytest.raises(ValueError):
+        f.maybe_train(taipei(date(2024, 1, 7), time(18)))
+
+
+def test_r17_03_series_with_a_session_without_capture_reference_is_not_admitted(tmp_path):
+    from twlab.weekly import plan_week
+    store, market = _daily_market(tmp_path)
+    sec = market.securities[market.by_symbol["6488"]]
+    del sec.bar_captures[date(2024, 1, 4)]
+    cfg = BacktestConfig(start=date(2024, 1, 1), end=date(2024, 1, 5), label="t")
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    packet, _, candidates = r.build_week_packet(plan_week(taipei(date(2024, 1, 7), time(18, 0)), CAL))
+    assert not any(d.security_ids == (sec.security_id,) for d in packet.admitted)
+    c = next(c for c in candidates if c.security_id == sec.security_id)
+    assert not c.eligible and not c.scorable and c.reasons == ("provenance_incomplete:1_sessions_without_capture",)
+    manifest = next(d for d in packet.admitted if d.doc_id == "tpex:captures:2024-W02")
+    assert list(manifest.payload["session_captures"]) == ["2024-01-05"]
+    other = market.securities[market.by_symbol["2035"]]
+    assert any(d.security_ids == (other.security_id,) for d in packet.admitted)       # la serie íntegra sigue admitida
+
+
+def test_r17_10_pending_week_records_the_known_entry_status_of_each_pick(tmp_path):
+    from twlab.backtest import load_market
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 18), end=date(2024, 3, 27), label="t", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    r.run()
+    pending = [w for w in r.weeks if w.get("pending_outcome")]
+    assert pending, "la última semana debe quedar pendiente de desenlace"
+    fr = pending[-1]["forecasters"]["Q0"]
+    assert fr["picks"], "hay selecciones"
+    assert all(p.get("entry_status") in ("filled", "entry_failed") for p in fr["picks"])
+    assert sum(p["entry_status"] == "filled" for p in fr["picks"]) == fr["filled"]
+    assert sum(p["entry_status"] == "entry_failed" for p in fr["picks"]) == fr["failed"]

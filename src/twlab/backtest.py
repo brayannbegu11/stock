@@ -107,7 +107,9 @@ class MarketData:
         h.update(f"{cal.source_id}@{cal.version}|{cal.start}|{cal.end}|{','.join(sorted(d.isoformat() for d in cal.closures))}\n".encode("utf-8"))
         for sec_id in sorted(self.securities):
             s = self.securities[sec_id]
-            h.update(f"{sec_id}|{s.price_capture.capture_id}|{getattr(s.dividend_capture, 'capture_id', '')}|{s.listing_date}|{s.delisting_date}\n".encode("utf-8"))
+            caps = ",".join(f"{d.isoformat()}={c}" for d, c in sorted(s.bar_captures.items())) if s.bar_captures else ""
+            # la procedencia por sesión también es contenido (R17-02): sustituir la captura de una sesión cambia la versión
+            h.update(f"{sec_id}|{s.price_capture.capture_id}|{getattr(s.dividend_capture, 'capture_id', '')}|{s.listing_date}|{s.delisting_date}|{caps}\n".encode("utf-8"))
             for b in s.bars:
                 h.update(f"{b.session}:{b.open}:{b.close}:{b.value_twd}:{b.available_at.timestamp()}\n".encode("utf-8"))
             for e in s.events:
@@ -666,11 +668,18 @@ class Runner:
                 availability_quality=AvailabilityQuality.CONSERVATIVE_INFERENCE, capture_id=last_cap.capture_id, source_sha256=last_cap.sha256,
                 derivation="capture_manifest_v1", payload={"session_captures": dict(sorted(entries.items()))},
             ))
+        provenance_rejected: list[tuple[str, str, int]] = []
         for sec_id, s in self.market.securities.items():
             known = [b for b in s.bars if b.available_at <= cutoff]
             if not known:
                 continue
             window = known[-130:]
+            if s.bar_captures:
+                # toda sesión de la serie debe estar respaldada por una captura enumerada (R17-03); si no, la serie no se admite
+                missing = [b.session for b in window if b.session not in s.bar_captures]
+                if missing:
+                    provenance_rejected.append((sec_id, s.symbol, len(missing)))
+                    continue
             last_cap = self.store.get(s.bar_captures[known[-1].session]) if s.bar_captures else s.price_capture
             payload = {"history_sessions": len(known), "last_session": known[-1].session.isoformat(),
                        "sessions": [[b.session.isoformat(), str(b.open), str(b.close), b.volume_shares, str(b.value_twd)] for b in window]}
@@ -707,6 +716,8 @@ class Runner:
                                     trading_status="normal" if status_ok else "no_bar_on_last_session",
                                     liquidity_ok=median_value >= D(self.cfg.liquidity_multiple * self.cfg.notional))
             candidates.append(Candidate(sv.security_id, s.symbol, doc.doc_id, sessions, cov.numerically_scorable, cov.simulation_eligible, cov.reasons))
+        for sec_id, symbol, n_missing in provenance_rejected:
+            candidates.append(Candidate(sec_id, symbol, "", [], False, False, (f"provenance_incomplete:{n_missing}_sessions_without_capture",)))
         return packet, rec, candidates
 
     def make_forecast(self, f: Forecaster, plan: WeekPlan, packet: Packet, selections: list[Selection], meta: dict, candidates) -> dict:
@@ -812,6 +823,12 @@ class Runner:
             exposure = (positions_value_open / equity_start) if (equity_start and positions_value_open is not None) else D(0)
             if pending_exit:
                 fr = record["forecasters"][name]
+                slot_by_sec = {s.security_id: s for s in slots if s.security_id}
+                for p in fr["picks"]:                                     # la ejecución del lunes ya se conoce (R17-10)
+                    slot = slot_by_sec.get(p["security_id"])
+                    if slot is not None:
+                        p["entry_status"] = slot.status                  # filled | entry_failed
+                        p["entry_reason"] = slot.reason or None
                 fr.update({"notional_per_slot": float(notional), "filled": sum(1 for s in slots if s.status == "filled"),
                            "failed": sum(1 for s in slots if s.status == "entry_failed"),
                            "fail_reasons": [s.reason for s in slots if s.status == "entry_failed"],

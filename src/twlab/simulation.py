@@ -21,7 +21,7 @@ from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
 from typing import Mapping, Optional, Sequence
 
-from .ledger import Fill, PaperLedger, Rejection, _positive_decimal
+from .ledger import Fill, PaperLedger, Rejection, _positive_decimal, q_twd
 
 D = Decimal
 _Q = D("1E-12")
@@ -56,6 +56,32 @@ class Slot:
         residual_value = self.exit_residual_quantity * (self.exit_price or D(0))
         value = self.sale_gross_total + residual_value + self.dividends_declared
         return (value / (self.entry.price * self.entry.shares) - 1).quantize(_Q)
+
+
+def entry_cost(ledger: PaperLedger, *, price: Decimal, shares: int) -> Decimal:
+    """Coste total de una compra tal como lo cobra el libro: bruto + deslizamiento + comisión (con mínimo), mismos redondeos."""
+    gross = q_twd(price * shares)
+    slip = ledger.costs.round(gross * ledger.costs.slippage)
+    executed = gross + slip
+    return executed + ledger.costs.commission(executed)
+
+
+def affordable_shares(ledger: PaperLedger, *, price: Decimal, budget: Decimal) -> int:
+    """Mayor múltiplo del lote cuyo coste total cabe en ``budget`` (R17-01).
+
+    La estimación proporcional ignora la comisión mínima y los redondeos; se corrige contra ``entry_cost`` en ambos
+    sentidos, de modo que el importe cargado nunca supera el presupuesto del puesto y no se rechaza una compra que
+    cabría con menos acciones.
+    """
+    lot = ledger.lot_size
+    unit = price * (1 + ledger.costs.slippage) * (1 + ledger.costs.commission_per_side)
+    lots = int((D(budget) / (unit * lot)).to_integral_value(rounding=ROUND_DOWN))
+    shares = max(lots, 0) * lot
+    while shares > 0 and entry_cost(ledger, price=price, shares=shares) > budget:
+        shares -= lot
+    while entry_cost(ledger, price=price, shares=shares + lot) <= budget:
+        shares += lot
+    return shares
 
 
 def enter_basket(
@@ -103,9 +129,8 @@ def enter_basket(
             out.append(Slot(rank, sid, "entry_failed", "no_open_price", owner=owner))
             continue
         price = D(price)
-        unit_cost = price * (1 + ledger.costs.slippage) * (1 + ledger.costs.commission_per_side)
-        lots = int((D(notional_per_slot) / (unit_cost * ledger.lot_size)).to_integral_value(rounding=ROUND_DOWN))
-        shares = lots * ledger.lot_size
+        budget = D(notional_per_slot)      # presupuesto del puesto (R17-01); el efectivo total lo comprueba el libro por separado (SIM-05)
+        shares = affordable_shares(ledger, price=price, budget=budget)
         if shares <= 0:
             out.append(Slot(rank, sid, "entry_failed", "notional_below_one_lot", owner=owner))
             continue

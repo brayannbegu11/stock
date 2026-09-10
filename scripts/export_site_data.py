@@ -63,6 +63,20 @@ def _pick(p: dict) -> dict:
     }
 
 
+def paired_summary(pe: dict) -> dict:
+    """Resumen del exceso emparejado sin perder sus advertencias (R17-07): observaciones fijas y variabilidad limitada."""
+    return {
+        "mean": _num(pe.get("mean")),
+        "ci95": [_num(v) for v in pe["ci95"]] if pe.get("ci95") else None,
+        "n_used": pe.get("n_used"),
+        "n_excluded": pe.get("n_excluded"),
+        "degenerate": pe.get("degenerate"),
+        "n_fixed_observations": pe.get("n_fixed_observations"),
+        "variability_limited": pe.get("variability_limited"),
+        "n_segments": pe.get("n_segments"),
+    }
+
+
 def export_scenario(sid: str, label: str, informe: str) -> dict | None:
     path = STORE / f"backtest_{label}.json"
     if not path.exists():
@@ -87,13 +101,7 @@ def export_scenario(sid: str, label: str, informe: str) -> dict | None:
             "exit_blocked": fs.get("exit_blocked"),
             "final_equity": _num(fs.get("final_equity")),
             "total_net_return": _num(fs.get("total_net_return")),
-            "paired": {
-                "mean": _num(pe.get("mean")),
-                "ci95": [_num(v) for v in pe["ci95"]] if pe.get("ci95") else None,
-                "n_used": pe.get("n_used"),
-                "n_excluded": pe.get("n_excluded"),
-                "degenerate": pe.get("degenerate"),
-            } if pe else None,
+            "paired": paired_summary(pe) if pe else None,
             "unpaired_reasons": fs.get("unpaired_reasons") or {},
         }
     weeks = []
@@ -208,6 +216,9 @@ def export_rounds() -> list[dict]:
         n = int(m.group(1))
         d = json.loads(p.read_text(encoding="utf-8"))
         new = [h for h in d.get("hallazgos", []) if re.fullmatch(rf"R0*{n}-\d+", str(h.get("id", "")))]
+        verifications = [{"id": str(h.get("id", "")).split("/", 1)[0], "state": h.get("estado_verificacion"), "severity": h.get("severidad"),
+                          "claim": h.get("afirmacion")}
+                         for h in d.get("hallazgos", []) if "/verificacion" in str(h.get("id", ""))]
         sev: dict[str, int] = {}
         for h in new:
             k = str(h.get("severidad") or "sin_severidad")
@@ -229,6 +240,7 @@ def export_rounds() -> list[dict]:
             "summary": d.get("resumen"),
             "findings_total": len(d.get("hallazgos", [])),
             "findings_new": len(new),
+            "verifications": verifications,
             "severity": sev,
             "tests_passing": tests,
             "response": f"docs/informes/{response}" if response else None,
@@ -240,6 +252,25 @@ def export_rounds() -> list[dict]:
         })
     rounds.sort(key=lambda r: r["round"])
     return rounds
+
+
+def review_stats(rounds: list[dict]) -> dict:
+    """Recuentos derivados sólo de entradas identificables (R17-05): hallazgos nuevos emitidos y verificaciones de Astra.
+
+    Una verificación cuenta como tal si Astra la registró con estado ``reproducido`` en una ronda posterior; el texto de la
+    verificación puede declararla parcial, y eso no se interpreta aquí: se publica el recuento y el enlace al JSON."""
+    new_by_id: dict[str, str] = {}
+    for r in rounds:
+        for h in r["new_findings"]:
+            new_by_id[h["id"]] = h.get("severity") or ""
+    verified: set[str] = set()
+    for r in rounds:
+        for v in r["verifications"]:
+            if v["id"] in new_by_id and v["state"] == "reproducido":
+                verified.add(v["id"])
+    blocking = {i for i, s in new_by_id.items() if s == "bloqueante"}
+    return {"new_total": len(new_by_id), "verified_total": len(verified), "blocking_new": len(blocking),
+            "blocking_verified": len(blocking & verified), "unverified_ids": sorted(set(new_by_id) - verified)}
 
 
 def _first_heading(p: Path) -> str:
@@ -280,16 +311,26 @@ def raw_coverage() -> dict:
     return out
 
 
-def master_stats() -> dict:
-    latest = sorted(STORE.glob("master_*.jsonl"))
+def master_stats(store: Path = STORE) -> dict:
+    """Segmentos del maestro: sólo las filas ``kind == "segment"`` (R17-13); los eventos terminales se cuentan aparte."""
+    latest = sorted(store.glob("master_*.jsonl"))
     if not latest:
         return {}
     p = latest[-1]
-    n = sum(1 for _ in p.open(encoding="utf-8"))
-    return {"file": p.name, "segments": n, "as_of": p.stem.split("_", 1)[1]}
+    kinds: dict[str, int] = {}
+    with p.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            k = str(json.loads(line).get("kind", "segment"))
+            kinds[k] = kinds.get(k, 0) + 1
+    return {"file": p.name, "segments": kinds.get("segment", 0), "other_rows": {k: v for k, v in kinds.items() if k != "segment"},
+            "as_of": p.stem.split("_", 1)[1]}
 
 
 def build() -> dict:
+    rounds = export_rounds()
     scenarios = []
     for sid, label, informe in SCENARIOS:
         sc = export_scenario(sid, label, informe)
@@ -306,7 +347,8 @@ def build() -> dict:
         "raw_coverage": raw_coverage(),
         "master": master_stats(),
         "scenarios": scenarios,
-        "rounds": export_rounds(),
+        "rounds": rounds,
+        "review_stats": review_stats(rounds),
         "docs": export_docs(),
     }
 
