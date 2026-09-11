@@ -34,7 +34,7 @@ from .schemas import validate_prediction
 from .simulation import basket_report, enter_basket, exit_basket
 from .sources import finmind
 from .sources.finmind import SourceIdentityMismatch
-from .store import CaptureRecord, RawStore, IntegrityError
+from .store import CaptureRecord, RawStore, IntegrityError, ManifestCorrupt, MissingCapture
 from .timeutil import TAIPEI, AvailabilityQuality, derive_available_at, taipei
 from .weekly import WeekPlan, plan_week
 
@@ -557,11 +557,15 @@ def _sundays(start: date, end: date):
         d += timedelta(days=7)
 
 
+# fallos del archivo que impiden emitir o evaluar una semana; la semana queda registrada como ``invalid:archive`` y la
+# corrida continúa (R26-03). Los paquetes archivados corruptos siguen siendo un rechazo deliberado (ManifestInconsistent, R20-04).
+ARCHIVE_ERRORS = (ManifestInconsistent, IntegrityError, ManifestCorrupt, MissingCapture, OSError)
+
+
 class Runner:
     def __init__(self, store: RawStore, market: MarketData, cfg: BacktestConfig, forecasters: Sequence[Forecaster]) -> None:
         self.store, self.market, self.cfg = store, market, cfg
         self._master_rec: Optional[CaptureRecord] = None
-        self._master_payload: Optional[bytes] = None
         self.forecasters = {f.name: f for f in forecasters}
         if cfg.baseline not in self.forecasters:
             raise ValueError(f"baseline {cfg.baseline!r} is not among the forecasters")
@@ -734,7 +738,7 @@ class Runner:
             # los metadatos no bastan (R20-04): se leen los bytes (integridad sha256) y se re-deriva el hash de contenido
             try:
                 archived = packet_from_json(self.store.read(rec))
-            except (IntegrityError, ValueError, KeyError, TypeError) as exc:
+            except (IntegrityError, OSError, ValueError, KeyError, TypeError) as exc:
                 raise ManifestInconsistent(f"archived packet {rec.capture_id} is unreadable or corrupt: {exc}") from exc
             if archived.packet_hash() != packet.packet_hash():
                 raise ManifestInconsistent(f"archived packet {rec.capture_id} does not re-derive to packet_hash {packet.packet_hash()}")
@@ -818,6 +822,19 @@ class Runner:
                     record["forecasters"][name] = {"equity_end": None, "flags": [f"missing_price:{exc}"] + stale}
             record["note"] = "invalid:no_sessions (registrado, sin operaciones; eventos procesados hasta el límite)"
             return
+        try:
+            self._emit_week(plan, record, bound)
+        except ARCHIVE_ERRORS as exc:
+            # el archivo no permite emitir con garantías: la semana queda registrada como fallida, sin predicciones ni
+            # evaluación, y la corrida continúa con la siguiente (R26-03)
+            record["status"] = "invalid:archive"
+            record["forecasters"] = {}
+            record["archive_error"] = f"{type(exc).__name__}: {exc}"[:300]
+            record["note"] = f"invalid:archive ({type(exc).__name__}): semana no emitida ni evaluada"
+            return
+
+    def _emit_week(self, plan: WeekPlan, record: dict, bound: date) -> None:
+        cfg = self.cfg
         packet, pkt_rec, candidates = self.build_week_packet(plan)
         mrec = self.master_record()             # el maestro se archiva antes que cualquier predicción que lo cite (R24-02)
         view = PredictorView(packet)
@@ -844,7 +861,7 @@ class Runner:
             if frec is not None:
                 try:
                     self.store.read(frec)                        # integridad de los bytes reutilizados (R20-04)
-                except IntegrityError:
+                except (IntegrityError, OSError):                # corrupta o ausente: se vuelve a archivar (R26-03)
                     frec = None
             if frec is None:
                 # bytes idénticos ya archivados e íntegros: se conserva la primera ingestión (la única que vale como fecha de emisión)
@@ -1000,26 +1017,26 @@ class Runner:
     # -- todo el periodo -------------------------------------------------------------------------------
     def master_record(self) -> CaptureRecord:
         """Instantánea del maestro con la que se resuelven símbolos y nombres, archivada antes que cualquier predicción
-        que la cite. Bytes idénticos ya archivados e íntegros se reutilizan (la primera copia íntegra por instante), como
-        los paquetes y las predicciones (R23-01); la integridad se comprueba en **cada** llamada, de modo que una copia
-        corrompida a mitad de corrida se vuelve a archivar en vez de quedar citada (R25-02)."""
-        if self._master_payload is None:
-            self._master_payload = master_snapshot_bytes(self.market.master)
-        payload = self._master_payload
+        que la cite. Se serializa de nuevo en **cada** llamada, de modo que un maestro que cambia durante la corrida
+        (cierres, revisiones) produce una instantánea nueva citada por las semanas siguientes (R26-02). Bytes idénticos
+        ya archivados e íntegros se reutilizan (la primera copia íntegra por instante), como los paquetes y las
+        predicciones (R23-01); la integridad se comprueba en cada llamada y una copia corrompida o ausente se sustituye
+        por otra íntegra o se vuelve a archivar antes de emitir (R25-02, R26-03)."""
+        payload = master_snapshot_bytes(self.market.master)
         sha = hashlib.sha256(payload).hexdigest()
         dataset = f"{self.cfg.archive_label or self.cfg.label}/master"
-        rec = self._master_rec
+        rec = self._master_rec if (self._master_rec is not None and self._master_rec.sha256 == sha) else None
         if rec is not None:
             try:
                 self.store.read(rec)
-            except IntegrityError:
+            except (IntegrityError, OSError):
                 rec = None
         if rec is None:
             for cand in sorted((r for r in self.store.captures(source_id="master", dataset=dataset) if r.sha256 == sha),
                                key=lambda r: r.ingested_at_dt):
                 try:
                     self.store.read(cand)
-                except IntegrityError:
+                except (IntegrityError, OSError):
                     continue
                 rec = cand
                 break
@@ -1054,6 +1071,7 @@ class Runner:
             "label": cfg.label, "period": [cfg.start.isoformat(), cfg.end.isoformat()], "manifest": self.market.source_manifest,
             "universe_size": len(self.market.securities), "weeks_total": len(self.weeks), "weeks_operated": len(operated),
             "weeks_invalid_no_sessions": sum(1 for w in self.weeks if w["status"] == "invalid:no_sessions"),
+            "weeks_invalid_archive": [w["week_id"] for w in self.weeks if w["status"] == "invalid:archive"],
             "weeks_pending_outcome": [w["week_id"] for w in self.weeks if w.get("pending_outcome")],
             "weeks_extraordinary_closure_unhandled": [w["week_id"] for w in self.weeks if str(w.get("note", "")).startswith("extraordinary")],
             "bars_without_regular_price_dropped": self.market.dropped_no_regular_price,

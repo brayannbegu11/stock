@@ -41,6 +41,15 @@ class UntrustedVerifier(ValueError):
     pass
 
 
+class ManifestCorrupt(ValueError):
+    """El índice del archivo (``manifest.jsonl``) tiene una línea que no es un registro válido: nada de lo que
+    contiene puede usarse como evidencia hasta que se repare (R26-03)."""
+
+
+class MissingCapture(KeyError):
+    """Identificador de captura ausente del índice del archivo (R26-03)."""
+
+
 class IntegrityError(RuntimeError):
     pass
 
@@ -178,16 +187,23 @@ class RawStore:
         if not p.exists():
             return []
         latest: dict[str, CaptureRecord] = {}
-        for line in p.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                r = CaptureRecord.from_manifest_line(json.loads(line))
-                latest[r.capture_id] = r          # los recibos se anexan; la última línea gana
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+                if not isinstance(raw, dict):
+                    raise ValueError("manifest line is not an object")
+                r = CaptureRecord.from_manifest_line(raw)
+            except (ValueError, TypeError, AttributeError) as exc:   # json.JSONDecodeError es ValueError
+                raise ManifestCorrupt(f"{p.name} line {n}: {exc}") from exc
+            latest[r.capture_id] = r          # los recibos se anexan; la última línea gana
         return list(latest.values())
 
     def get(self, capture_id: str) -> CaptureRecord:
         recs = {r.capture_id: r for r in self._read_manifest()}
         if capture_id not in recs:
-            raise KeyError(capture_id)
+            raise MissingCapture(capture_id)
         return recs[capture_id]
 
     def find(self, *, source_id: str, dataset: str, sha256: Optional[str] = None,

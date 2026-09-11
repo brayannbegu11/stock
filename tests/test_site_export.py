@@ -847,3 +847,44 @@ def test_r25_06_assembler_keeps_every_reason_when_inputs_are_late(tmp_path, monk
     monkeypatch.setattr(importlib.util, "spec_from_file_location", redirected)
     txt = asm.temporal_sentence({"label": "lab", "assumptions": {"archive_label": "lab"}}, week)
     assert "después del corte" in txt and "late_inputs" in txt and "master_link_mismatch:Q0" in txt, txt
+
+
+@pytest.mark.parametrize("mutation", ["clock", "late", "sha", "path"])
+def test_r26_01_manifest_rewrites_are_seen_by_the_next_classification(tmp_path, monkeypatch, mutation):
+    """El índice del archivo se relee cuando cambia: un registro alterado entre dos llamadas invalida la segunda."""
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    assert ex.classify_week("lab", week)["prospective"] is True
+    rows = _manifest_rows(tmp_path)
+    for row in rows:
+        if row["capture_id"] == pk.admitted[0].capture_id:
+            if mutation == "clock":
+                row["clock_source"] = "injected"
+            elif mutation == "late":
+                row["ingested_at"] = "2026-09-14T12:00:00+00:00"
+            elif mutation == "sha":
+                row["sha256"] = "0" * 64
+            else:
+                row["path"] = "missing.bin"
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    c = ex.classify_week("lab", week)                                    # sin tocar _MANIFEST
+    assert c["prospective"] is False, (mutation, c)
+
+
+@pytest.mark.parametrize("target", ["master", "forecast"])
+def test_r26_04_a_corrupt_earlier_copy_with_injected_clock_does_not_shadow_the_intact_one(tmp_path, monkeypatch, target):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    cid = week["master_capture"] if target == "master" else fc["Q0"].capture_id
+    (tmp_path / "corrupt_earlier.bin").write_bytes(b"corrupt")
+    rows = _manifest_rows(tmp_path)
+    row = dict(next(r for r in rows if r["capture_id"] == cid))
+    row.update(capture_id="earlier-corrupt", ingested_at="2026-09-12T07:00:00+00:00", clock_source="injected", path="corrupt_earlier.bin")
+    rows.append(row)
+    _rewrite_manifest(ex, tmp_path, rows)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is True, c
+    # y una copia íntegra anterior con reloj inyectado sí manda (R21-05)
+    (tmp_path / "intact_earlier.bin").write_bytes(store.read(store.get(cid)))
+    rows[-1].update(path="intact_earlier.bin")
+    _rewrite_manifest(ex, tmp_path, rows)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and any("clock:injected" in r for r in c["reasons"]), c

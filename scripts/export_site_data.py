@@ -211,25 +211,27 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
 
 
 _MANIFEST: list[dict] | None = None
+_MANIFEST_SHA: str | None = None
 _BY_ID: dict[str, dict] = {}
 
 
 def manifest() -> list[dict]:
-    """Registros del archivo (una lectura por ejecución)."""
-    global _MANIFEST, _BY_ID
-    if _MANIFEST is None:
-        _MANIFEST = []
-        mf = RAW / "manifest.jsonl"
-        if mf.exists():
-            with mf.open(encoding="utf-8") as fh:
-                for line in fh:
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(rec, dict):
-                        continue                                        # una línea que no es un registro no es evidencia (R23-02)
-                    _MANIFEST.append(rec)
+    """Registros del archivo, releídos del disco cada vez que el índice cambia (sha256 de sus bytes, R26-01)."""
+    global _MANIFEST, _MANIFEST_SHA, _BY_ID
+    mf = RAW / "manifest.jsonl"
+    data = mf.read_bytes() if mf.exists() else b""
+    sha = hashlib.sha256(data).hexdigest()
+    if _MANIFEST is None or sha != _MANIFEST_SHA:
+        recs: list[dict] = []
+        for line in data.decode("utf-8", errors="replace").splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue                                                # una línea que no es un registro no es evidencia (R23-02)
+            recs.append(rec)
+        _MANIFEST, _MANIFEST_SHA = recs, sha
         _BY_ID = {r.get("capture_id"): r for r in _MANIFEST}
     return _MANIFEST
 
@@ -256,6 +258,22 @@ def _intact(rec: dict) -> bool:
 def _instant(s: str | None) -> datetime | None:
     d = _aware(s)
     return d.astimezone(timezone.utc) if d else None
+
+
+def _intact_evidence(rec: dict | None) -> bool:
+    """Registro completo, con hora utilizable y bytes íntegros, **sin** mirar el reloj: es lo que decide cuál es la
+    primera copia íntegra; el reloj de esa copia se juzga después (R21-05, R26-04)."""
+    if not isinstance(rec, dict):
+        return False
+    for k in ("path", "sha256", "ingested_at", "clock_source"):
+        if not rec.get(k) or not isinstance(rec.get(k), str):
+            return False
+    try:
+        if _instant(rec.get("ingested_at")) is None:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return _intact(rec)
 
 
 def _record_ok(rec: dict | None) -> str | None:
@@ -323,7 +341,7 @@ def forecast_archive(archive_label: str, week_id: str, expected: dict | None = N
         same.sort(key=lambda r: (_instant(r.get("ingested_at")) or datetime.max.replace(tzinfo=timezone.utc)))
         # la primera ingestión ÍNTEGRA por instante (un archivo corrupto no prueba nada; saltarlo sólo puede retrasar la
         # fecha, nunca adelantarla); es esa primera la que debe llevar reloj del sistema (R21-05)
-        first = next((r for r in same if _record_ok(r) in (None, "clock:injected") or (_record_ok(r) or "").startswith("clock:")), None)
+        first = next((r for r in same if _intact_evidence(r)), None)          # primera copia íntegra; su reloj se juzga después
         why = _record_ok(first)
         if why:
             ok = False; out["reasons"].append(f"{'missing_or_corrupt' if why in ('missing_record', 'corrupt') else why}:{f}")
@@ -566,7 +584,7 @@ def master_identity(master_capture_id, cutoff_at, ranking: Mapping[str, list], *
     # del sistema, no puede ser posterior al plazo de ninguna predicción (un maestro repuesto después no acredita nada)
     same = [r for r in manifest() if r.get("source_id") == "master" and r.get("dataset") == rec.get("dataset") and r.get("sha256") == sha]
     same.sort(key=lambda r: (_instant(r.get("ingested_at")) or datetime.max.replace(tzinfo=timezone.utc)))
-    first = next((r for r in same if _record_ok(r) is None or (_record_ok(r) or "").startswith("clock:")), None)
+    first = next((r for r in same if _intact_evidence(r)), None)              # primera copia íntegra; su reloj se juzga después
     why = _record_ok(first)
     if why:
         return {"ok": False, "reasons": reasons + [f"master_{why}"]}

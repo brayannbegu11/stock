@@ -695,8 +695,9 @@ def test_r20_04_reused_packet_and_forecast_bytes_are_verified(tmp_path):
     pkt = store.captures(source_id="packet")[0]
     (store.root / pkt.path).write_bytes(b'{"corrupt":true}')
     cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="b", archive_label="lab", notional=1_000_000, slots=5)
-    with pytest.raises(ManifestInconsistent):
-        Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
+    bad = Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()["weeks"][0]
+    # el rechazo sigue siendo deliberado (ManifestInconsistent), contenido en la semana: no se emite ni se evalúa (R26-03)
+    assert bad["status"] == "invalid:archive" and bad["archive_error"].startswith("ManifestInconsistent") and bad["forecasters"] == {}
     # un forecast corrupto no se reutiliza: se vuelve a archivar con bytes íntegros
     store2, path2 = make_market(tmp_path / "b")
     market2 = load_market(store2, path2, CAL)
@@ -779,3 +780,85 @@ def test_r25_02_master_snapshot_corrupted_between_weeks_is_rearchived_before_use
     if len(sundays) >= 3:
         r.run_week(sundays[2])
         assert r.weeks[-1]["master_capture"] == fresh.capture_id
+
+
+def test_r26_02_master_changes_during_a_run_are_archived_and_cited(tmp_path):
+    """Si el maestro cambia entre semanas de la misma corrida, la semana siguiente cita una instantánea nueva."""
+    from twlab.backtest import load_market, _sundays
+    from datetime import datetime, timezone
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 22), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    sundays = list(_sundays(cfg.start, cfg.end))
+    r.run_week(sundays[0])
+    first = store.get(r.weeks[-1]["master_capture"])
+    sid = market.by_symbol["A"]
+    seen = market.master.current_segment(sid).recorded_at + timedelta(seconds=1)      # una revisión se registra después de la fila previa
+    market.master.close_version(sid, valid_to=sundays[1], recorded_at=seen, source_id="fixture")
+    r.run_week(sundays[1])
+    w = r.weeks[-1]
+    second = store.get(w["master_capture"])
+    assert second.capture_id != first.capture_id and second.sha256 != first.sha256
+    rows = [json.loads(l) for l in store.read(second).decode("utf-8").splitlines()]
+    assert any(row["security_id"] == sid and row["valid_to"] == sundays[1].isoformat() for row in rows)
+    for name, x in w["forecasters"].items():
+        assert json.loads(store.read(store.get(x["forecast_capture_id"])))["master_sha256"] == second.sha256
+
+
+def test_r26_03_missing_master_copy_falls_back_to_another_intact_copy(tmp_path):
+    from twlab.backtest import load_market, _sundays, master_snapshot_bytes
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 22), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    sundays = list(_sundays(cfg.start, cfg.end))
+    r.run_week(sundays[0])
+    first = store.get(r.weeks[-1]["master_capture"])
+    second = store.put(source_id="master", dataset="lab/master", payload=master_snapshot_bytes(market.master), url="u")
+    (store.root / first.path).unlink()
+    r.run_week(sundays[1])
+    assert r.weeks[-1]["master_capture"] == second.capture_id and r.weeks[-1]["status"] == "valid"
+
+
+def test_r26_03_missing_forecast_copy_is_rearchived(tmp_path):
+    from twlab.backtest import load_market
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    res = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    x = res["weeks"][0]["forecasters"]["Q0"]
+    (store.root / store.get(x["forecast_capture_id"]).path).unlink()
+    cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="b", archive_label="lab", notional=1_000_000, slots=5)
+    res2 = Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
+    y = res2["weeks"][0]["forecasters"]["Q0"]
+    assert y["forecast_sha256"] == x["forecast_sha256"] and y["forecast_capture_id"] != x["forecast_capture_id"]
+    store.read(store.get(y["forecast_capture_id"]))
+
+
+@pytest.mark.parametrize("target,bad", [("manifest", "invalid_json"), ("manifest", "non_object"), ("packet", "missing"), ("packet", "corrupt")])
+def test_r26_03_archive_failures_are_contained_per_week(tmp_path, target, bad):
+    """Un índice corrupto o un paquete archivado ilegible dejan la semana registrada como invalid:archive; no escapa ninguna excepción."""
+    from twlab.backtest import load_market
+    from twlab.store import ManifestCorrupt
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    res = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    if target == "manifest":
+        (store.root / "manifest.jsonl").write_bytes(b"{bad" if bad == "invalid_json" else b"[]")
+        with pytest.raises(ManifestCorrupt):
+            store.captures()
+    else:
+        p = store.root / store.get(res["weeks"][0]["packet_capture"]).path
+        if bad == "missing":
+            p.unlink()
+        else:
+            p.write_bytes(b'{"corrupt":true}')
+    cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="b", archive_label="lab", notional=1_000_000, slots=5)
+    res2 = Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
+    w = res2["weeks"][0]
+    assert w["status"] == "invalid:archive" and w["forecasters"] == {} and w["archive_error"]
+    assert res2["summary"]["weeks_invalid_archive"] == [w["week_id"]] and res2["summary"]["weeks_operated"] == 0
+    from twlab.backtest import markdown_report
+    assert "invalid:archive" in markdown_report(res2, title="t")

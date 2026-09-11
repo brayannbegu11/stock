@@ -30,3 +30,8 @@ Con este código pasan enteras `review/out/astra_scratch/test_r23.py` y `test_r2
 ## 5. Pendientes que siguen abiertos
 
 Readmisión verificada en modo prospectivo (extractor multicaptura) y construcción del paquete en ese modo; sello externo de fecha; dividendos del universo completo; política de cierres sobrevenidos; adaptador oficial de lotes sueltos. Los bloqueantes que dependen del usuario no cambian (informe 21 §4).
+
+## 6. Fe de erratas (tras la ronda 26)
+
+Tres afirmaciones de este informe (y las equivalentes del README) excedían lo que el código acreditaba, como señaló Astra en la ronda 26: (1) «la integridad se vuelve a comprobar en cada llamada» valía para los bytes, pero el índice del archivo (`manifest.jsonl`) se leía una sola vez por proceso (R26-01); (2) el Runner «archiva el maestro antes que las predicciones», pero congelaba la primera instantánea aunque el maestro cambiara durante la corrida (R26-02) y sólo recuperaba copias corruptas, no ausentes (R26-03); (3) la «primera copia íntegra» podía ser desplazada por una copia corrupta anterior con reloj inyectado (R26-04). Todo queda corregido en el informe 32.
+
