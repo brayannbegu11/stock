@@ -390,13 +390,11 @@ def inputs_before_cutoff(packet_capture_id: str | None, cutoff_at: str, packet_h
     ``packet_hash`` coincide con el de la semana, todo documento admitido con ``capture_id``, todo manifiesto con
     ``session_captures`` no vacío, y cada captura referenciada con registro completo, íntegra, escrita por el reloj
     del sistema e ingerida antes o en el corte. Cualquier fallo devuelve ``ok=False`` con su motivo; sólo
-    ``late_inputs`` significa «recibido después del corte»: lo demás es procedencia no acreditada."""
-    key = (packet_capture_id, cutoff_at, packet_hash)
-    if key in _INPUTS_CACHE:
-        return _INPUTS_CACHE[key]
-    res = _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash)
-    _INPUTS_CACHE[key] = res
-    return res
+    ``late_inputs`` significa «recibido después del corte»: lo demás es procedencia no acreditada.
+
+    No se cachea ningún veredicto: la integridad del paquete y de cada captura se vuelve a comprobar en cada llamada
+    (R25-01); sólo la deserialización del paquete se conserva, indexada por el sha256 de los bytes realmente leídos."""
+    return _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash)
 
 
 def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
@@ -413,16 +411,23 @@ def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
         return {"ok": False, "reason": "packet_unreadable_or_empty"}
     # el paquete se deserializa con el contrato del laboratorio y su hash lógico se recalcula (R22-02): el campo
     # packet_hash del archivo no se toma como cierto; cualquier fallo de contrato o tipo cierra la clasificación (R22-04)
-    try:
-        from twlab.packet import packet_from_json
-        pk = packet_from_json(raw)
-        logical = pk.packet_hash()
-    except Exception as exc:  # noqa: BLE001 - un paquete que no cumple el contrato no acredita nada
-        return {"ok": False, "reason": f"packet_contract:{type(exc).__name__}"}
-    try:
-        declared = json.loads(raw).get("packet_hash")
-    except Exception:  # noqa: BLE001
-        declared = None
+    raw_sha = hashlib.sha256(raw).hexdigest()
+    if raw_sha != rec.get("sha256"):
+        return {"ok": False, "reason": "packet_corrupt"}
+    cached = _INPUTS_CACHE.get(("packet", raw_sha))
+    if cached is None:
+        try:
+            from twlab.packet import packet_from_json
+            pk = packet_from_json(raw)
+            logical = pk.packet_hash()
+        except Exception as exc:  # noqa: BLE001 - un paquete que no cumple el contrato no acredita nada
+            return {"ok": False, "reason": f"packet_contract:{type(exc).__name__}"}
+        try:
+            declared = json.loads(raw).get("packet_hash")
+        except Exception:  # noqa: BLE001
+            declared = None
+        cached = _INPUTS_CACHE[("packet", raw_sha)] = (pk, logical, declared)
+    pk, logical, declared = cached
     if packet_hash is not None and logical != packet_hash:
         return {"ok": False, "reason": "packet_hash_mismatch", "mode": pk.mode}
     if declared != logical:
@@ -455,7 +460,8 @@ def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
     series: list[dict] = []
     for d in pk.admitted:
         if d.kind == "price_bar_series":
-            series.append({"security_id": d.security_ids[0] if d.security_ids else None, "doc_id": d.doc_id})
+            series.append({"security_id": d.security_ids[0] if d.security_ids else None, "security_ids": list(d.security_ids),
+                           "doc_id": d.doc_id})
             if d.security_ids and isinstance(d.payload, Mapping) and isinstance(d.payload.get("name"), str):
                 names[d.security_ids[0]] = d.payload["name"]
     late, bad, latest = [], [], None
@@ -482,13 +488,14 @@ _MASTER_FIELDS = {"security_id", "issuer_id", "symbol", "name_zh", "market", "bo
 
 
 def _master_row(row):
-    """Fila de la instantánea del maestro con tipos estrictos (R24-03); ``None`` si no es un segmento."""
+    """Fila de la instantánea del maestro con tipos estrictos (R24-03, R25-04)."""
     from twlab.master import SecurityVersion
     if not isinstance(row, dict):
         raise ValueError("row_not_object")
     row = dict(row)
-    if row.pop("kind", "segment") != "segment":
-        return None
+    kind = row.pop("kind", None)
+    if kind != "segment":                                   # la instantánea sólo contiene segmentos; otra cosa es malformada (R25-04)
+        raise ValueError(f"unsupported_kind:{kind!r}")
     unknown = set(row) - _MASTER_FIELDS - {"name_en", "valid_from", "valid_to", "recorded_at"}
     if unknown:
         raise ValueError("unknown_field:" + ",".join(sorted(unknown)))
@@ -524,15 +531,14 @@ def _load_master(rec: dict):
         for line in (RAW / rec["path"]).read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            v = _master_row(json.loads(line))
-            if v is not None:
-                m.add(v)
+            m.add(_master_row(json.loads(line)))
         _MASTER_CACHE[key] = m
     return m
 
 
 def master_identity(master_capture_id, cutoff_at, ranking: Mapping[str, list], *, archive_label: str | None = None,
-                    deadlines: Mapping[str, str | None] | None = None, links: Mapping[str, str | None] | None = None) -> dict:
+                    deadlines: Mapping[str, str | None] | None = None, links: Mapping[str, str | None] | None = None,
+                    archived_at: Mapping[str, str | None] | None = None) -> dict:
     """Identidad económica de cada valor seleccionado según el maestro **archivado** por la corrida (R23-01, R24-01..05).
 
     Se exige: registro completo, íntegro y con reloj del sistema, de la fuente ``master`` y del dataset del maestro de
@@ -569,6 +575,10 @@ def master_identity(master_capture_id, cutoff_at, ranking: Mapping[str, list], *
         d = _instant(dl)
         if d is None or t_first > d:
             reasons.append(f"master_late:{f}")
+    for f, at in (archived_at or {}).items():              # orden acreditado maestro → predicción (R25-03)
+        a = _instant(at)
+        if a is None or t_first > a:
+            reasons.append(f"master_after_forecast:{f}")
     try:
         m = _load_master(rec)
     except Exception as exc:  # noqa: BLE001 - un maestro que no cumple el contrato no acredita nada
@@ -625,7 +635,8 @@ def _classify_week(archive_label: str, w: dict) -> dict:
     if not fa["before_deadline"]:
         return {"fa": fa, "inp": dict(not_checked), "master": {"ok": None, "reasons": []}, "prospective": False, "reasons": reasons}
     mi = _stage(lambda: master_identity(w.get("master_capture"), w["cutoff_at"], fa.get("ranking") or {}, archive_label=archive_label,
-                                        deadlines=fa.get("deadline_at") or {}, links=fa.get("master_sha256") or {}),
+                                        deadlines=fa.get("deadline_at") or {}, links=fa.get("master_sha256") or {},
+                                        archived_at=fa.get("archived_at") or {}),
                 lambda why: {"ok": False, "reasons": [why]})
     reasons.extend(mi["reasons"])
     inp = _stage(lambda: inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"], w.get("packet_hash")),
@@ -646,7 +657,10 @@ def _classify_week(archive_label: str, w: dict) -> dict:
             # corte y su identificador de documento lleva el símbolo de ese segmento (así los construye el Runner)
             as_of = date.fromisoformat(mi["as_of"])
             for s in inp.get("series") or []:
-                sid = s.get("security_id")
+                ids = s.get("security_ids") or []
+                if len(ids) != 1:                          # una serie de barras identifica exactamente un valor (R25-05)
+                    ok = False; reasons.append(f"packet_series_identity:{s.get('doc_id')}"); continue
+                sid = ids[0]
                 covering = [v for v in (mi.get("segments") or {}).get(sid, []) if v.covers(as_of)]
                 if not covering:
                     ok = False; reasons.append(f"packet_unknown_security:{sid}"); continue

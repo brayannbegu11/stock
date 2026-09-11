@@ -1,0 +1,200 @@
+{
+  "ronda": "25",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: 6 hallazgos nuevos reproducidos (1 alto, 4 medios, 1 bajo). Pasan 370 pruebas de aceptación, 80 regresiones seleccionadas y la comprobación de configuraciones Q1 40/40/52. La batería nueva tiene 59 casos aprobados y 11 fallidos. Ninguna excepción escapó de classify_week en los 42 casos malformados ensayados. Los informes 15/15b/15c coinciden con las cabeceras y cifras derivadas de sus JSON; las garantías generales de README e informes 29 §6 y 30 requieren las salvedades siguientes. Los 136 archivos legibles del inventario conservan sus hashes; .pytest_cache/README.md no pudo comprobarse por permisos.",
+  "hallazgos": [
+    {
+      "id": "R24-01/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 581,
+      "afirmacion": "Corregido: la identidad usa la vista conocida al corte y respeta la vigencia semiabierta del segmento.",
+      "contraejemplo": "Se rechazan recorded_at posterior al corte, valid_from=2024-01-08 para el corte del 07 y valid_to=2024-01-07; la revisión registrada el 07 a las 09:00 UTC pasa tras rearchivar las predicciones con el nuevo master_sha256, como exige 30 §4.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r25.py -k history_and_cutoff --basetemp review/out/astra_scratch/r25_verify01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R24-02/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 555,
+      "afirmacion": "Corregidos los contraejemplos originales: maestro tardío y hash distinto; queda la comprobación del orden acreditado descrita en R25-03.",
+      "contraejemplo": "Una reposición posterior al plazo produce master_late; citar otro maestro íntegro archivado a tiempo en lab/master produce master_link_mismatch para Q0, Q1 y A1.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py review/out/astra_scratch/test_r25.py -k 'r24_02 or other_timely_master' --basetemp review/out/astra_scratch/r25_verify02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R24-03/verificacion",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 517,
+      "afirmacion": "Corregidas las normalizaciones originales y la recarga sin validación; persiste la omisión de filas con kind inválido descrita en R25-04.",
+      "contraejemplo": "valid_to=False, recorded_at sin zona, revisiones incompatibles con igual timestamp, sustitución registrada antes que la fila previa y segmentos solapados producen master_contract. Un intervalo histórico cerrado aislado es válido para SecurityMaster.add: no demuestra por sí mismo una operación close_version sin antecedente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py review/out/astra_scratch/test_r25.py -k 'r24_03 or history_and_cutoff' --basetemp review/out/astra_scratch/r25_verify03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R24-04/verificacion",
+      "severidad": "media",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 648,
+      "afirmacion": "Corregidos los dos contraejemplos originales y rechazados los identificadores sin símbolo verificable; persiste la identidad secundaria omitida de R25-05.",
+      "contraejemplo": "B:bars:2024-W02 atribuido a A, opaque-id y A:prices:2024-W02 producen packet_symbol_mismatch; una serie cuyo primer identificador es GHOST produce packet_unknown_security.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py review/out/astra_scratch/test_r25.py -k 'r24_04 or nonmatching_series_id' --basetemp review/out/astra_scratch/r25_verify04",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R24-05/verificacion",
+      "severidad": "baja",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 551,
+      "afirmacion": "Corregido: se exige fuente master y dataset de maestro de la corrida.",
+      "contraejemplo": "source_id=untrusted, source_id=packet o dataset=other/not-master producen master_record_mismatch aunque las predicciones citen los bytes correspondientes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py -k r24_05 --basetemp review/out/astra_scratch/r25_verify05",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R24-06/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 608,
+      "afirmacion": "Corregido: el error de una etapa conserva la evidencia anterior y sus motivos aparecen en el sitio, incluidas las reconstrucciones.",
+      "contraejemplo": "packet_capture=['malformed'] conserva before_deadline y archived_at, devuelve classification_error:TypeError y se presenta como procedencia sin acreditar. Pasan las cuatro clases dominicales y las razones nuevas en español, inglés y chino tradicional; la excepción del ensamblador está en R25-06.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py review/out/astra_scratch/test_r22.py review/out/astra_scratch/test_r25.py -k 'r24_06 or sunday_full_chain_four_states or (new_reasons_full_site_and_headers and not late_and_master_link)' --basetemp review/out/astra_scratch/r25_verify06",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R25-01",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 395,
+      "afirmacion": "La caché de entradas permite volver a clasificar como prospectiva una semana cuyo paquete o captura fuente ya está corrupto.",
+      "contraejemplo": "Clasifico positivamente 2024-W02, sustituyo por b'corrupt' el paquete archivado o su primera captura fuente y vuelvo a llamar a classify_week en el mismo módulo: prospective=true, reasons=[]. Al vaciar únicamente _INPUTS_CACHE, la misma semana deja de ser prospectiva. La garantía de integridad de README y P9 no se cumple en llamadas sucesivas dentro del proceso.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r25.py -k repeated_classification_rechecks_integrity --basetemp review/out/astra_scratch/r25_repro01",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r23 import setup\nfrom twlab.packet import packet_from_json\n\n@pytest.mark.parametrize('target', ['packet', 'source'])\ndef test_integridad_no_se_hereda_de_la_cache(tmp_path, monkeypatch, target):\n    raw, market, data, ex, week = setup(tmp_path, monkeypatch)\n    rec = raw.get(week['packet_capture'])\n    if target == 'source':\n        packet = packet_from_json(raw.read(rec))\n        rec = raw.get(packet.admitted[0].capture_id)\n    (raw.root / rec.path).write_bytes(b'corrupt')\n    cached = ex.classify_week('lab', week)\n    ex._INPUTS_CACHE.clear()\n    assert ex.classify_week('lab', week)['prospective'] is False\n    assert cached['prospective'] is False\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R25-02",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 1003,
+      "afirmacion": "El Runner sólo verifica el maestro antes de guardar _master_rec; su reutilización entre semanas de la misma corrida no comprueba integridad.",
+      "contraejemplo": "Después de W02 corrompo la instantánea archivada el 2024-01-07 a las 12:00 UTC. El mismo Runner ejecuta W03 el 14 a las 12:00 UTC y archiva las tres predicciones enlazadas al maestro corrupto sin detenerse ni repararlo. RawStore.read falla con IntegrityError. El clasificador sí rechaza después la semana con master_corrupt: el fallo es de emisión y recuperación, no un falso positivo del clasificador.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r25.py -k corruption_between_weeks_same_runner --basetemp review/out/astra_scratch/r25_repro02",
+      "prueba_propuesta": "from datetime import date, datetime, timezone\nfrom review.out.astra_scratch import test_r21 as prev\n\ndef test_maestro_integro_antes_de_cada_semana(tmp_path, monkeypatch):\n    raw, market, cfg, runner, data, now = prev.sunday_fixture(tmp_path, monkeypatch)\n    old = raw.get(data['weeks'][-1]['master_capture'])\n    (raw.root / old.path).write_bytes(b'corrupt')\n    now[0] = datetime(2024, 1, 14, 12, tzinfo=timezone.utc)\n    runner.run_week(date(2024, 1, 14))\n    week = runner.weeks[-1]\n    assert week['week_id'] == '2024-W03'\n    raw.read(raw.get(week['master_capture']))\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R25-03",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 570,
+      "afirmacion": "La clasificación compara la primera ingestión íntegra del maestro con el plazo, pero no con la ingestión de las predicciones; no acredita el orden maestro→predicciones prometido en README.",
+      "contraejemplo": "Las tres predicciones de W02 se archivan el 2024-01-07 a las 12:00 UTC. Corrompo el maestro original y repongo los mismos bytes a las 13:00 UTC, antes del plazo del 08 a las 00:30 UTC. Enlazando esa reposición, prospective=true y reasons=[], aunque la primera copia íntegra del maestro es posterior a las tres predicciones. El hash sigue fijando los mismos bytes: esto demuestra una garantía cronológica incumplida, no una sustitución de contenido.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r25.py -k master_after_forecast_before_deadline --basetemp review/out/astra_scratch/r25_repro03",
+      "prueba_propuesta": "from datetime import datetime, timezone\nfrom review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r23 import classify\n\ndef test_primera_copia_integra_del_maestro_precede_predicciones(tmp_path, monkeypatch):\n    raw, market, cfg, runner, data, now = prev.sunday_fixture(tmp_path, monkeypatch)\n    week = data['weeks'][-1]\n    old = raw.get(week['master_capture'])\n    payload = raw.read(old)\n    (raw.root / old.path).write_bytes(b'corrupt')\n    now[0] = datetime(2024, 1, 7, 13, tzinfo=timezone.utc)\n    rec = raw.put(source_id='master', dataset='lab/master', payload=payload, url='fixture')\n    week['master_capture'] = rec.capture_id\n    ex = prev.export_setup(monkeypatch, raw, data, tmp_path)\n    result = classify(ex, week)\n    assert all(datetime.fromisoformat(t) < rec.ingested_at_dt for t in result['fa']['archived_at'].values())\n    assert result['prospective'] is False\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R25-04",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 490,
+      "afirmacion": "Las filas con kind distinto de segment se descartan antes de validar su tipo y contrato; una instantánea malformada puede acreditar master_contract.",
+      "contraejemplo": "Añado a la instantánea válida {'kind': [], 'security_id': 'TWSE:GHOST@2000-01-01', 'valid_to': '2024-01-07'}, archivo el maestro y rearchivo las predicciones citándolo: master.ok=true, prospective=true, reasons=[]. Ocurre también con kind=null, {}, 42 y 'close'. El supuesto cierre sin segmento ni formato reconocido se omite silenciosamente. No se cumple la garantía general de rechazo de tipos malformados de 29 §6, 30 y README.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r25.py -k invalid_master_row_kind_cannot_be_ignored --basetemp review/out/astra_scratch/r25_repro04",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r23 import setup, classify\nfrom review.out.astra_scratch.test_r24 import rows_of\nfrom review.out.astra_scratch.test_r25 import change_master\n\ndef test_kind_malformado_invalida_la_instantanea(tmp_path, monkeypatch):\n    raw, market, data, ex, week = setup(tmp_path, monkeypatch)\n    rows = rows_of(raw, week)\n    rows.append({'kind': [], 'security_id': 'TWSE:GHOST@2000-01-01', 'valid_to': '2024-01-07'})\n    change_master(raw, week, rows)\n    result = classify(ex, week)\n    assert result['prospective'] is False\n    assert any(r.startswith('master_contract:') for r in result['reasons'])\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R25-05",
+      "severidad": "media",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 458,
+      "afirmacion": "La coherencia paquete-maestro comprueba sólo security_ids[0] y omite las identidades adicionales declaradas por una serie.",
+      "contraejemplo": "Las series válidas A:bars:2024-W02 y B:bars:2024-W02 pasan a declarar respectivamente (A, TWSE:GHOST@2000-01-01) y (B, TWSE:GHOST@2000-01-01). El paquete se deserializa y se rearchivan las predicciones con su nuevo hash; classify_week devuelve prospective=true, reasons=[], aunque GHOST no existe en el maestro. Es una omisión de coherencia interna anterior a la readmisión multicaptura pendiente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r25.py -k all_series_security_ids_are_checked --basetemp review/out/astra_scratch/r25_repro05",
+      "prueba_propuesta": "from dataclasses import replace\nfrom review.out.astra_scratch.test_r23 import setup, classify, rearchive_packet\nfrom twlab.packet import packet_from_json\n\ndef test_serie_no_declara_identidades_desconocidas(tmp_path, monkeypatch):\n    raw, market, data, ex, week = setup(tmp_path, monkeypatch)\n    packet = packet_from_json(raw.read(raw.get(week['packet_capture'])))\n    ghost = 'TWSE:GHOST@2000-01-01'\n    docs = tuple(replace(d, security_ids=d.security_ids + (ghost,)) if d.kind == 'price_bar_series' else d for d in packet.admitted)\n    rearchive_packet(raw, data, replace(packet, admitted=docs))\n    assert classify(ex, week)['prospective'] is False\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R25-06",
+      "severidad": "baja",
+      "categoria": "datos",
+      "archivo": "scripts/assemble_backtest_reports.py",
+      "linea": 97,
+      "afirmacion": "El ensamblador oculta los demás motivos cuando late_inputs coincide con un fallo del maestro.",
+      "contraejemplo": "En el fixture dominical completo, las predicciones citan '0'*64 y las fuentes llegan el 2024-01-07 a las 12:00 UTC, después del corte de las 10:00 UTC. reasons contiene master_link_mismatch:Q0, Q1, A1 y late_inputs. Las tres cabeceras ensambladas sólo mencionan datos tardíos y omiten los fallos del maestro. El sitio sí conserva todos los motivos en español, inglés y chino tradicional.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r25.py -k late_and_master_link --basetemp review/out/astra_scratch/r25_repro06",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r25 import test_new_reasons_full_site_and_headers as comprobar\n\ndef test_cabeceras_conservan_motivos_simultaneos(tmp_path, monkeypatch):\n    comprobar(tmp_path, monkeypatch, 'late_and_master_link')\n",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "rechazo",
+      "argumento": "R25-01 permite acreditar paquetes o fuentes corruptos mediante evidencia cacheada. Reparar también la reutilización del maestro dentro de una corrida y completar la coherencia de identidades."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Las semanas publicadas siguen siendo reconstrucciones. El corte del 13/09 sólo podrá calificarse por la evidencia efectiva y con el fallo de integridad corregido."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Pasan las pruebas de libro, lotes, costes, acciones corporativas y conservación de posiciones bloqueadas."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto",
+      "argumento": "Se conservan las condiciones de valoración final y las cifras publicadas coinciden con sus JSON."
+    },
+    {
+      "id": "P5",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de inmutabilidad del mercado y la comprobación de configuraciones Q1 con mínimos 40/40/52."
+    },
+    {
+      "id": "P6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "15/15b/15c reproducen sus cabeceras y cifras. La adaptación indicada en 30 §4 es correcta. Corregir las garantías excesivas de README, 29 §6 y 30 sobre integridad, tipos, orden y coherencia, además de la omisión del ensamblador."
+    },
+    {
+      "id": "P7",
+      "posicion": "acepto",
+      "argumento": "La aproximación de lotes sueltos con precios regulares sigue declarada; pasan los controles de dimensionado, comisión mínima y estados de entrada."
+    },
+    {
+      "id": "P8",
+      "posicion": "acepto",
+      "argumento": "Los recuentos continúan derivados de identificadores de hallazgos y verificaciones; pasan sus controles."
+    },
+    {
+      "id": "P9",
+      "posicion": "rechazo",
+      "argumento": "La reformulación de 26 §2, con el código de 27 a 30, exige integridad efectiva de las capturas. R25-01 permite prospective=true después de corromperlas. Declarar modo histórico y ausencia de sello externo no subsana ese incumplimiento."
+    }
+  ],
+  "veredicto": "rechazado"
+}

@@ -30,3 +30,8 @@ Con este código pasan enteras `review/out/astra_scratch/test_r23.py` (17/17) y 
 ## 5. Pendientes que siguen abiertos
 
 Readmisión verificada en modo prospectivo (extractor multicaptura) y construcción del paquete en ese modo; sello externo de fecha; dividendos del universo completo; política de cierres sobrevenidos; adaptador oficial de lotes sueltos. Los bloqueantes que dependen del usuario no cambian (informe 21 §4).
+
+## 6. Fe de erratas (tras la ronda 25)
+
+Cuatro afirmaciones de este informe (y las equivalentes del README y del informe 29 §6) excedían lo que el código acreditaba, como señaló Astra en la ronda 25: (1) la integridad de paquete y capturas se comprobaba sólo la primera vez por proceso, porque el exportador cacheaba el veredicto (R25-01); (2) el Runner archivaba el maestro «antes que las predicciones», pero no re-verificaba la copia citada entre semanas de la misma corrida (R25-02), y la clasificación no exigía ese orden, sólo el plazo (R25-03); (3) «toda fila con tipos estrictos» omitía en silencio las filas cuyo `kind` no era `segment` (R25-04); (4) la coherencia paquete-maestro miraba sólo la primera identidad de cada serie (R25-05). Todo queda corregido en el informe 31.
+

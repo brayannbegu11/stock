@@ -95,8 +95,8 @@ def temporal_sentence(s, cw) -> str:
                 "paquete ingeridos antes del corte y con la lista igual a la archivada: predicción del protocolo según el reloj de "
                 "esta máquina, sin sello externo y con el paquete construido en modo histórico (readmisión verificada pendiente).")
     if inp.get("reason") == "late_inputs":
-        return (f"Archivada ({ruta}) antes del plazo, pero con datos del paquete recibidos después del corte: "
-                "no cuenta como predicción del protocolo.")
+        return (f"Archivada ({ruta}) antes del plazo, pero con datos del paquete recibidos después del corte "
+                f"({', '.join(c['reasons'])}): no cuenta como predicción del protocolo.")
     return (f"Archivada ({ruta}) antes del plazo, pero la procedencia de las entradas no queda acreditada o la identidad de lo "
             f"mostrado no coincide con el archivo ({', '.join(c['reasons'])}): no cuenta como predicción del protocolo.")
 

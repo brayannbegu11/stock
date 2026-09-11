@@ -561,6 +561,7 @@ class Runner:
     def __init__(self, store: RawStore, market: MarketData, cfg: BacktestConfig, forecasters: Sequence[Forecaster]) -> None:
         self.store, self.market, self.cfg = store, market, cfg
         self._master_rec: Optional[CaptureRecord] = None
+        self._master_payload: Optional[bytes] = None
         self.forecasters = {f.name: f for f in forecasters}
         if cfg.baseline not in self.forecasters:
             raise ValueError(f"baseline {cfg.baseline!r} is not among the forecasters")
@@ -998,23 +999,35 @@ class Runner:
 
     # -- todo el periodo -------------------------------------------------------------------------------
     def master_record(self) -> CaptureRecord:
-        """Archiva (una vez por corrida) la instantánea del maestro con la que se resolvieron símbolos y nombres; bytes
-        idénticos ya archivados e íntegros se reutilizan, como los paquetes y las predicciones (R23-01)."""
-        if self._master_rec is None:
-            payload = master_snapshot_bytes(self.market.master)
-            sha = hashlib.sha256(payload).hexdigest()
-            dataset = f"{self.cfg.archive_label or self.cfg.label}/master"
-            rec = self.store.find(source_id="master", dataset=dataset, sha256=sha)
-            if rec is not None:
+        """Instantánea del maestro con la que se resuelven símbolos y nombres, archivada antes que cualquier predicción
+        que la cite. Bytes idénticos ya archivados e íntegros se reutilizan (la primera copia íntegra por instante), como
+        los paquetes y las predicciones (R23-01); la integridad se comprueba en **cada** llamada, de modo que una copia
+        corrompida a mitad de corrida se vuelve a archivar en vez de quedar citada (R25-02)."""
+        if self._master_payload is None:
+            self._master_payload = master_snapshot_bytes(self.market.master)
+        payload = self._master_payload
+        sha = hashlib.sha256(payload).hexdigest()
+        dataset = f"{self.cfg.archive_label or self.cfg.label}/master"
+        rec = self._master_rec
+        if rec is not None:
+            try:
+                self.store.read(rec)
+            except IntegrityError:
+                rec = None
+        if rec is None:
+            for cand in sorted((r for r in self.store.captures(source_id="master", dataset=dataset) if r.sha256 == sha),
+                               key=lambda r: r.ingested_at_dt):
                 try:
-                    self.store.read(rec)
+                    self.store.read(cand)
                 except IntegrityError:
-                    rec = None
-            if rec is None:
-                rec = self.store.put(source_id="master", dataset=dataset, payload=payload, url="local://backtest",
-                                     content_type="application/x-ndjson", extra={"rows": len(self.market.master._versions)})  # noqa: SLF001
-            self._master_rec = rec
-        return self._master_rec
+                    continue
+                rec = cand
+                break
+        if rec is None:
+            rec = self.store.put(source_id="master", dataset=dataset, payload=payload, url="local://backtest",
+                                 content_type="application/x-ndjson", extra={"rows": len(self.market.master._versions)})  # noqa: SLF001
+        self._master_rec = rec
+        return rec
 
     def run(self) -> dict:
         cfg = self.cfg

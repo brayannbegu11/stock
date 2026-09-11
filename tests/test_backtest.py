@@ -754,3 +754,28 @@ def test_r23_01_runner_archives_the_master_snapshot_once_and_links_every_week(tm
     res3 = Runner(store, market, cfg3, [MomentumForecaster(), RandomForecaster(1)]).run()
     fresh = [m for m in store.captures(source_id="master") if m.capture_id != masters[0].capture_id]
     assert len(fresh) == 1 and store.read(fresh[0]) == payload and all(w["master_capture"] == fresh[0].capture_id for w in res3["weeks"])
+
+
+def test_r25_02_master_snapshot_corrupted_between_weeks_is_rearchived_before_use(tmp_path):
+    """Dentro de una misma corrida, la instantánea se verifica en cada semana: si se corrompe, se vuelve a archivar."""
+    from twlab.backtest import load_market, _sundays
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 22), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    sundays = list(_sundays(cfg.start, cfg.end))
+    assert len(sundays) >= 2
+    r.run_week(sundays[0])
+    first = store.get(r.weeks[-1]["master_capture"])
+    (store.root / first.path).write_bytes(b"corrupt")
+    r.run_week(sundays[1])
+    w = r.weeks[-1]
+    fresh = store.get(w["master_capture"])
+    assert fresh.capture_id != first.capture_id and fresh.sha256 == first.sha256
+    store.read(fresh)                                                     # íntegra
+    for name, x in w["forecasters"].items():
+        assert json.loads(store.read(store.get(x["forecast_capture_id"])))["master_sha256"] == fresh.sha256
+    # una copia íntegra ya existente (aunque no sea la primera) se reutiliza en la semana siguiente
+    if len(sundays) >= 3:
+        r.run_week(sundays[2])
+        assert r.weeks[-1]["master_capture"] == fresh.capture_id

@@ -667,8 +667,10 @@ def test_r24_01_master_view_is_the_one_known_at_the_cutoff(tmp_path, monkeypatch
     assert c["prospective"] is (kind == "revision_before_cutoff"), (kind, c)
     if kind == "revision_after_cutoff":
         assert "identity_symbol_mismatch:Q0:TWSE:A@2000-01-01" in c["reasons"]
-    if kind in ("recorded_after_cutoff", "expired_at_cutoff", "nonsegment"):
+    if kind in ("recorded_after_cutoff", "expired_at_cutoff"):
         assert "identity_unknown_security:Q0:TWSE:A@2000-01-01" in c["reasons"]
+    if kind == "nonsegment":
+        assert "master_contract:ValueError" in c["reasons"]              # la instantánea sólo admite segmentos (R25-04)
 
 
 def test_r24_02_master_archived_after_the_deadline_does_not_accredit(tmp_path, monkeypatch):
@@ -766,3 +768,82 @@ def test_r24_06_a_failing_stage_keeps_the_evidence_already_verified(tmp_path, mo
     monkeypatch.setattr(ex, "master_identity", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     c = ex.classify_week("lab", week)
     assert c["prospective"] is False and c["fa"]["before_deadline"] is True and "classification_error:RuntimeError" in c["reasons"], c
+
+
+@pytest.mark.parametrize("target", ["packet", "source"])
+def test_r25_01_repeated_classification_rechecks_integrity(tmp_path, monkeypatch, target):
+    """Un veredicto positivo no se hereda: corromper el paquete o una captura fuente se detecta en la llamada siguiente."""
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    assert ex.classify_week("lab", week)["prospective"] is True
+    rec = pkt if target == "packet" else store.get(pk.admitted[0].capture_id)
+    (store.root / rec.path).write_bytes(b"corrupt")
+    c = ex.classify_week("lab", week)                                    # sin vaciar ninguna caché
+    assert c["prospective"] is False and c["inp"]["reason"] == ("packet_corrupt" if target == "packet" else "unverified_inputs"), c
+
+
+def test_r25_03_master_first_intact_copy_must_precede_every_forecast(tmp_path, monkeypatch):
+    """Maestro corrupto y repuesto (mismos bytes) después de las predicciones pero antes del plazo: no acredita."""
+    from datetime import datetime, timezone
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    original = store.get(week["master_capture"])
+    payload = store.read(original)
+    (store.root / original.path).write_bytes(b"corrupt")
+    store._clock = lambda: datetime(2026, 9, 13, 13, 0, tzinfo=timezone.utc)      # tras las predicciones (12:00), antes del plazo
+    rec = store.put(source_id="master", dataset="lab/master", payload=payload, url="u", content_type="application/x-ndjson")
+    week["master_capture"] = rec.capture_id
+    _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear(); ex._MASTER_CACHE.clear()
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and "master_after_forecast:Q0" in c["reasons"] and "master_late:Q0" not in c["reasons"], c
+
+
+@pytest.mark.parametrize("kind", [None, [], {}, 42, "close", "delisting", True])
+def test_r25_04_master_rows_that_are_not_segments_invalidate_the_snapshot(tmp_path, monkeypatch, kind):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    rows = _master_rows(store, week)
+    rows.append({"kind": kind, "security_id": "TWSE:GHOST@2000-01-01", "valid_to": "2026-09-13"})
+    _replace_master(ex, store, tmp_path, week, fc, rows)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and "master_contract:ValueError" in c["reasons"], (kind, c)
+
+
+def test_r25_05_every_identity_declared_by_a_series_is_checked(tmp_path, monkeypatch):
+    from twlab.packet import packet_to_json
+    from dataclasses import replace
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    docs = tuple(replace(d, security_ids=d.security_ids + ("TWSE:GHOST@2000-01-01",)) if d.kind == "price_bar_series" else d for d in pk.admitted)
+    pk2 = replace(pk, admitted=docs)
+    prec = store.put(source_id="packet", dataset="lab/2026-W38", payload=packet_to_json(pk2), url="u", content_type="application/json",
+                     extra={"packet_hash": pk2.packet_hash()})
+    week.update(packet_capture=prec.capture_id, packet_hash=pk2.packet_hash())
+    for f in ("Q0", "Q1", "A1"):
+        _rearchive_forecast(ex, store, tmp_path, week, fc, f, lambda fo: None, packet_hash=pk2.packet_hash())
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and "packet_series_identity:A:bars:2026-W38" in c["reasons"], c
+
+
+def test_r25_06_assembler_keeps_every_reason_when_inputs_are_late(tmp_path, monkeypatch):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    for f in ("Q0", "Q1", "A1"):
+        _rearchive_forecast(ex, store, tmp_path, week, fc, f, lambda fo: None, master_sha256="0" * 64)   # vínculo roto
+    rows = _manifest_rows(tmp_path)
+    for row in rows:
+        if row["capture_id"] == pk.admitted[0].capture_id:
+            row["ingested_at"] = "2026-09-13T12:00:00+00:00"                                          # fuente después del corte
+    _rewrite_manifest(ex, tmp_path, rows)
+    c = ex.classify_week("lab", week)
+    assert c["inp"]["reason"] == "late_inputs" and "master_link_mismatch:Q0" in c["reasons"]
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("assemble_backtest_reports", ROOT / "scripts" / "assemble_backtest_reports.py")
+    asm = importlib.util.module_from_spec(spec); spec.loader.exec_module(asm)
+    real_spec = importlib.util.spec_from_file_location
+    def redirected(name, *a, **k):
+        sp = real_spec(name, *a, **k)
+        if name == "export_site_data":
+            orig = sp.loader.exec_module
+            def run(m):
+                orig(m); m.RAW = store.root
+            sp.loader.exec_module = run
+        return sp
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", redirected)
+    txt = asm.temporal_sentence({"label": "lab", "assumptions": {"archive_label": "lab"}}, week)
+    assert "después del corte" in txt and "late_inputs" in txt and "master_link_mismatch:Q0" in txt, txt
