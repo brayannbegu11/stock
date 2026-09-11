@@ -28,3 +28,8 @@ Con este código pasan enteras `review/out/astra_scratch/test_r26.py` (incluidos
 ## 5. Pendientes que siguen abiertos
 
 Readmisión verificada en modo prospectivo (extractor multicaptura) y construcción del paquete en ese modo; sello externo de fecha; dividendos del universo completo; política de cierres sobrevenidos; adaptador oficial de lotes sueltos. Los bloqueantes que dependen del usuario no cambian (informe 21 §4).
+
+## 6. Fe de erratas (tras la ronda 27)
+
+Varias garantías de este informe (y las equivalentes del README) excedían lo que el código acreditaba, como señaló Astra en la ronda 27: (1) el índice se releía al cambiar, pero una recarga fallida podía dejarlo a medias y las etapas de una clasificación podían mezclar generaciones (R27-01, R27-02); (2) «cada semana cita la instantánea vigente al emitir» valía al empezar la semana, no durante toda la emisión (R27-03); (3) la integridad de los bytes no comprobaba que la ruta estuviera dentro del archivo (R27-04); (4) la contención `invalid:archive` dejaba las cestas heredadas sin gestionar, borraba la traza de lo archivado y no estaba soportada por cabeceras ni sitio (R27-05, R27-07, R27-08); (5) «ninguna excepción escapa de `run_week`» no cubría registros del índice mal tipados (R27-06). Todo queda corregido en el informe 33.
+

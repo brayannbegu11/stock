@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Callable, Mapping, Optional
 
 from .timeutil import UTC, ensure_aware, is_after
@@ -88,6 +89,46 @@ class SealInfo:
 
 
 _RECORD_FIELDS: Optional[set[str]] = None
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def safe_relative_path(path: object) -> bool:
+    """Ruta relativa al archivo, sin componentes que salgan de él (``..``), sin raíz ni unidad (R27-04)."""
+    if not isinstance(path, str) or not path.strip():
+        return False
+    p = PurePath(path.replace("\\", "/"))
+    return not p.is_absolute() and not p.drive and not p.root and ".." not in p.parts and all(part not in ("", ".") for part in p.parts)
+
+
+def _validate_record_fields(data: dict) -> None:
+    """Tipos estrictos de un registro del índice: un registro malformado no es evidencia y no se construye (R27-06)."""
+    for k in ("capture_id", "source_id", "dataset", "path", "sha256", "ingested_at", "url", "clock_source"):
+        v = data.get(k)
+        if not isinstance(v, str) or (k != "url" and not v):
+            raise ValueError(f"record field {k!r} must be a non-empty string")
+    if not _SHA256_RE.fullmatch(data["sha256"]):
+        raise ValueError("record field 'sha256' must be 64 lowercase hex digits")
+    if not safe_relative_path(data["path"]):
+        raise ValueError("record field 'path' must be a relative path inside the store")
+    try:
+        ensure_aware(datetime.fromisoformat(data["ingested_at"]), "ingested_at")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"record field 'ingested_at' is not an aware ISO-8601 instant: {exc}") from exc
+    b = data.get("bytes")
+    if not isinstance(b, int) or isinstance(b, bool) or b < 0:
+        raise ValueError("record field 'bytes' must be a non-negative integer")
+    hs = data.get("http_status")
+    if hs is not None and (not isinstance(hs, int) or isinstance(hs, bool)):
+        raise ValueError("record field 'http_status' must be an integer or null")
+    ct = data.get("content_type")
+    if ct is not None and not isinstance(ct, str):
+        raise ValueError("record field 'content_type' must be a string or null")
+    if data.get("extra") is None:
+        data["extra"] = {}
+    if not isinstance(data["extra"], dict):
+        raise ValueError("record field 'extra' must be an object")
+    if data.get("receipt") is not None and not isinstance(data["receipt"], dict):
+        raise ValueError("record field 'receipt' must be an object or null")
 
 
 @dataclass(frozen=True)
@@ -119,10 +160,13 @@ class CaptureRecord:
         global _RECORD_FIELDS
         if _RECORD_FIELDS is None:
             _RECORD_FIELDS = {f.name for f in fields(cls)}
+        if not isinstance(raw, dict):
+            raise ValueError("manifest line is not an object")
         data = {k: v for k, v in raw.items() if k in _RECORD_FIELDS}
         legacy_receipt = raw.get("receipt_id")
         if legacy_receipt and data.get("receipt") is None:
             data["extra"] = {**dict(data.get("extra") or {}), "legacy_receipt_note": f"{legacy_receipt}@{raw.get('receipt_authority')}"}
+        _validate_record_fields(data)
         return cls(**data)
 
 
@@ -246,7 +290,12 @@ class RawStore:
         return sorted(recs, key=lambda r: r.ingested_at)
 
     def read(self, rec: CaptureRecord) -> bytes:
-        data = (self.root / rec.path).read_bytes()
+        p = self.root / rec.path
+        # la evidencia sólo puede vivir dentro del archivo: rutas absolutas, ``..`` o enlaces que salgan de la raíz no
+        # se leen aunque sus bytes coincidan con el sha256 (R27-04)
+        if not safe_relative_path(rec.path) or not p.resolve().is_relative_to(self.root.resolve()):
+            raise IntegrityError(f"{rec.capture_id}: path {rec.path!r} escapes the store root")
+        data = p.read_bytes()
         if hashlib.sha256(data).hexdigest() != rec.sha256:
             raise IntegrityError(rec.capture_id)
         return data

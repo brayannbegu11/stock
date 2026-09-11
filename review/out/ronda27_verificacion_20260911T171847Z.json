@@ -1,0 +1,200 @@
+{
+  "ronda": "27",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: 8 hallazgos nuevos reproducidos, 6 altos y 2 medios. Los contraejemplos originales R26-01..R26-04 están corregidos. Pasan 396 pruebas de aceptación, los 49 casos de la ronda 26, 123 regresiones seleccionadas y 10 comprobaciones de publicación. Los 60 casos nuevos producen 18 aprobados y 42 fallidos. Las cuatro clases anteriores funcionan en el fixture dominical; invalid:archive rompe las cabeceras y su presentación es incompleta en los tres idiomas. Los informes 15/15b/15c coinciden con sus cabeceras, tablas y cifras derivadas de los JSON; las garantías actuales de README y de los informes 31–32 requieren las correcciones siguientes. Los 140 archivos legibles del inventario conservan sus hashes; .pytest_cache/README.md no pudo comprobarse por permisos. Sólo se escribieron archivos bajo review/out/astra_scratch/.",
+  "hallazgos": [
+    {
+      "id": "R26-01/verificacion",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 218,
+      "afirmacion": "Corregido el contraejemplo original: los cambios del índice entre clasificaciones se detectan.",
+      "contraejemplo": "Pasan las 16 combinaciones de fuente, paquete, maestro y predicción con cambios de reloj, hora, sha256 o ruta; quedan los casos nuevos R27-01 y R27-02.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r26.py -k manifest_rewrite_rechecked --basetemp review/out/astra_scratch/repro27_v01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R26-02/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 1018,
+      "afirmacion": "Corregido el cambio entre semanas: la semana siguiente cita una instantánea nueva.",
+      "contraejemplo": "La revisión de name_en cambia el sha256 citado; el cierre de A antes de W03 impide acreditarla como prospectiva. Queda el cambio dentro de la misma emisión, R27-03.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r26.py -k 'changed_master_same_runner or closed_master_same_runner_false_positive' --basetemp review/out/astra_scratch/repro27_v02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R26-03/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 827,
+      "afirmacion": "Corregidos los casos originales de copias ausentes e índice con JSON inválido o no objeto.",
+      "contraejemplo": "Se reutiliza la segunda copia íntegra del maestro y ninguna excepción escapa en los 12 casos anteriores de manifiesto, paquete, predicción y maestro ausentes o corruptos; la contención general tiene los límites R27-05..R27-08.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r26.py -k 'missing_master_reuses_intact_copy or runner_malformed_no_exception' --basetemp review/out/astra_scratch/repro27_v03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R26-04/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 263,
+      "afirmacion": "Corregido: una copia corrupta anterior con reloj inyectado ya no desplaza a la primera íntegra.",
+      "contraejemplo": "Los controles del maestro y de Q0 conservan prospective=true cuando la copia de las 11:00 está corrupta y la primera íntegra tiene reloj del sistema a las 12:00.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r26.py -k corrupt_injected_copy_does_not_shadow_intact_system_copy --basetemp review/out/astra_scratch/repro27_v04",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-01",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 234,
+      "afirmacion": "Una recarga fallida confirma prematuramente _MANIFEST y _MANIFEST_SHA, dejando _BY_ID antiguo; la siguiente clasificación puede acreditar evidencia inválida.",
+      "contraejemplo": "Tras acreditar W02, cambio el reloj de su fuente a injected y añado {'capture_id': []}. La primera clasificación devuelve classification_error:TypeError al construir _BY_ID. La segunda, sin modificar ningún archivo, devuelve prospective=true y reasons=[]: el sha ya está confirmado y se conserva el índice por identificador anterior. Contradice el cierre ante registros malformados descrito en README.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k manifest_failed_reload_is_not_committed --basetemp review/out/astra_scratch/repro27_01",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r23 import setup\nfrom review.out.astra_scratch.test_r25 import rewrite_manifest\nfrom twlab.packet import packet_from_json\n\ndef test_recarga_fallida_no_confirma_cache(tmp_path, monkeypatch):\n    raw, market, data, ex, w = setup(tmp_path, monkeypatch)\n    src = packet_from_json(raw.read(raw.get(w['packet_capture']))).admitted[0].capture_id\n    def mutate(rows):\n        for r in rows:\n            if r['capture_id'] == src:\n                r['clock_source'] = 'injected'\n        rows.append({'capture_id': []})\n    rewrite_manifest(raw, mutate)\n    assert not ex.classify_week('lab', w)['prospective']\n    assert not ex.classify_week('lab', w)['prospective']\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-02",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 644,
+      "afirmacion": "classify_week combina generaciones distintas del manifiesto y puede aprobar una semana que ninguna generación acredita.",
+      "contraejemplo": "Intercalado determinista de una escritura concurrente: inicialmente la fuente lleva clock_source=injected y Q0 lleva system. Después de comprobar las predicciones, cambio la fuente a system y Q0 a injected. Los estados inicial y final se rechazan por separado, pero la clasificación intercalada devuelve prospective=true, reasons=[]. La relectura por etapa no proporciona una instantánea coherente de toda la clasificación. El control que sólo cambia espacios y separadores del JSON conserva correctamente la clasificación.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k 'manifest_mixed_generations or manifest_whitespace_only' --basetemp review/out/astra_scratch/repro27_02",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r23 import setup\nfrom review.out.astra_scratch.test_r25 import rewrite_manifest\nfrom twlab.packet import packet_from_json\n\ndef test_clasificacion_usa_una_generacion(tmp_path, monkeypatch):\n    raw, market, data, ex, w = setup(tmp_path, monkeypatch)\n    src = packet_from_json(raw.read(raw.get(w['packet_capture']))).admitted[0].capture_id\n    fid = w['forecasters']['Q0']['forecast_capture_id']\n    rewrite_manifest(raw, lambda rows: [r.update(clock_source='injected') for r in rows if r['capture_id'] == src])\n    assert not ex.classify_week('lab', w)['prospective']\n    original = ex.forecast_archive\n    def switch(*args, **kwargs):\n        result = original(*args, **kwargs)\n        def mutate(rows):\n            for r in rows:\n                if r['capture_id'] == src: r['clock_source'] = 'system'\n                if r['capture_id'] == fid: r['clock_source'] = 'injected'\n        rewrite_manifest(raw, mutate)\n        return result\n    monkeypatch.setattr(ex, 'forecast_archive', switch)\n    mixed = ex.classify_week('lab', w)\n    monkeypatch.setattr(ex, 'forecast_archive', original)\n    assert not ex.classify_week('lab', w)['prospective']\n    assert not mixed['prospective']\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-03",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 839,
+      "afirmacion": "El maestro puede cambiar después de obtener master_record y antes de emitir, sin invalidar ni actualizar la instantánea citada.",
+      "contraejemplo": "En W03, inmediatamente después de master_record cierro TWSE:A@2000-01-01 con valid_to=2024-01-13 y recorded_at=2024-01-10T08:00:00+00:00. Q0 emite A el 14 a las 12:00 UTC y classify_week devuelve prospective=true, reasons=[]. Se cita a7303f6230e4139ccb48fc7fc17cb383a63eeb2c1e76c2fbc2210e492b8cd141 aunque el maestro vigente tiene sha256 24499842ba2683e4955c5fcea0a0814cd02ea38b6e84e3241ae9bfb1c426a5ee. El informe 32 §2 afirma que cada semana cita la instantánea vigente al emitir; el código sólo la fija antes del bucle.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k master_changes_after_snapshot_before_forecast --basetemp review/out/astra_scratch/repro27_03",
+      "prueba_propuesta": "from datetime import date, datetime, timezone\nfrom review.out.astra_scratch import test_r21 as prev\n\ndef test_maestro_cambia_antes_de_emitir(tmp_path, monkeypatch):\n    raw, market, cfg, runner, data, now = prev.sunday_fixture(tmp_path, monkeypatch)\n    sid = market.by_symbol['A']\n    original = runner.master_record\n    def archive_then_close():\n        rec = original()\n        market.master.close_version(sid, valid_to=date(2024, 1, 13), recorded_at=datetime(2024, 1, 10, 8, tzinfo=timezone.utc), source_id='fixture')\n        return rec\n    monkeypatch.setattr(runner, 'master_record', archive_then_close)\n    now[0] = datetime(2024, 1, 14, 12, tzinfo=timezone.utc)\n    runner.run_week(date(2024, 1, 14))\n    w = runner.weeks[-1]\n    ex = prev.export_setup(monkeypatch, raw, data, tmp_path)\n    selected = [p['security_id'] for p in w['forecasters']['Q0']['picks']]\n    assert sid not in selected or not ex.classify_week('lab', w)['prospective']\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-04",
+      "severidad": "alta",
+      "categoria": "seguridad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 252,
+      "afirmacion": "_intact_evidence acepta rutas que salen del archivo autorizado; _intact no comprueba la contención de la ruta resuelta.",
+      "contraejemplo": "Para fuente, paquete, maestro y Q0, copio sus bytes a un directorio sintético outcome_label hermano de raw y elimino el original. Cambio path a ../outcome_label/copy.bin, a su ruta absoluta o a linked/copy.bin mediante una junction que sale de raw. Los 12 casos conservan prospective=true. La evidencia se lee y acredita desde fuera de data/raw; comparar el sha256 no valida su ubicación autorizada. Todos los archivos del ensayo permanecen bajo astra_scratch.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k evidence_path_must_stay_in_raw --basetemp review/out/astra_scratch/repro27_04",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r23 import setup\nfrom review.out.astra_scratch.test_r25 import rewrite_manifest\n\n@pytest.mark.parametrize('absolute', [False, True])\ndef test_maestro_no_se_lee_fuera_de_raw(tmp_path, monkeypatch, absolute):\n    raw, market, data, ex, w = setup(tmp_path, monkeypatch)\n    rec = raw.get(w['master_capture'])\n    outside = tmp_path / 'outside.bin'\n    outside.write_bytes(raw.read(rec))\n    (raw.root / rec.path).unlink()\n    path = str(outside.resolve()) if absolute else '../outside.bin'\n    rewrite_manifest(raw, lambda rows: [r.update(path=path) for r in rows if r['capture_id'] == rec.capture_id])\n    assert not ex.classify_week('lab', w)['prospective']\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-05",
+      "severidad": "alta",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 833,
+      "afirmacion": "invalid:archive suspende también la gestión de posiciones heredadas, aplaza ventas ejecutables y altera la evaluación de la semana siguiente.",
+      "contraejemplo": "Sin costes: W02 compra 100 acciones de A a 100 TWD; falta el cierre del 12/01 y la salida queda bloqueada. W03 falla al acceder al paquete, aunque el 19/01 existe precio 110. El libro queda con cash=0, cursor=2024-01-12 y la cesta abierta. W04 vende el 26/01 a 80, cobra 8.000 y registra −20 % semanal encadenado. La salida heredada debía reintentarse el 19 por 11.000. Con un dividendo de 10 por acción, ex 17/01 y pago 18/01, los 1.000 se recuperan exactamente una vez al continuar, pero persiste la venta aplazada y W04 registra −10 %. No encontré mutaciones parciales del libro antes de los fallos de archivo ensayados; el defecto es saltarse su gestión durante la semana fallida.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k 'failed_week_still_manages_inherited_basket or archive_failure_does_not_mutate_books' --basetemp review/out/astra_scratch/repro27_05",
+      "prueba_propuesta": "from datetime import date\nfrom decimal import Decimal as D\nfrom review.out.astra_scratch.r10_support import fixture, Runner, BacktestConfig, MomentumForecaster, RandomForecaster\n\ndef test_fallo_de_emision_no_aplaza_venta_heredada(tmp_path, monkeypatch):\n    def prices(d):\n        return D(80) if d >= date(2024, 1, 22) else D(110) if d == date(2024, 1, 19) else D(100)\n    raw, market = fixture(tmp_path, prices=prices)\n    sid = market.by_symbol['A']\n    market.securities[sid].bars = [b for b in market.securities[sid].bars if b.session != date(2024, 1, 12)]\n    del market.by_session[sid][date(2024, 1, 12)]\n    cfg = BacktestConfig(date(2024, 1, 1), date(2024, 1, 26), slots=1, notional=10000, lot_size=1, commission_per_side=D(0), sell_tax=D(0), slippage_bps=0, label='lab', n_boot=20)\n    runner = Runner(raw, market, cfg, [MomentumForecaster(), RandomForecaster(1)])\n    runner.run_week(date(2024, 1, 7))\n    slot = runner.open_slots['Q0'][0][1][0]\n    assert slot.status == 'exit_blocked'\n    original = raw.find\n    def fail(**kwargs):\n        if kwargs['source_id'] == 'packet' and kwargs['dataset'].endswith('2024-W03'):\n            raise OSError('disk failed for W03')\n        return original(**kwargs)\n    monkeypatch.setattr(raw, 'find', fail)\n    runner.run_week(date(2024, 1, 14))\n    assert runner.weeks[-1]['status'] == 'invalid:archive'\n    monkeypatch.setattr(raw, 'find', original)\n    runner.run_week(date(2024, 1, 21))\n    assert slot.exit.at.date() == date(2024, 1, 19)\n    assert slot.exit.gross == D(11000)\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-06",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "src/twlab/store.py",
+      "linea": 200,
+      "afirmacion": "La contención de Runner.run_week sigue dejando escapar errores de registros malformados; construir CaptureRecord no valida sus tipos.",
+      "contraejemplo": "En el registro del paquete, capture_id=[] o {} produce TypeError fuera del try de _read_manifest; extra=[] produce AttributeError en RawStore.find:225. Ambos escapan de run_week porque ARCHIVE_ERRORS no los contiene. Con market.master=None, [] o {} escapa AttributeError desde build_week_packet:759. Además ingested_at=[] o 'not-a-time' en el paquete permite una semana status=valid. Los paquetes malformados con sha256 actualizado y las cuatro mutaciones de predicción ensayadas sí quedaron contenidos. La garantía general del README y del informe 32 §1 excede estos controles.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k 'runner_manifest_bad_fields_contained or runner_malformed_master_contained or runner_hash_valid_malformed_packet_contained or runner_malformed_forecast_contained' --basetemp review/out/astra_scratch/repro27_06",
+      "prueba_propuesta": "import pytest\nfrom datetime import date\nfrom review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r25 import rewrite_manifest\n\n@pytest.mark.parametrize('field,value', [('capture_id', []), ('capture_id', {}), ('extra', [])])\ndef test_registro_malformado_no_aborta_run_week(tmp_path, monkeypatch, field, value):\n    raw, market, cfg, runner, data, now = prev.sunday_fixture(tmp_path, monkeypatch)\n    cid = data['weeks'][-1]['packet_capture']\n    rewrite_manifest(raw, lambda rows: [r.update({field: value}) for r in rows if r['capture_id'] == cid])\n    runner.run_week(date(2024, 1, 7))\n    assert runner.weeks[-1]['status'] == 'invalid:archive'\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-07",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "scripts/assemble_backtest_reports.py",
+      "linea": 140,
+      "afirmacion": "Las tres cabeceras fallan con invalid:archive, por lo que la contención del Runner no permite completar el ciclo de informes y publicación.",
+      "contraejemplo": "Fixture dominical con estadísticas maduras y fallo en W02: si falla el archivo del paquete, pending_outcome aún no existe y header_15, header_15b y header_15c lanzan IndexError al buscar la semana pendiente. Si falla el archivo de la predicción, pending_outcome=True pero forecasters={}, y las tres lanzan KeyError:'Q0' en picks_table:107. Son seis fallos ejecutados. El informe generado por markdown_report sí conserva una fila invalid:archive; el ensamblador posterior no la soporta. Por inspección, weekly_prospective.ps1 termina ante ese error antes de exportar y publicar; no ejecuté dicho script.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k invalid_archive_assembler --basetemp review/out/astra_scratch/repro27_07",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r27 import mature_failed_fixture\n\n@pytest.mark.parametrize('failure', ['packet', 'forecast'])\n@pytest.mark.parametrize('header', ['header_15', 'header_15b', 'header_15c'])\ndef test_cabeceras_con_semana_fallida(tmp_path, monkeypatch, failure, header):\n    raw, market, data = mature_failed_fixture(tmp_path, monkeypatch, failure)\n    asm = prev.load('assemble_backtest_reports')\n    fn = getattr(asm, header)\n    text = fn(data) if header == 'header_15' else fn(data, data)\n    assert 'invalid:archive' in text\n",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R27-08",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "docs/index.html",
+      "linea": 930,
+      "afirmacion": "El sitio oculta o clasifica incorrectamente invalid:archive y pierde su diagnóstico; el resultado del Runner también borra la trazabilidad de predicciones parcialmente archivadas.",
+      "contraejemplo": "En español, inglés y chino: con fallo de paquete desaparece la sección de la semana actual, aunque la tabla histórica sí muestra el estado traducido. Con fallo de predicción la sección dice reconstrucción y resultado pendiente, y la tabla prioriza pending_outcome sobre invalid:archive. export_scenario omite archive_error, note y weeks_invalid_archive. Si Q0 se archiva el 14/01/2024 a las 12:00 UTC y falla Q1, el archivo conserva forecast:lab/Q0/2024-W03:2024-01-14T12:00:00+00:00:f733d2b3421d, pero el resultado borra forecasters y afirma 'semana no emitida ni evaluada'. Las traducciones existen; eso no sostiene la garantía de presentación del informe 32 §§1 y 3 ni la afirmación literal 'sin predicciones'.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r27.py -k 'invalid_archive_site or invalid_archive_table or invalid_archive_export_keeps_error or failed_week_retains_partial_forecast_trace' --basetemp review/out/astra_scratch/repro27_08",
+      "prueba_propuesta": "import json\nimport subprocess\nimport pytest\nfrom review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r27 import mature_failed_fixture\n\n@pytest.mark.parametrize('lang', ['es', 'en', 'zh'])\ndef test_estado_fallido_prevalece_sobre_pendiente(tmp_path, monkeypatch, lang):\n    raw, market, data = mature_failed_fixture(tmp_path, monkeypatch, 'forecast')\n    ex = prev.export_setup(monkeypatch, raw, data, tmp_path)\n    path = tmp_path / 'site.json'\n    path.write_text(json.dumps(ex.build()), encoding='utf8')\n    result = subprocess.run(['node', 'review/out/astra_scratch/r27_render.cjs', str(path)], capture_output=True, text=True, encoding='utf8', check=True)\n    output = json.loads(result.stdout)[lang]\n    assert output['reason'] in output['table']\n    assert output['reason'] in output['week']\n",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "rechazo",
+      "argumento": "La evidencia puede acreditarse con índices incoherentes o parcialmente actualizados y con rutas externas: R27-01, R27-02 y R27-04."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Se mantiene la separación entre reconstrucción y evidencia prospectiva. La semana del 13/09 debe clasificarse por su evidencia efectiva después de corregir los falsos positivos; siguen pendientes el sello externo y la readmisión prospectiva."
+    },
+    {
+      "id": "P3",
+      "posicion": "rechazo",
+      "argumento": "La conservación del efectivo y la aplicación única del dividendo pasan, pero invalid:archive aplaza ventas heredadas y altera el libro y el rendimiento posterior: R27-05."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Las condiciones de valoración final de los JSON publicados se conservan. No extender esa aceptación a corridas con semanas invalid:archive hasta resolver la trayectoria contable de R27-05."
+    },
+    {
+      "id": "P5",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Pasan los controles existentes de contenido del mercado. La garantía debe incluir una instantánea coherente durante toda la emisión, no sólo una serialización por semana: R27-03."
+    },
+    {
+      "id": "P6",
+      "posicion": "rechazo",
+      "argumento": "15/15b/15c coinciden con sus JSON y las explicaciones de los casos obsoletos en 30 §4 y 31 §4 son sostenibles. Sin embargo, README, 31 §6 y 32 no pueden dar por cerradas las garantías generales de clasificación, contención y publicación ante los contraejemplos nuevos."
+    },
+    {
+      "id": "P7",
+      "posicion": "acepto",
+      "argumento": "La aproximación de lotes sueltos con precios regulares sigue declarada; pasan los controles de dimensionado, comisión mínima y estados de entrada."
+    },
+    {
+      "id": "P8",
+      "posicion": "acepto",
+      "argumento": "Los recuentos de revisión siguen derivados de identificadores de los JSON y sus controles de aceptación pasan."
+    },
+    {
+      "id": "P9",
+      "posicion": "rechazo",
+      "argumento": "La formulación de 26 §2, con el código de 27–32, todavía permite prospective=true sin una generación coherente del índice o con un maestro obsoleto dentro de la emisión. Las advertencias sobre modo histórico y ausencia de sello externo no corrigen R27-01..R27-04."
+    }
+  ],
+  "veredicto": "rechazado"
+}

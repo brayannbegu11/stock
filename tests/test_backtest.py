@@ -697,7 +697,8 @@ def test_r20_04_reused_packet_and_forecast_bytes_are_verified(tmp_path):
     cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="b", archive_label="lab", notional=1_000_000, slots=5)
     bad = Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()["weeks"][0]
     # el rechazo sigue siendo deliberado (ManifestInconsistent), contenido en la semana: no se emite ni se evalúa (R26-03)
-    assert bad["status"] == "invalid:archive" and bad["archive_error"].startswith("ManifestInconsistent") and bad["forecasters"] == {}
+    assert bad["status"] == "invalid:archive" and bad["archive_error"].startswith("ManifestInconsistent")
+    assert not any(x.get("picks") or x.get("forecast_sha256") for x in bad["forecasters"].values())
     # un forecast corrupto no se reutiliza: se vuelve a archivar con bytes íntegros
     store2, path2 = make_market(tmp_path / "b")
     market2 = load_market(store2, path2, CAL)
@@ -858,7 +859,164 @@ def test_r26_03_archive_failures_are_contained_per_week(tmp_path, target, bad):
     cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="b", archive_label="lab", notional=1_000_000, slots=5)
     res2 = Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
     w = res2["weeks"][0]
-    assert w["status"] == "invalid:archive" and w["forecasters"] == {} and w["archive_error"]
+    assert w["status"] == "invalid:archive" and w["archive_error"]
+    assert not any(x.get("picks") or x.get("forecast_sha256") for x in w["forecasters"].values())     # sin listas; libro gestionado
     assert res2["summary"]["weeks_invalid_archive"] == [w["week_id"]] and res2["summary"]["weeks_operated"] == 0
     from twlab.backtest import markdown_report
     assert "invalid:archive" in markdown_report(res2, title="t")
+
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+def _run_with_failure(tmp_path, *, failure="packet", start=date(2024, 2, 5), end=date(2024, 3, 15), fail_last=True):
+    """Corrida con un fallo del archivo inyectado en la última semana (paquete o predicción); devuelve store, market, result."""
+    from twlab.backtest import load_market, _sundays
+    from twlab.weekly import plan_week
+    from twlab.timeutil import taipei
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=start, end=end, label="a", archive_label="lab", notional=1_000_000, slots=5)
+    sundays = list(_sundays(start, end))
+    target = plan_week(taipei(sundays[-1] if fail_last else sundays[0], time(18, 0)), CAL).week_id
+    original = store.find
+    def fail(**kwargs):
+        if kwargs["source_id"] == failure and kwargs["dataset"].endswith(target):
+            raise OSError("injected disk read failure")
+        return original(**kwargs)
+    store.find = fail
+    q1 = MomentumForecaster(); q1.name = "Q1"
+    res = Runner(store, market, cfg, [MomentumForecaster(), q1, RandomForecaster(1)]).run()
+    store.find = original
+    return store, market, res, target
+
+
+def test_r27_03_master_changed_between_snapshot_and_emission_fails_the_week(tmp_path):
+    from twlab.backtest import load_market, _sundays
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    sid = market.by_symbol["A"]
+    original = r.master_record
+    def archive_then_close():
+        rec = original()
+        seen = market.master.current_segment(sid).recorded_at + timedelta(seconds=1)
+        market.master.close_version(sid, valid_to=date(2024, 3, 9), recorded_at=seen, source_id="fixture")
+        return rec
+    r.master_record = archive_then_close
+    r.run_week(list(_sundays(cfg.start, cfg.end))[0])
+    w = r.weeks[-1]
+    assert w["status"] == "invalid:archive" and "master changed during emission" in w["archive_error"]
+    assert w["forecasters"] and all("forecast_sha256" in x for x in w["forecasters"].values())     # traza conservada
+
+
+def test_r27_05_a_failed_week_still_manages_inherited_baskets(tmp_path):
+    """Una salida bloqueada la semana anterior se reintenta en el último cierre de la semana fallida."""
+    from twlab.backtest import load_market, _sundays
+    from twlab.weekly import plan_week
+    from twlab.timeutil import taipei
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 2, 26), end=date(2024, 3, 22), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    sundays = list(_sundays(cfg.start, cfg.end))
+    assert len(sundays) >= 3
+    p1 = plan_week(taipei(sundays[0], time(18, 0)), CAL)
+    exit1 = p1.exit_at.date()
+    for sid in list(market.by_session):                       # sin cierre el viernes de la primera semana: salidas bloqueadas
+        market.by_session[sid].pop(exit1, None)
+        market.securities[sid].bars = [b for b in market.securities[sid].bars if b.session != exit1]
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    r.run_week(sundays[0])
+    blocked = [s for _, ss in r.open_slots["Q0"] for s in ss if s.status == "exit_blocked"]
+    assert blocked
+    p2 = plan_week(taipei(sundays[1], time(18, 0)), CAL)
+    original = store.find
+    def fail(**kwargs):
+        if kwargs["source_id"] == "packet" and kwargs["dataset"].endswith(p2.week_id):
+            raise OSError("injected disk read failure")
+        return original(**kwargs)
+    store.find = fail
+    r.run_week(sundays[1])
+    store.find = original
+    w2 = r.weeks[-1]
+    assert w2["status"] == "invalid:archive" and w2["pending_outcome"] is False
+    assert all(x.get("equity_end") is not None for x in w2["forecasters"].values())
+    for s in blocked:                                          # vendida en el último cierre de la semana fallida, no después
+        assert s.status == "exited" and s.exit is not None and s.exit.at.date() == p2.exit_at.date()
+    assert not any(s.status == "exit_blocked" for _, ss in r.open_slots["Q0"] for s in ss)
+
+
+@pytest.mark.parametrize("field,value", [("capture_id", []), ("capture_id", {}), ("extra", []), ("ingested_at", "not-a-time")])
+def test_r27_06_malformed_index_records_are_contained_in_the_week(tmp_path, field, value):
+    from twlab.backtest import load_market
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    res = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    cid = res["weeks"][0]["packet_capture"]
+    rows = [json.loads(l) for l in (store.root / "manifest.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    for row in rows:
+        if row["capture_id"] == cid:
+            row[field] = value
+    (store.root / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="b", archive_label="lab", notional=1_000_000, slots=5)
+    w = Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()["weeks"][0]
+    assert w["status"] == "invalid:archive" and w["archive_error"].startswith("ManifestCorrupt")
+
+
+@pytest.mark.parametrize("failure", ["packet", "forecast"])
+def test_r27_07_report_headers_support_a_failed_current_week(tmp_path, failure):
+    import importlib.util
+    store, market, res, target = _run_with_failure(tmp_path, failure=failure)
+    assert res["weeks"][-1]["status"] == "invalid:archive" and res["weeks"][-1]["week_id"] == target
+    spec = importlib.util.spec_from_file_location("assemble_backtest_reports", _ROOT / "scripts" / "assemble_backtest_reports.py")
+    asm = importlib.util.module_from_spec(spec); spec.loader.exec_module(asm)
+    for name in ("header_15", "header_15b", "header_15c"):
+        fn = getattr(asm, name)
+        text = fn(res) if name == "header_15" else fn(res, res)
+        assert "invalid:archive" in text and target in text, name
+
+
+@pytest.mark.parametrize("failure", ["packet", "forecast"])
+def test_r27_08_exporter_and_site_show_the_failed_week(tmp_path, monkeypatch, failure):
+    import importlib.util, shutil, subprocess, sys
+    store, market, res, target = _run_with_failure(tmp_path, failure=failure)
+    spec = importlib.util.spec_from_file_location("export_site_data", _ROOT / "scripts" / "export_site_data.py")
+    ex = importlib.util.module_from_spec(spec); spec.loader.exec_module(ex)
+    monkeypatch.setattr(ex, "RAW", store.root); monkeypatch.setattr(ex, "STORE", tmp_path)
+    monkeypatch.setattr(ex, "SCENARIOS", [("standard", "a", "fixture.md")])
+    for name, value in [("export_rounds", []), ("export_docs", []), ("count_tests", 0), ("raw_coverage", {}), ("master_stats", {})]:
+        monkeypatch.setattr(ex, name, lambda v=value: v)
+    (tmp_path / "backtest_a.json").write_text(json.dumps(res, default=str), encoding="utf-8")
+    out = ex.build()
+    sc = out["scenarios"][0]
+    w = [x for x in sc["weeks"] if x["week_id"] == target][0]
+    assert w["status"] == "invalid:archive" and w["archive_error"] and w["prospective"] is False and "invalid:archive" in w["forecast_reasons"]
+    assert sc["current_week"]["week_id"] == target and sc["current_week"]["status"] == "invalid:archive"
+    assert sc["weeks_invalid_archive"] == [target]
+    if failure == "forecast":                                  # la traza de lo archivado antes del fallo se conserva
+        assert w["forecasters"]
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node no disponible")
+    site = tmp_path / "site.json"; site.write_text(json.dumps(out), encoding="utf-8")
+    r = subprocess.run([node, str(_ROOT / "tests" / "site_render.cjs"), str(site)], capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+    assert r.returncode == 0, r.stderr[-800:]
+    rendered = json.loads(r.stdout)
+    expected = {"es": "semana no emitida: fallo del archivo", "en": "week not issued: archive failure", "zh": "該週未發布：存檔故障"}
+    reason = {"es": "semana no emitida: fallo del archivo", "en": "week not issued: archive failure", "zh": "該週未發布：存檔故障"}
+    for lang in ("es", "en", "zh"):
+        assert expected[lang] in rendered[lang]["week"] and "injected disk read failure" in rendered[lang]["week"], lang
+        assert reason[lang] in rendered[lang]["table"], lang
+
+
+@pytest.mark.parametrize("value", [None, [], {}])
+def test_r27_06_market_without_a_security_master_is_contained(tmp_path, value):
+    from twlab.backtest import load_market, _sundays
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    market.master = value
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    r.run_week(list(_sundays(cfg.start, cfg.end))[0])
+    assert r.weeks[-1]["status"] == "invalid:archive" and "security master unavailable" in r.weeks[-1]["archive_error"]

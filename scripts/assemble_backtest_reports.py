@@ -75,8 +75,25 @@ def paired_txt(p):
     return base + f", IC 95 % [{pct(ci[0])}, {pct(ci[1])}]{extra}"
 
 
+def avg_eligible(weeks) -> int:
+    """Media de valores elegibles por semana sobre las semanas que llegaron a construir su paquete (R27-07)."""
+    vals = [w["eligible"] for w in weeks if isinstance(w.get("eligible"), int)]
+    return int(sum(vals) / len(vals)) if vals else 0
+
+
+def current_week(weeks):
+    """La semana en curso del informe: la última pendiente de desenlace o no emitida por fallo del archivo (R27-07)."""
+    cands = [w for w in weeks if w.get("pending_outcome") or w.get("status") == "invalid:archive"]
+    return cands[-1] if cands else weeks[-1]
+
+
 def temporal_sentence(s, cw) -> str:
     """Clasificación temporal de la lista de la semana, derivada del archivo con las mismas reglas que el sitio."""
+    if cw.get("status") == "invalid:archive":
+        archived = ", ".join(f for f, x in (cw.get("forecasters") or {}).items() if x.get("forecast_sha256"))
+        return (f"Semana **no emitida** (`invalid:archive`: {cw.get('archive_error') or 'fallo del archivo'}): el archivo no permitió "
+                "construir el paquete o archivar las predicciones, así que no hay lista completa que clasificar; las cestas "
+                "heredadas sí se gestionaron." + (f" Predicciones archivadas antes del fallo: {archived}." if archived else ""))
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location("export_site_data", Path(__file__).with_name("export_site_data.py"))
@@ -104,7 +121,10 @@ def temporal_sentence(s, cw) -> str:
 def picks_table(cw, note_col):
     rows = []
     for f in FC:
-        x = cw["forecasters"][f]
+        x = cw["forecasters"].get(f)
+        if x is None or (cw.get("status") == "invalid:archive" and not x.get("picks")):
+            rows.append(f"| {NAMES[f]} | — | no emitida (`invalid:archive`) |")
+            continue
         picks = x.get("picks", [])
         sel = " · ".join(f"{p['symbol']} {p['name']}" for p in picks)
         failed = [p for p in picks if p.get("entry_status") == "entry_failed"]
@@ -137,7 +157,7 @@ def common_table(s, a, initial):
 def header_15(d):
     s = d["summary"]; a = s["assumptions"]; F = s["forecasters"]
     weeks = d["weeks"]; operated = s["weeks_operated"]
-    cw = [w for w in weeks if w.get("pending_outcome")][-1]
+    cw = current_week(weeks)
     initial = a["notional"] * a["slots"]
     operated_ids = [w["week_id"] for w in weeks if not w.get("pending_outcome") and w["week_id"] not in s.get("weeks_extraordinary_closure_unhandled", [])]
     closures = ", ".join(s.get("weeks_extraordinary_closure_unhandled", [])) or "ninguna"
@@ -153,7 +173,7 @@ def header_15(d):
 
 **Qué es:** el primer recorrido del protocolo sobre **todas** las acciones ordinarias del tablero principal de TWSE y TPEx ({twd(s['universe_size'])} valores del maestro, informe 10), con las cotizaciones oficiales diarias por fecha (`twlab/sources/twse_daily.py`: TWSE `MI_INDEX`, TPEx `dailyQuotes`, capturadas el 9 y 10 de septiembre de 2026 para las sesiones desde julio de 2024; Astra comprobó que 15.538 pares TWSE–FinMind de 2025 coinciden exactamente). Periodo: cortes dominicales entre {s['period'][0]} y {s['period'][1]} ({s['weeks_total']} semanas: {operated} operadas y la semana en curso, pendiente de desenlace). La corrida no usa ningún LLM; es una reconstrucción histórica con datos archivados después de los cortes, **no** evidencia prospectiva (véase la lista de la semana más abajo). Etiqueta: `{s['label']}`; cifras tomadas de `data/store/backtest_{s['label']}.json`, generado con el código corregido en la ronda 17 (dimensionado exacto con comisión, estados de entrada de la semana pendiente).
 
-**Qué demuestra:** que la cadena completa (paquete → predicción validada → libro → emparejamiento) funciona sobre el universo real, con unos {int(sum(w['eligible'] for w in weeks) / len(weeks)):,} valores elegibles por semana de media; que gestiona una sesión oficial sin datos (viernes 10-07-2026: ninguna de las {twd(s['universe_size'])} acciones tiene cotización en ninguna de las dos fuentes; no hay anuncio de cierre archivado, sólo la ausencia de datos; las salidas quedaron bloqueadas y se reintentaron la semana siguiente, y la semana {closures} quedó fuera de las medias de retorno por no tener retorno medible, aunque sus costes conocidos sí entran en la media de costes); y que emite y archiva la lista de la semana en curso.
+**Qué demuestra:** que la cadena completa (paquete → predicción validada → libro → emparejamiento) funciona sobre el universo real, con unos {avg_eligible(weeks):,} valores elegibles por semana de media; que gestiona una sesión oficial sin datos (viernes 10-07-2026: ninguna de las {twd(s['universe_size'])} acciones tiene cotización en ninguna de las dos fuentes; no hay anuncio de cierre archivado, sólo la ausencia de datos; las salidas quedaron bloqueadas y se reintentaron la semana siguiente, y la semana {closures} quedó fuera de las medias de retorno por no tener retorno medible, aunque sus costes conocidos sí entran en la media de costes); y que emite y archiva la lista de la semana en curso.
 
 **Qué NO demuestra:** rentabilidad. {operated} semanas no bastan; la fuente no trae dividendos (mayo-septiembre es la temporada de reparto en Taiwán: los retornos, las etiquetas de Q1 y las comparaciones están **sesgados a la baja**; el control 100→90 con dividendo de 10 rinde 0 % con derechos y −10 % sin ellos); el universo es el censo vigente (supervivencia); los costes son ilustrativos; y el exceso emparejado es **degenerado** cuando quedan pocas semanas emparejables (las entradas fallidas de Q0 y Q1 dejan exposiciones muy distintas de las de A1): en ese caso no hay intervalo de confianza que publicar.
 
@@ -193,7 +213,7 @@ Estas listas son la salida del laboratorio, no una recomendación: los dos prono
 def header_15b(d, d_std):
     s = d["summary"]; a = s["assumptions"]; F = s["forecasters"]
     weeks = d["weeks"]; operated = s["weeks_operated"]
-    cw = [w for w in weeks if w.get("pending_outcome")][-1]
+    cw = current_week(weeks)
     initial = a["notional"] * a["slots"]
     attempts = {f: F[f]["weeks_selected"] * a["slots"] for f in FC}
     std = d_std["summary"]["forecasters"]
@@ -203,7 +223,7 @@ def header_15b(d, d_std):
     ew, ew_std = s["universe_ew"]["mean_weekly_gross_open_close"], d_std["summary"]["universe_ew"]["mean_weekly_gross_open_close"]
     liq = a["liquidity_multiple"] * a["notional"]
     liq_std = d_std["summary"]["assumptions"]["liquidity_multiple"] * d_std["summary"]["assumptions"]["notional"]
-    elig = int(sum(w["eligible"] for w in weeks) / len(weeks)); elig_std = int(sum(w["eligible"] for w in d_std["weeks"]) / len(d_std["weeks"]))
+    elig = avg_eligible(weeks); elig_std = avg_eligible(d_std["weeks"])
     return f"""# Backtest del universo completo con el capital del usuario: 75.000 TWD en lotes sueltos ({periodo(s)})
 
 **Qué es:** la misma corrida del informe 15 (mismo universo de {twd(s['universe_size'])} acciones, mismas {operated} semanas operadas, misma fuente oficial por fecha, **sin dividendos**), con el dimensionado que corresponde al capital real del usuario (2-3 mil USD): **{twd(initial)} TWD** iniciales, cinco puestos de {twd(a['notional'])} TWD nominales con dimensionado {a['sizing']} (efectivo disponible / {a['slots']}), **lotes sueltos** (`lot_size=1`, 零股), comisión {pct(float(a['commission_per_side']), 4, False)} por lado con **mínimo de {int(float(a.get('min_commission_twd', 20)))} TWD por orden**, impuesto de venta {pct(float(a['sell_tax']), 1, False)} y deslizamiento de {a['slippage_bps']} pb por lado (el mercado de lotes sueltos es menos líquido). Etiqueta: `{s['label']}`; cifras tomadas de `data/store/backtest_{s['label']}.json`, generado con el código corregido en la ronda 17 (la cantidad comprada respeta el nocional del puesto incluida la comisión mínima). Aproximación declarada: los precios son los de la sesión regular, no los del mercado de lotes sueltos (cambio de plan P7: propuesto en el prompt de la ronda 17, evaluado por Astra en su ronda 17, recogido como adenda en el informe 22 §2 y en el informe 23 §2).
@@ -242,12 +262,12 @@ Lista **distinta** de la del informe 15: el universo elegible con {twd(a['notion
 def header_15c(d, d_std):
     s = d["summary"]; a = s["assumptions"]; F = s["forecasters"]
     weeks = d["weeks"]; operated = s["weeks_operated"]
-    cw = [w for w in weeks if w.get("pending_outcome")][-1]
+    cw = current_week(weeks)
     initial = a["notional"] * a["slots"]
     std = d_std["summary"]["forecasters"]
     hist = (F["Q1"].get("training_history") or [""])[0]
     comp = "; ".join(f"{f}: {pct(F[f]['mean_weekly_net_return_open_close'])} frente a {pct(std[f]['mean_weekly_net_return_open_close'])}" for f in FC)
-    elig = int(sum(w["eligible"] for w in weeks) / len(weeks)); elig_std = int(sum(w["eligible"] for w in d_std["weeks"]) / len(d_std["weeks"]))
+    elig = avg_eligible(weeks); elig_std = avg_eligible(d_std["weeks"])
     warns = "; ".join(w[:110] for w in s.get("market_warnings", [])[:3])
     return f"""# Backtest del universo completo con historial largo (2021-2026): mismo periodo, Q1 entrenado con más semanas
 

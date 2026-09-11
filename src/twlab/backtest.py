@@ -825,16 +825,50 @@ class Runner:
         try:
             self._emit_week(plan, record, bound)
         except ARCHIVE_ERRORS as exc:
-            # el archivo no permite emitir con garantías: la semana queda registrada como fallida, sin predicciones ni
-            # evaluación, y la corrida continúa con la siguiente (R26-03)
+            # el archivo no permite emitir con garantías: la semana queda registrada como fallida (con la traza de lo
+            # que llegó a archivarse antes del fallo), sin evaluación, y la corrida continúa con la siguiente (R26-03);
+            # el libro sigue vivo: derechos, reintento de salidas heredadas y valoración (R27-05)
             record["status"] = "invalid:archive"
-            record["forecasters"] = {}
             record["archive_error"] = f"{type(exc).__name__}: {exc}"[:300]
-            record["note"] = f"invalid:archive ({type(exc).__name__}): semana no emitida ni evaluada"
+            record["note"] = f"invalid:archive ({type(exc).__name__}): semana no emitida ni evaluada; posiciones heredadas gestionadas"
+            self._carry_inherited(plan, record, bound)
             return
+
+    def _carry_inherited(self, plan: WeekPlan, record: dict, bound: date) -> None:
+        """Semana sin emisión: se aplican los derechos, se reintentan las salidas de las cestas heredadas en el último
+        cierre de la semana y se valora el libro, exactamente como en una semana válida pero sin cesta nueva (R27-05)."""
+        entry_s, exit_s = plan.entry_at.date(), plan.exit_at.date()
+        if entry_s > bound:
+            record["pending_outcome"] = True
+            return
+        pending_exit = exit_s > bound
+        record["pending_outcome"] = pending_exit
+        close_prices = {} if pending_exit else {sec: m[exit_s].close for sec, m in self.market.by_session.items() if exit_s in m}
+        for name, lg in self.ledgers.items():
+            self.apply_actions(name, entry_s)
+            lg.advance_to(plan.entry_at)
+            fr = record["forecasters"].setdefault(name, {})
+            if pending_exit:
+                fr["note"] = "semana no emitida; salida heredada pendiente"
+                continue
+            self.apply_actions(name, exit_s)
+            for wid, ss in self.open_slots[name]:
+                exit_basket(lg, ss, close_prices=close_prices, at=plan.exit_at, week_id=wid)
+            self.open_slots[name] = [(wid, ss) for wid, ss in self.open_slots[name]
+                                     if any(s.status in ("filled", "exit_blocked") or (s.status == "exited" and not s.liquidated) for s in ss)]
+            close_marks, stale = self.marks(exit_s, lg, "close")
+            try:
+                v = lg.valuation(prices=close_marks, at=plan.exit_at)
+                fr.update({"equity_end": float(v.total), "flags": list(v.flags)[:6] + stale, "baskets_in_follow_up": len(self.open_slots[name]),
+                           "note": "semana no emitida; cestas heredadas gestionadas"})
+                self.prev_equity[name] = v.total
+            except MissingPrice as exc:
+                fr.update({"equity_end": None, "flags": [f"missing_price:{exc}"] + stale, "note": "semana no emitida; cestas heredadas gestionadas"})
 
     def _emit_week(self, plan: WeekPlan, record: dict, bound: date) -> None:
         cfg = self.cfg
+        if not isinstance(self.market.master, SecurityMaster):          # sin maestro no hay identidad que archivar (R27-06)
+            raise ManifestInconsistent("security master unavailable: the market does not carry a SecurityMaster")
         packet, pkt_rec, candidates = self.build_week_packet(plan)
         mrec = self.master_record()             # el maestro se archiva antes que cualquier predicción que lo cite (R24-02)
         view = PredictorView(packet)
@@ -877,6 +911,10 @@ class Runner:
                                            "forecast_sha256": fsha, "forecast_capture_id": frec.capture_id, "deadline_at": obj["deadline_at"]}
         record["packet_capture"] = pkt_rec.capture_id
         record["packet_hash"] = packet.packet_hash()
+        # el maestro citado debe ser el vigente durante toda la emisión: si cambió entre la instantánea y las
+        # predicciones, la semana no puede darse por emitida con garantías (R27-03)
+        if hashlib.sha256(master_snapshot_bytes(self.market.master)).hexdigest() != mrec.sha256:
+            raise ManifestInconsistent(f"{plan.week_id}: the security master changed during emission; predictions cite {mrec.sha256[:12]}")
         record["master_capture"] = mrec.capture_id                          # identidad de los valores (R23-01)
         record["master_sha256"] = mrec.sha256
         if pending_entry:

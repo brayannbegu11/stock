@@ -170,3 +170,44 @@ def test_find_returns_the_earliest_identical_capture_and_writes_nothing(tmp_path
     assert n == 4                                                                # find() no escribe
     with pytest.raises(ValueError):
         store.find(source_id="packet", dataset="lab/2026-W38")
+
+
+def _manifest_rows(store):
+    import json
+    return [json.loads(l) for l in (store.root / "manifest.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+def _write_rows(store, rows):
+    import json
+    (store.root / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("field,value", [("capture_id", []), ("capture_id", {}), ("extra", []), ("ingested_at", "not-a-time"), ("ingested_at", []),
+                                         ("ingested_at", "2026-01-01T00:00:00"), ("sha256", "xyz"), ("path", "../outside.bin"),
+                                         ("path", "C:/outside.bin"), ("path", "/outside.bin"), ("bytes", "12"), ("dataset", 42)])
+def test_r27_06_manifest_records_are_typed(tmp_path, field, value):
+    """Un registro del índice con un campo mal tipado no se construye: el índice se declara corrupto (ManifestCorrupt)."""
+    from twlab.store import RawStore, ManifestCorrupt
+    store = RawStore(tmp_path)
+    rec = store.put(source_id="s", dataset="d", payload=b"x", url="u")
+    rows = _manifest_rows(store)
+    for row in rows:
+        if row["capture_id"] == rec.capture_id:
+            row[field] = value
+    _write_rows(store, rows)
+    with pytest.raises(ManifestCorrupt):
+        store.captures()
+    with pytest.raises(ManifestCorrupt):
+        store.get(rec.capture_id)
+
+
+def test_r27_04_store_never_reads_outside_its_root(tmp_path):
+    from dataclasses import replace
+    from twlab.store import RawStore, IntegrityError
+    store = RawStore(tmp_path / "raw")
+    rec = store.put(source_id="s", dataset="d", payload=b"payload", url="u")
+    (tmp_path / "outside.bin").write_bytes(b"payload")
+    for path in ("../outside.bin", str((tmp_path / "outside.bin").resolve())):
+        with pytest.raises(IntegrityError):
+            store.read(replace(rec, path=path))
+    assert store.read(rec) == b"payload"

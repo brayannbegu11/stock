@@ -888,3 +888,68 @@ def test_r26_04_a_corrupt_earlier_copy_with_injected_clock_does_not_shadow_the_i
     _rewrite_manifest(ex, tmp_path, rows)
     c = ex.classify_week("lab", week)
     assert c["prospective"] is False and any("clock:injected" in r for r in c["reasons"]), c
+
+
+def test_r27_01_a_failed_index_reload_is_not_committed(tmp_path, monkeypatch):
+    """Una fila con capture_id no textual no puede dejar el índice a medias: la recarga es atómica y la fila se descarta."""
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    assert ex.classify_week("lab", week)["prospective"] is True
+    rows = _manifest_rows(tmp_path)
+    for row in rows:
+        if row["capture_id"] == pk.admitted[0].capture_id:
+            row["clock_source"] = "injected"
+    rows.append({"capture_id": []})
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    first = ex.classify_week("lab", week)
+    second = ex.classify_week("lab", week)
+    assert first["prospective"] is False and second["prospective"] is False, (first["reasons"], second["reasons"])
+    assert not any(r.startswith("classification_error") for r in second["reasons"]), second["reasons"]
+
+
+def test_r27_02_one_classification_uses_one_generation_of_the_index(tmp_path, monkeypatch):
+    """Si el índice cambia a mitad de clasificación, todas las etapas siguen viendo la misma generación."""
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    src, fid = pk.admitted[0].capture_id, fc["Q0"].capture_id
+    def write(rows):
+        (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    rows = _manifest_rows(tmp_path)
+    for r in rows:
+        if r["capture_id"] == src:
+            r["clock_source"] = "injected"
+    write(rows)
+    assert ex.classify_week("lab", week)["prospective"] is False
+    original = ex.forecast_archive
+    def switch(*a, **k):
+        res = original(*a, **k)
+        rows = _manifest_rows(tmp_path)
+        for r in rows:
+            if r["capture_id"] == src:
+                r["clock_source"] = "system"
+            if r["capture_id"] == fid:
+                r["clock_source"] = "injected"
+        write(rows)
+        return res
+    monkeypatch.setattr(ex, "forecast_archive", switch)
+    mixed = ex.classify_week("lab", week)
+    monkeypatch.setattr(ex, "forecast_archive", original)
+    assert mixed["prospective"] is False and "unverified_inputs" in mixed["reasons"], mixed["reasons"]
+    assert ex.classify_week("lab", week)["prospective"] is False              # estado final: Q0 con reloj inyectado
+    assert ex._PIN is None
+
+
+@pytest.mark.parametrize("target", ["master", "forecast", "packet", "source"])
+@pytest.mark.parametrize("how", ["relative_up", "absolute"])
+def test_r27_04_evidence_outside_the_archive_is_not_evidence(tmp_path, monkeypatch, target, how):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    cid = {"master": week["master_capture"], "forecast": fc["Q0"].capture_id, "packet": pkt.capture_id, "source": pk.admitted[0].capture_id}[target]
+    rec = store.get(cid)
+    outside = tmp_path.parent / f"outside_{target}.bin"
+    outside.write_bytes(store.read(rec))
+    (store.root / rec.path).unlink()
+    rows = _manifest_rows(tmp_path)
+    for r in rows:
+        if r["capture_id"] == cid:
+            r["path"] = f"../{outside.name}" if how == "relative_up" else str(outside.resolve())
+    _rewrite_manifest(ex, tmp_path, rows)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False, (target, how, c["reasons"])

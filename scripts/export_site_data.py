@@ -166,6 +166,8 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
             "packet_capture": w.get("packet_capture"),
             "master_capture": w.get("master_capture"),
             "master_sha256": w.get("master_sha256"),
+            "archive_error": w.get("archive_error"),
+            "note": w.get("note"),
             "packet_hash": w.get("packet_hash"),
         })
     initial = (a.get("notional") or 0) * (a.get("slots") or 0)
@@ -181,6 +183,7 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
         "weeks_total": s.get("weeks_total"),
         "weeks_operated": s.get("weeks_operated"),
         "weeks_pending_outcome": s.get("weeks_pending_outcome") or [],
+        "weeks_invalid_archive": s.get("weeks_invalid_archive") or [],
         "weeks_extraordinary_closure_unhandled": s.get("weeks_extraordinary_closure_unhandled") or [],
         "bars_without_regular_price_dropped": s.get("bars_without_regular_price_dropped"),
         "market_warnings": s.get("market_warnings") or [],
@@ -213,16 +216,24 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
 _MANIFEST: list[dict] | None = None
 _MANIFEST_SHA: str | None = None
 _BY_ID: dict[str, dict] = {}
+_PIN: tuple[list[dict], dict[str, dict]] | None = None       # generación del índice fijada durante una clasificación (R27-02)
 
 
 def manifest() -> list[dict]:
-    """Registros del archivo, releídos del disco cada vez que el índice cambia (sha256 de sus bytes, R26-01)."""
+    """Registros del archivo, releídos del disco cada vez que el índice cambia (sha256 de sus bytes, R26-01).
+
+    La recarga es atómica: índice y diccionario por identificador se sustituyen juntos y sólo si la lectura completa
+    tuvo éxito (R27-01); una fila sin ``capture_id`` textual no puede ser referenciada y se descarta. Mientras una
+    clasificación está en curso se sirve siempre la misma generación (R27-02)."""
     global _MANIFEST, _MANIFEST_SHA, _BY_ID
+    if _PIN is not None:
+        return _PIN[0]
     mf = RAW / "manifest.jsonl"
     data = mf.read_bytes() if mf.exists() else b""
     sha = hashlib.sha256(data).hexdigest()
     if _MANIFEST is None or sha != _MANIFEST_SHA:
         recs: list[dict] = []
+        by_id: dict[str, dict] = {}
         for line in data.decode("utf-8", errors="replace").splitlines():
             try:
                 rec = json.loads(line)
@@ -231,8 +242,9 @@ def manifest() -> list[dict]:
             if not isinstance(rec, dict):
                 continue                                                # una línea que no es un registro no es evidencia (R23-02)
             recs.append(rec)
-        _MANIFEST, _MANIFEST_SHA = recs, sha
-        _BY_ID = {r.get("capture_id"): r for r in _MANIFEST}
+            if isinstance(rec.get("capture_id"), str):                  # sólo un identificador textual puede ser referenciado (R27-01)
+                by_id[rec["capture_id"]] = rec
+        _MANIFEST, _MANIFEST_SHA, _BY_ID = recs, sha, by_id
     return _MANIFEST
 
 
@@ -248,8 +260,16 @@ def _aware(s: str | None) -> datetime | None:
 
 
 def _intact(rec: dict) -> bool:
+    """Bytes íntegros **dentro** del archivo: rutas absolutas, con ``..`` o enlaces que salen de ``data/raw`` no son
+    evidencia aunque el sha256 coincida (R27-04)."""
     try:
-        p = RAW / str(rec.get("path", ""))
+        from twlab.store import safe_relative_path
+        path = rec.get("path")
+        if not safe_relative_path(path):
+            return False
+        p = RAW / path
+        if not p.resolve().is_relative_to(RAW.resolve()):
+            return False
         return hashlib.sha256(p.read_bytes()).hexdigest() == rec.get("sha256")
     except (OSError, TypeError, ValueError):
         return False
@@ -630,7 +650,13 @@ def classify_week(archive_label: str, w: dict) -> dict:
     paquete archivado (R22-05) **y** código y símbolo de cada valor vigentes en el maestro archivado (`master_identity`,
     R23-01). Cualquier excepción durante la clasificación cierra la semana como no acreditada (R23-02).
     Devuelve `fa`, `inp`, `master`, `prospective` y `reasons`."""
-    return _classify_week(archive_label, w)
+    global _PIN
+    recs = manifest()
+    _PIN = (recs, _BY_ID)                        # una sola generación del índice para toda la clasificación (R27-02)
+    try:
+        return _classify_week(archive_label, w)
+    finally:
+        _PIN = None
 
 
 def _stage(fn, fallback):
@@ -643,6 +669,12 @@ def _stage(fn, fallback):
 
 def _classify_week(archive_label: str, w: dict) -> dict:
     not_checked = {"ok": None, "reason": "not_checked"}
+    if w.get("status") == "invalid:archive":
+        # semana no emitida: no hay lista completa que clasificar, aunque haya predicciones archivadas antes del fallo
+        why = "invalid:archive"
+        fa = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": False,
+              "reasons": [why], "ranking": {}, "master_sha256": {}}
+        return {"fa": fa, "inp": dict(not_checked), "master": {"ok": None, "reasons": []}, "prospective": False, "reasons": [why]}
     fa = _stage(lambda: forecast_archive(archive_label, w["week_id"], {
         f: {"sha": x.get("forecast_sha256"), "picks": [p.get("security_id") for p in x.get("picks") or []],
             "symbols": [p.get("symbol") for p in x.get("picks") or []], "status": x.get("forecast_status", x.get("status")),
@@ -847,13 +879,13 @@ def build() -> dict:
                 if w["prospective"]:
                     prospective_weeks.append(w["week_id"])
             sc["prospective_weeks"] = prospective_weeks
-            pending = [w for w in sc["weeks"] if w["pending_outcome"]]
+            pending = [w for w in sc["weeks"] if w["pending_outcome"] or w["status"] == "invalid:archive"]
             if pending:
-                w = pending[-1]
+                w = pending[-1]                  # la semana en curso: pendiente de desenlace o no emitida por fallo del archivo (R27-08)
                 sc["current_week"] = {"week_id": w["week_id"], "archived_at": w["forecast_archived_at"], "deadline_at": w["forecast_deadline_at"],
                                       "before_deadline": w["forecast_before_deadline"], "inputs_before_cutoff": w["inputs_before_cutoff"],
                                       "prospective": w["prospective"], "reasons": w["forecast_reasons"],
-                                      "packet_mode": w["packet_mode"]}
+                                      "packet_mode": w["packet_mode"], "status": w["status"], "archive_error": w.get("archive_error")}
             scenarios.append(sc)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
