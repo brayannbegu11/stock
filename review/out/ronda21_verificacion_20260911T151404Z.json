@@ -1,0 +1,296 @@
+{
+  "ronda": "21",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: quedan fallos altos en la clasificación prospectiva. Pasan las 314 pruebas de aceptación. Los 77 controles adversariales ejecutados producen 51 pases y 26 fallos: 9 hallazgos nuevos (3 altos, 4 medios y 2 bajos), además de las parciales R19-01 y R19-02. El fixture dominical completa Runner, ensamblado y exportación; las tablas, selecciones y medias de 15/15b/15c coinciden con sus JSON. Sólo escribí bajo review/out/astra_scratch/ y no ejecuté los scripts prohibidos.",
+  "hallazgos": [
+    {
+      "id": "R20-01/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 479,
+      "afirmacion": "Parcial: Runner registra la identidad, pero el exportador permite omitir pronosticadores y mostrar selecciones distintas de las archivadas; véanse R21-01 y R21-02.",
+      "contraejemplo": "Q1 con forecast_sha256=null queda fuera de expected; cambiar el pick Q0 de TWSE:A@2000-01-01 a TWSE:FAKE@2000-01-01 conserva prospective=true.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k 'partial_missing_forecast_identity or changed_displayed_picks' --basetemp review/out/astra_scratch/r21_v01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-02/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 280,
+      "afirmacion": "Parcial: funcionan el plazo individual, la igualdad y el rechazo de marcas sin zona; la exigencia de todos los pronosticadores falla en el llamador.",
+      "contraejemplo": "Q1 archivado a las 00:40 UTC contra plazo 08:30 Taipei queda tarde; 00:30 UTC pasa y 00:30:01 falla. Sin embargo, quitar sólo su SHA hace que build lo omita.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py -k 'r20_02' --basetemp review/out/astra_scratch/r21_v02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-03/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 281,
+      "afirmacion": "Parcial: rechaza injected, pero ordenar fechas como texto puede escoger otra captura del mismo SHA; véase R21-05.",
+      "contraejemplo": "La captura injected de 19:00+08:00 precede a la system de 12:00+00:00; el exportador selecciona la segunda y devuelve before_deadline=true.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k duplicate_sha_first_clock --basetemp review/out/astra_scratch/r21_v03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-04/verificacion",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 713,
+      "afirmacion": "Corregido: la reutilización verifica bytes y packet_hash, incluidos rejected; reemplazar un forecast corrupto cambia su captura y conserva su clasificación tardía.",
+      "contraejemplo": "Añadir Rejection('X', 'unknown_availability', ...) cambia el hash y provoca ManifestInconsistent; rearchivar el forecast el 08/01/2024 a las 01:00 UTC conserva el SHA, cambia forecast_capture_id y devuelve before_deadline=false.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k 'rejected_hash_and_reuse or corrupt_forecast_replacement_identity' --basetemp review/out/astra_scratch/r21_v04",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-05/verificacion",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "scripts/assemble_backtest_reports.py",
+      "linea": 117,
+      "afirmacion": "Corregido: el ciclo dominical sintético ensambla las tres cabeceras con entrada pendiente y exporta la lista.",
+      "contraejemplo": "Runner con end=07/01/2024 produce W02 sin filled; los tres informes se ensamblan, derivan la frase temporal y el sitio renderiza la predicción en español, inglés y chino.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k sunday_end_to_end --basetemp review/out/astra_scratch/r21_v05",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-06/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 295,
+      "afirmacion": "Parcial: rechaza capturas tardías explícitas y paquetes sin entradas, pero no acredita integridad ni procedencia completa; véanse R21-02 a R21-04 y R21-06.",
+      "contraejemplo": "Paquetes con documentos sin capture_id, manifiestos vacíos o archivos fuente ausentes conservan prospective=true. Sin caché, un corte sin zona se rechaza. Un documento tardío correctamente rechazado no entra en admitted ni contamina la comprobación.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k 'inputs or incomplete_provenance or no_admitted_capture or only_rejected_capture' --basetemp review/out/astra_scratch/r21_v06",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-07/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 537,
+      "afirmacion": "Corregido: next_cutoff compara instantes.",
+      "contraejemplo": "El 13/09/2026 a las 00:00 UTC devuelve 13/09; a las 10:30 UTC devuelve 20/09.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py -k r20_07",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-08/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "docs/index.html",
+      "linea": 352,
+      "afirmacion": "Corregido: los tres idiomas describen el reintento en el último cierre de la semana siguiente.",
+      "contraejemplo": "Con salida bloqueada el 12/01/2024 y festivo el viernes 19, la posición se vende el jueves 18; los textos comprobados no prometen el viernes siguiente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21_old_adapted.py -k weekly_retry --basetemp review/out/astra_scratch/r21_v08",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-09/verificacion",
+      "severidad": "baja",
+      "categoria": "datos",
+      "archivo": "README.md",
+      "linea": 14,
+      "afirmacion": "Corregido el hallazgo original: recuento remitido a la colección y horario semanal diferenciado entre verano e invierno.",
+      "contraejemplo": "La colección contiene 314 pruebas; las 08:00 de Toronto corresponden a 20:00 Taipei en septiembre y 21:00 en noviembre.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21_old_adapted.py -k 'readme_current_test_count or schedule_time_across_dst'",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-01/verificacion",
+      "severidad": "media",
+      "categoria": "unidades",
+      "archivo": "scripts/assemble_backtest_reports.py",
+      "linea": 166,
+      "afirmacion": "Sigue parcial: persisten denominadores narrativos incorrectos en 15, 15b y su generador; el informe 26:18 afirma una corrección que el informe publicado no contiene.",
+      "contraejemplo": "15:21 conserva «0,74 % del importe invertido»; 15:25 y el generador:166 dicen «sobre lo invertido»; 15b:5 y el generador:209 también. W29 Q0 tiene cero compras y denominador de 6.159.300 TWD vendidos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py review/out/astra_scratch/test_r21_old_adapted.py -k 'published_cost_prose or assembler_cost_prose'",
+      "prueba_propuesta": "from pathlib import Path\nimport pytest\n\n@pytest.mark.parametrize('name', ['15_backtest_universo_2026.md', '15b_backtest_universo_2026_lotes_sueltos.md'])\ndef test_denominador_publicado(name):\n    text = (Path('docs/informes') / name).read_text(encoding='utf8')\n    assert 'del importe invertido' not in text\n    assert 'sobre lo invertido' not in text",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-02/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "docs/index.html",
+      "linea": 736,
+      "afirmacion": "Sigue parcial: límites y fases responden a los dos escenarios originales, pero facts() excluye longhist de allLose y anyBeat.",
+      "contraejemplo": "Al cambiar sólo longhist a +25 % de rentabilidad total, Q0/Q1 a +3 % semanal y A1 a +1 %, los tres idiomas mantienen allLose=true y «ningún programa ganó dinero». Las mutaciones conjuntas de los escenarios y los límites del intervalo sí pasan.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21_old_adapted.py -k 'all_scenarios_in_universal_loss_claim or profitable_phases or limits_interval'",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r21_old_adapted import render\n\n@pytest.mark.parametrize('lang', ['es', 'en', 'zh'])\ndef test_conclusion_incluye_historial_largo(lang):\n    assert render('longhist')[lang]['facts']['allLose'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-01",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 479,
+      "afirmacion": "La construcción de expected elimina los pronosticadores cuyo SHA falta o está vacío; una lista parcialmente identificada se declara íntegramente prospectiva.",
+      "contraejemplo": "Fixture W02: fuentes capturadas el 06/01/2024 a las 08:00 UTC, forecasts el domingo 07 a las 12:00 UTC y plazo lunes 08 a las 00:30 UTC. Poner sólo Q1.forecast_sha256 en null o '' devuelve forecast_before_deadline=true y prospective=true. temporal_sentence repite el mismo filtro en scripts/assemble_backtest_reports.py:94.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k partial_missing_forecast_identity --basetemp review/out/astra_scratch/r21_repro01",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r21 import sunday_fixture, export_setup\n\n@pytest.mark.parametrize('sha', [None, ''])\ndef test_todos_los_pronosticadores_identificados(tmp_path, monkeypatch, sha):\n    raw, _, _, _, d, _ = sunday_fixture(tmp_path, monkeypatch)\n    d['weeks'][-1]['forecasters']['Q1']['forecast_sha256'] = sha\n    ex = export_setup(monkeypatch, raw, d, tmp_path)\n    assert ex.build()['scenarios'][0]['weeks'][-1]['forecast_before_deadline'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-02",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 485,
+      "afirmacion": "No se verifica la relación entre los bytes del forecast, sus picks mostrados y el paquete usado para acreditar el corte.",
+      "contraejemplo": "Conservo el SHA y la captura de Q0, pero sustituyo TWSE:A@2000-01-01 por TWSE:FAKE@2000-01-01 en picks: el valor inventado se exporta con prospective=true. Independientemente, sustituyo packet_capture por otro paquete íntegro y deserializable, packet_id='unrelated-packet', cuyo hash difiere del registrado en la semana y en el forecast: también pasa.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k 'changed_displayed_picks or packet_substitution' --basetemp review/out/astra_scratch/r21_repro02",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r21 import sunday_fixture, export_setup\n\ndef test_lista_mostrada_corresponde_al_archivo(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = sunday_fixture(tmp_path, monkeypatch)\n    d['weeks'][-1]['forecasters']['Q0']['picks'] = [{'security_id': 'TWSE:FAKE@2000-01-01', 'symbol': 'FAKE', 'name': 'FAKE'}]\n    ex = export_setup(monkeypatch, raw, d, tmp_path)\n    assert ex.build()['scenarios'][0]['weeks'][-1]['prospective'] is False\n\n# Alternativa válida: reconstruir los picks desde los bytes verificados.\n# Contrastar también packet_hash, corte, semana y captura con el forecast.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-03",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 319,
+      "afirmacion": "inputs_before_cutoff comprueba fechas de los identificadores encontrados, pero no integridad, reloj ni procedencia completa de las entradas.",
+      "contraejemplo": "Devuelve prospective=true después de alterar el payload del paquete sin actualizar su SHA, borrar una fuente, reemplazarla por b'broken' o cambiar su clock_source a injected. También devuelve ok=true para paquetes íntegros y deserializables que añaden un documento admitido sin capture_id o un capture_manifest con session_captures={}. Tener otra captura válida basta para bool(ids).",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k 'inputs_evidence_must_be_complete or valid_packet_with_incomplete_provenance' --basetemp review/out/astra_scratch/r21_repro03",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r21 import sunday_fixture, export_setup\nfrom twlab.packet import packet_from_json\n\ndef test_fuente_ausente_no_acredita_prediccion(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = sunday_fixture(tmp_path, monkeypatch)\n    packet = packet_from_json(raw.read(raw.get(d['weeks'][-1]['packet_capture'])))\n    source = raw.get(packet.admitted[0].capture_id)\n    (raw.root / source.path).unlink()\n    ex = export_setup(monkeypatch, raw, d, tmp_path)\n    assert ex.build()['scenarios'][0]['weeks'][-1]['prospective'] is False\n\n# Los otros casos completos están parametrizados en test_r21.py.\n# Exigir integridad y cobertura por documento y sesión, no sólo un conjunto no vacío de IDs.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-04",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 302,
+      "afirmacion": "La caché de inputs_before_cutoff ignora cutoff_at y devuelve una acreditación calculada para otro corte.",
+      "contraejemplo": "Con fuentes ingeridas el 06/01/2024 a las 08:00 UTC, consultar primero el corte 07/01 18:00+08:00 devuelve true. Consultar después el mismo paquete para 05/01 18:00+08:00 también devuelve true. Sin caché, ese segundo corte devuelve false.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k inputs_cache_uses_cutoff --basetemp review/out/astra_scratch/r21_repro04",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r21 import sunday_fixture, export_setup\n\ndef test_cache_separa_cortes(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = sunday_fixture(tmp_path, monkeypatch)\n    ex = export_setup(monkeypatch, raw, d, tmp_path)\n    pid = d['weeks'][-1]['packet_capture']\n    assert ex.inputs_before_cutoff(pid, '2024-01-07T18:00:00+08:00')['ok']\n    assert not ex.inputs_before_cutoff(pid, '2024-01-05T18:00:00+08:00')['ok']",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-05",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 267,
+      "afirmacion": "La primera ingestión se elige por orden lexicográfico, no por instante; con zonas distintas puede eludir la comprobación del primer clock_source.",
+      "contraejemplo": "Dos registros íntegros del mismo SHA: injected a 2024-01-07T19:00:00+08:00 (11:00 UTC) y system a 2024-01-07T12:00:00+00:00. Devuelve la segunda como primera, before_deadline=true y la primera como archived_at_latest. Con ambas fechas normalizadas a UTC rechaza correctamente. El contraejemplo usa un manifiesto sintético; RawStore normalmente serializa UTC.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k duplicate_sha_first_clock --basetemp review/out/astra_scratch/r21_repro05",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r21 import test_duplicate_sha_first_clock\n\ndef test_primera_ingestion_por_instante(tmp_path, monkeypatch):\n    test_duplicate_sha_first_clock(tmp_path, monkeypatch, offsets=True)\n\n# Ordenar fechas conscientes de zona por instante UTC y rechazar marcas inutilizables.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-06",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 311,
+      "afirmacion": "Un registro de paquete con capture_id existente y sin path aborta la comprobación con KeyError, en lugar de producir un estado no acreditado.",
+      "contraejemplo": "Quito únicamente path del registro del paquete W02 en el manifiesto sintético. inputs_before_cutoff lanza KeyError: 'path'; el except sólo contempla OSError y JSONDecodeError.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k packet_record_missing_path_fails_closed --basetemp review/out/astra_scratch/r21_repro06",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r21 import test_packet_record_missing_path_fails_closed\n\ndef test_registro_incompleto_no_aborta_exportacion(tmp_path, monkeypatch):\n    test_packet_record_missing_path_fails_closed(tmp_path, monkeypatch)\n\n# Validar campos del registro y devolver ok=false con motivo explícito.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-07",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "docs/index.html",
+      "linea": 831,
+      "afirmacion": "El estado intermedio convierte cualquier falta de acreditación de entradas en una afirmación de recepción tardía.",
+      "contraejemplo": "Con before_deadline=true, prospective=false y reasons=['unknown_inputs'], muestra «Archivada a tiempo, datos tardíos» y afirma recepción posterior al corte. Ocurre también como «Archived on time, late inputs» y «準時存檔，但資料晚到». Los tres estados ordinarios sí renderizan sus etiquetas correspondientes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k 'site_three_states or unknown_inputs_not_asserted_late'",
+      "prueba_propuesta": "import pytest\nfrom review.out.astra_scratch.test_r21 import test_unknown_inputs_not_asserted_late\n\n@pytest.mark.parametrize('lang', ['es', 'en', 'zh'])\ndef test_ausencia_de_evidencia_no_es_retraso(lang):\n    test_unknown_inputs_not_asserted_late(lang)\n\n# Distinguir late_inputs de procedencia desconocida, paquete ausente o ilegible.\n# temporal_sentence también afirma retraso para estos motivos.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-08",
+      "severidad": "baja",
+      "categoria": "datos",
+      "archivo": "README.md",
+      "linea": 49,
+      "afirmacion": "La documentación del estado de revisión sigue desactualizada y exagera la verificación completada.",
+      "contraejemplo": "README dice «Last Astra round answered: 19» aunque existe la respuesta 26 a ronda 20. Además, informe 26:27 afirma que test_r20.py pasa salvo el caso límite; ejecuté cinco fallos adicionales: longhist en tres idiomas, denominador narrativo y la excepción de integridad. Este último requiere adaptar IntegrityError a ManifestInconsistent; los otros cuatro son defectos persistentes.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k readme_last_round_matches_response",
+      "prueba_propuesta": "from pathlib import Path\n\ndef test_estado_documentado_actual():\n    assert Path('docs/informes/26_respuesta_ronda20_astra.md').is_file()\n    assert 'Last Astra round answered: 19' not in Path('README.md').read_text(encoding='utf8')\n\n# Reproducción adicional ejecutada: test_r20.py -k 'all_scenarios_in_universal_loss_claim or assembler_cost_prose or reused_packet_integrity'.\n# Resultado guardado en review/out/astra_scratch/r21_report26_claim.txt: 5 fallos.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-09",
+      "severidad": "baja",
+      "categoria": "tiempo",
+      "archivo": "scripts/register_daily_quotes_fetch.ps1",
+      "linea": 8,
+      "afirmacion": "La nueva tarea diaria vuelve a presentar una equivalencia horaria de verano como permanente; el informe 26:14 la repite.",
+      "contraejemplo": "El 08/11/2026 a las 18:45 de Toronto corresponde al 09/11 a las 07:45 de Taipei, no a las 06:45. El margen anterior al domingo sigue existiendo; el defecto es documental. No ejecuté ni registré la tarea.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k daily_schedule_timezone_prose",
+      "prueba_propuesta": "from datetime import datetime\nfrom pathlib import Path\nfrom zoneinfo import ZoneInfo\n\ndef test_horario_diario_en_invierno():\n    t = datetime(2026, 11, 8, 18, 45, tzinfo=ZoneInfo('America/Toronto')).astimezone(ZoneInfo('Asia/Taipei'))\n    assert (t.hour, t.minute) == (7, 45)\n    text = Path('scripts/register_daily_quotes_fetch.ps1').read_text(encoding='utf8')\n    assert 'local (06:45 Taipei del día siguiente)' not in text",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La reutilización verifica integridad y rejected. Mantener pendiente la readmisión multicaptura y corregir R21-02/R21-03 antes de atribuir cumplimiento prospectivo a paquetes históricos."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "W37 permanece como reconstrucción. El 13/09 sólo es una fecha prevista: identidad completa, procedencia y clasificación deben acreditarse efectivamente. El ciclo sintético funciona, pero las comprobaciones admiten falsos positivos."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Pasan las pruebas de aceptación del libro, lotes y comisiones, y el contraejemplo de conservación de una posición bloqueada hasta el cierre efectivo siguiente."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de conservación de las condiciones de valoración final. Las tablas de patrimonio publicadas coinciden con los JSON."
+    },
+    {
+      "id": "P5",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de inmutabilidad del mercado y la comprobación de hashes de configuración Q1 con mínimos de entrenamiento 40/40/52."
+    },
+    {
+      "id": "P6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Las tablas, selecciones y medias de los tres escenarios se reproducen desde los JSON. Corregir las narrativas pendientes R19-01/R19-02 y las afirmaciones documentales de verificación; informe 26 §2 no puede dar todas las condiciones por atendidas."
+    },
+    {
+      "id": "P7",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La aproximación con precios regulares sigue declarada y el ensamblado dominical funciona. Persisten el denominador narrativo incorrecto en 15b y su generador."
+    },
+    {
+      "id": "P8",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de identificadores y verificaciones posteriores. El recuento sigue representando verificaciones registradas, incluidas las parciales, sin equivaler a cierres completos."
+    },
+    {
+      "id": "P9",
+      "posicion": "rechazo",
+      "argumento": "La reformulación del informe 26 §2 exige propiedades que el código todavía no acredita: todos los pronosticadores, lista correspondiente a los bytes, vínculo con el paquete, primera ingestión por instante y procedencia íntegra anterior al corte. R21-01/R21-02/R21-03 producen prospective=true sin cumplirlas. La declaración de modo histórico y ausencia de sello externo no subsana esos falsos positivos."
+    }
+  ],
+  "veredicto": "rechazado"
+}

@@ -244,98 +244,163 @@ def _intact(rec: dict) -> bool:
         return False
 
 
-def forecast_archive(archive_label: str, week_id: str, expected: dict[str, str] | None = None) -> dict:
+def _instant(s: str | None) -> datetime | None:
+    d = _aware(s)
+    return d.astimezone(timezone.utc) if d else None
+
+
+def _record_ok(rec: dict | None) -> str | None:
+    """Motivo por el que un registro del manifiesto no sirve como evidencia; None si sirve."""
+    if rec is None:
+        return "missing_record"
+    for k in ("path", "sha256", "ingested_at", "clock_source"):
+        if not rec.get(k):
+            return f"incomplete_record:{k}"
+    if rec.get("clock_source") != "system":
+        return f"clock:{rec.get('clock_source')}"
+    if _instant(rec.get("ingested_at")) is None:
+        return "time_unusable"
+    if not _intact(rec):
+        return "corrupt"
+    return None
+
+
+def forecast_archive(archive_label: str, week_id: str, expected: dict | None = None) -> dict:
     """Clasificación temporal de la lista de una semana, pronosticador a pronosticador.
 
-    Para cada pronosticador esperado se busca la **primera** ingestión de la predicción con exactamente los bytes
-    evaluados (``expected[f]`` = sha256 registrado por el Runner; R20-01), se comprueba que el archivo sigue íntegro,
-    que se archivó con el reloj del sistema (``clock_source == "system"``, R20-03) y que esa primera ingestión es
-    anterior o igual al ``deadline_at`` que la propia predicción declara (R20-02). ``before_deadline`` sólo es True si
-    todos los pronosticadores esperados cumplen. Sin sha esperado (JSON antiguo) no hay identidad: False."""
+    ``expected`` describe cada pronosticador de la semana: ``{"sha": <sha256 de la predicción evaluada>,
+    "picks": [security_id…], "packet_hash": <hash del paquete de la semana>}`` (una cadena vale como sha sin más
+    comprobaciones). Para cada pronosticador se localiza la **primera** ingestión por instante de un registro
+    íntegro con exactamente esos bytes, escrito por el reloj del sistema (R20-01/03, R21-05); se exige que la lista
+    mostrada coincida con el ``ranking`` archivado y que la predicción declare el mismo ``packet_hash`` que la
+    semana (R21-02); y que esa primera ingestión sea anterior o igual al ``deadline_at`` que la propia predicción
+    declara (R20-02). ``before_deadline`` sólo es True si **todos** los pronosticadores esperados tienen identidad y
+    cumplen (R21-01). Sin identidad no hay predicción, pero se informa de la primera ingestión íntegra por dataset."""
     out: dict = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": None, "reasons": []}
     prefix = f"{archive_label}/"
-    if not expected:
+    recs_week = [r for r in manifest() if r.get("source_id") == "forecast" and r.get("dataset", "").startswith(prefix)
+                 and r.get("dataset", "").endswith("/" + week_id)]
+    for r in recs_week:
+        f = r.get("dataset", "")[len(prefix):].split("/", 1)[0]
+        t = r.get("ingested_at", "")
+        out["archived_at_latest"][f] = max(out["archived_at_latest"].get(f, ""), t)
+    norm: dict[str, dict] = {}
+    for f, v in (expected or {}).items():
+        norm[f] = {"sha": v} if isinstance(v, str) else dict(v or {})
+    if not norm or any(not (v.get("sha") or "") for v in norm.values()):
         out["before_deadline"] = False
-        out["reasons"].append("no_forecast_identity")
-        expected = {}
+        out["reasons"].append("no_forecast_identity" if not norm else "no_forecast_identity:" + ",".join(f for f, v in norm.items() if not v.get("sha")))
+        for r in sorted(recs_week, key=lambda r: (_instant(r.get("ingested_at")) or datetime.max.replace(tzinfo=timezone.utc))):
+            f = r.get("dataset", "")[len(prefix):].split("/", 1)[0]
+            if f in out["archived_at"] or _record_ok(r):
+                continue
+            out["archived_at"][f] = r["ingested_at"]
+            out["clock_source"][f] = r.get("clock_source")
+            try:
+                body = json.loads((RAW / r["path"]).read_text(encoding="utf-8"))
+                out["deadline_at"][f] = (body.get("forecast") or {}).get("deadline_at")
+            except (OSError, json.JSONDecodeError):
+                out["deadline_at"][f] = None
+        return out
     ok = True
-    for f, sha in expected.items():
-        recs = [r for r in manifest() if r.get("source_id") == "forecast" and r.get("dataset", "").startswith(prefix)
-                and r.get("dataset", "").endswith("/" + week_id) and r.get("dataset", "")[len(prefix):].split("/", 1)[0] == f]
-        if recs:
-            out["archived_at_latest"][f] = max(r.get("ingested_at", "") for r in recs)
-        same = sorted((r for r in recs if r.get("sha256") == sha), key=lambda r: r.get("ingested_at", ""))
-        first = next((r for r in same if _intact(r)), None)
-        if first is None:
-            ok = False; out["reasons"].append(f"missing_or_corrupt:{f}")
+    for f, spec in norm.items():
+        sha = spec["sha"]
+        same = [r for r in recs_week if r.get("dataset", "")[len(prefix):].split("/", 1)[0] == f and r.get("sha256") == sha]
+        same.sort(key=lambda r: (_instant(r.get("ingested_at")) or datetime.max.replace(tzinfo=timezone.utc)))
+        # la primera ingestión ÍNTEGRA por instante (un archivo corrupto no prueba nada; saltarlo sólo puede retrasar la
+        # fecha, nunca adelantarla); es esa primera la que debe llevar reloj del sistema (R21-05)
+        first = next((r for r in same if _record_ok(r) in (None, "clock:injected") or (_record_ok(r) or "").startswith("clock:")), None)
+        why = _record_ok(first)
+        if why:
+            ok = False; out["reasons"].append(f"{'missing_or_corrupt' if why in ('missing_record', 'corrupt') else why}:{f}")
             continue
         out["archived_at"][f] = first["ingested_at"]
         out["clock_source"][f] = first.get("clock_source")
         try:
             body = json.loads((RAW / first["path"]).read_text(encoding="utf-8"))
-            dl = (body.get("forecast") or {}).get("deadline_at")
         except (OSError, json.JSONDecodeError):
-            dl = None
+            body = None
+        fc = (body or {}).get("forecast") or {}
+        dl = fc.get("deadline_at")
         out["deadline_at"][f] = dl
-        t, d = _aware(first["ingested_at"]), _aware(dl)
-        if first.get("clock_source") != "system":
-            ok = False; out["reasons"].append(f"clock:{f}:{first.get('clock_source')}")
-        if t is None or d is None:
+        t, d = _instant(first["ingested_at"]), _instant(dl)
+        if body is None or d is None:
             ok = False; out["reasons"].append(f"deadline_or_time_unusable:{f}")
-        elif t > d:
+            continue
+        if t > d:
             ok = False; out["reasons"].append(f"late:{f}")
-    if expected:
-        out["before_deadline"] = ok
+        if "picks" in spec:
+            ranked = [x.get("security_id") for x in (fc.get("ranking") or [])] if fc.get("status") != "abstained" else []
+            if list(spec.get("picks") or []) != ranked:
+                ok = False; out["reasons"].append(f"picks_mismatch:{f}")
+        if "packet_hash" in spec and (body or {}).get("packet_hash") != spec.get("packet_hash"):
+            ok = False; out["reasons"].append(f"packet_link_mismatch:{f}")
+    out["before_deadline"] = ok
     return out
 
 
-_INPUTS_CACHE: dict[str, dict] = {}
+_INPUTS_CACHE: dict[tuple, dict] = {}
 
 
-def inputs_before_cutoff(packet_capture_id: str | None, cutoff_at: str) -> dict:
-    """Todos los documentos admitidos del paquete archivado, y todas las capturas por sesión que enumeran sus
-    manifiestos, deben haber sido **ingeridos antes del corte** (R20-06, PIT-06). Se lee el paquete archivado (no el
-    de memoria) y se resuelve cada ``capture_id`` en el manifiesto del archivo. Sin paquete o con alguna captura
-    desconocida o posterior al corte: False."""
+def inputs_before_cutoff(packet_capture_id: str | None, cutoff_at: str, packet_hash: str | None = None) -> dict:
+    """Procedencia completa de las entradas del paquete archivado (R20-06, R21-03).
+
+    Se exige: registro del paquete completo e íntegro (sha256 de los bytes), paquete deserializable cuyo
+    ``packet_hash`` coincide con el de la semana, todo documento admitido con ``capture_id``, todo manifiesto con
+    ``session_captures`` no vacío, y cada captura referenciada con registro completo, íntegra, escrita por el reloj
+    del sistema e ingerida antes o en el corte. Cualquier fallo devuelve ``ok=False`` con su motivo; sólo
+    ``late_inputs`` significa «recibido después del corte»: lo demás es procedencia no acreditada."""
+    key = (packet_capture_id, cutoff_at, packet_hash)
+    if key in _INPUTS_CACHE:
+        return _INPUTS_CACHE[key]
+    res = _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash)
+    _INPUTS_CACHE[key] = res
+    return res
+
+
+def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
     if not packet_capture_id:
         return {"ok": False, "reason": "no_packet_capture"}
-    if packet_capture_id in _INPUTS_CACHE:
-        return _INPUTS_CACHE[packet_capture_id]
     manifest()
     rec = _BY_ID.get(packet_capture_id)
-    res: dict
-    if rec is None:
-        res = {"ok": False, "reason": "packet_not_in_manifest"}
-    else:
-        try:
-            body = json.loads((RAW / rec["path"]).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            body = None
-        if not body:
-            res = {"ok": False, "reason": "packet_unreadable"}
-        else:
-            cutoff = _aware(cutoff_at)
-            ids: set[str] = set()
-            for d in body.get("admitted", []):
-                if d.get("capture_id"):
-                    ids.add(d["capture_id"])
-                if d.get("kind") == "capture_manifest":
-                    ids.update((d.get("payload") or {}).get("session_captures", {}).values())
-            late, unknown, latest = [], [], None
-            for cid in ids:
-                r = _BY_ID.get(cid)
-                if r is None:
-                    unknown.append(cid); continue
-                t = _aware(r.get("ingested_at"))
-                if t is None or cutoff is None or t > cutoff:
-                    late.append(cid)
-                if t is not None and (latest is None or t > latest):
-                    latest = t
-            res = {"ok": not late and not unknown and bool(ids), "captures": len(ids), "late": len(late), "unknown": len(unknown),
-                   "latest_ingested_at": latest.isoformat() if latest else None, "mode": body.get("mode"),
-                   "reason": None if (not late and not unknown and ids) else ("late_inputs" if late else "unknown_inputs" if unknown else "no_inputs")}
-    _INPUTS_CACHE[packet_capture_id] = res
-    return res
+    why = _record_ok(rec)
+    if why:
+        return {"ok": False, "reason": f"packet_{why}"}
+    try:
+        body = json.loads((RAW / rec["path"]).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    if not isinstance(body, dict) or not body.get("admitted"):
+        return {"ok": False, "reason": "packet_unreadable_or_empty"}
+    if packet_hash is not None and body.get("packet_hash") != packet_hash:
+        return {"ok": False, "reason": "packet_hash_mismatch", "mode": body.get("mode")}
+    cutoff = _instant(cutoff_at)
+    if cutoff is None:
+        return {"ok": False, "reason": "cutoff_unusable", "mode": body.get("mode")}
+    ids: set[str] = set()
+    for d in body.get("admitted", []):
+        if not d.get("capture_id"):
+            return {"ok": False, "reason": "admitted_without_capture", "mode": body.get("mode")}
+        ids.add(d["capture_id"])
+        if d.get("kind") == "capture_manifest":
+            sc = (d.get("payload") or {}).get("session_captures") or {}
+            if not sc:
+                return {"ok": False, "reason": "empty_capture_manifest", "mode": body.get("mode")}
+            ids.update(sc.values())
+    late, bad, latest = [], [], None
+    for cid in sorted(ids):
+        r = _BY_ID.get(cid)
+        w = _record_ok(r)
+        if w:
+            bad.append(f"{cid}:{w}"); continue
+        t = _instant(r["ingested_at"])
+        if t > cutoff:
+            late.append(cid)
+        if latest is None or t > latest:
+            latest = t
+    reason = None if not late and not bad else ("late_inputs" if late and not bad else "unverified_inputs")
+    return {"ok": reason is None, "captures": len(ids), "late": len(late), "unverified": len(bad),
+            "latest_ingested_at": latest.isoformat() if latest else None, "mode": body.get("mode"), "reason": reason}
 
 
 def export_rounds() -> list[dict]:
@@ -476,13 +541,15 @@ def build() -> dict:
             alabel = sc["archive_label"]
             prospective_weeks = []
             for w in sc["weeks"]:
-                expected = {f: x["forecast_sha256"] for f, x in w["forecasters"].items() if x.get("forecast_sha256")}
+                # todos los pronosticadores de la semana, con su lista mostrada y el paquete de la semana (R21-01, R21-02)
+                expected = {f: {"sha": x.get("forecast_sha256"), "picks": [p["security_id"] for p in x.get("picks") or []],
+                                "packet_hash": w.get("packet_hash")} for f, x in w["forecasters"].items()}
                 fa = forecast_archive(alabel, w["week_id"], expected)
                 w["forecast_archived_at"] = fa["archived_at"]
                 w["forecast_deadline_at"] = fa["deadline_at"]
                 w["forecast_before_deadline"] = fa["before_deadline"]
                 w["forecast_reasons"] = fa["reasons"]
-                inp = inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"]) if fa["before_deadline"] else {"ok": None, "reason": "not_checked"}
+                inp = inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"], w.get("packet_hash")) if fa["before_deadline"] else {"ok": None, "reason": "not_checked"}
                 w["inputs_before_cutoff"] = inp["ok"]
                 w["inputs_reason"] = inp.get("reason")
                 w["packet_mode"] = inp.get("mode")

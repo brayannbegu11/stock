@@ -84,18 +84,22 @@ def temporal_sentence(s, cw) -> str:
     except Exception:  # noqa: BLE001 - sin exportador no se afirma nada
         return "Clasificación temporal no determinada (exportador no disponible)."
     alabel = (s.get("assumptions") or {}).get("archive_label") or s["label"]
-    expected = {f: x["forecast_sha256"] for f, x in cw["forecasters"].items() if x.get("forecast_sha256")}
+    expected = {f: {"sha": x.get("forecast_sha256"), "picks": [p["security_id"] for p in x.get("picks") or []], "packet_hash": cw.get("packet_hash")}
+                for f, x in cw["forecasters"].items()}
     fa = ex.forecast_archive(alabel, cw["week_id"], expected)
     ruta = f"`forecast/{alabel}/<pronosticador>/{cw['week_id']}` en `data/raw`"
     if not fa["before_deadline"]:
         return (f"Emitida y archivada ({ruta}) **después** del plazo o sin identidad verificable ({', '.join(fa['reasons']) or 'plazo superado'}): "
                 "es una reconstrucción con datos ya conocidos, no una predicción prospectiva.")
-    inp = ex.inputs_before_cutoff(cw.get("packet_capture"), cw["cutoff_at"])
+    inp = ex.inputs_before_cutoff(cw.get("packet_capture"), cw["cutoff_at"], cw.get("packet_hash"))
     if inp.get("ok") is True:
         return (f"Archivada ({ruta}) antes del plazo declarado por cada predicción, con reloj del sistema, y con todos los datos del "
                 "paquete ingeridos antes del corte: predicción del protocolo según el reloj de esta máquina, sin sello externo y con el "
                 "paquete construido en modo histórico (readmisión verificada pendiente).")
-    return (f"Archivada ({ruta}) antes del plazo, pero con datos del paquete recibidos después del corte ({inp.get('reason')}): "
+    if inp.get("reason") == "late_inputs":
+        return (f"Archivada ({ruta}) antes del plazo, pero con datos del paquete recibidos después del corte: "
+                "no cuenta como predicción del protocolo.")
+    return (f"Archivada ({ruta}) antes del plazo, pero la procedencia de las entradas no queda acreditada ({inp.get('reason')}): "
             "no cuenta como predicción del protocolo.")
 
 
@@ -163,7 +167,7 @@ Lectura correcta: en un mercado que subió ({pct(s['universe_ew']['mean_weekly_g
 
 1. **El dimensionado proporcional (efectivo disponible / {a['slots']} por puesto, ≈ 0,8-1 M TWD) no puede comprar un lote de 1.000 acciones de los valores más caros.** Q1 elige con frecuencia 台積電 (2330, ≈ 2.400 TWD), 鴻海, 緯穎 o 欣興: {F['Q1']['entry_failures']} entradas fallidas de {F['Q1']['weeks_selected'] * a['slots']}. Hay que decidir: subir el capital, admitir lotes sueltos (零股; escenario del informe 15b) o filtrar el universo por precio. Es una decisión de protocolo y cambia el universo elegible.
 2. **La regla de emparejamiento (misma exposición ±{a['exposure_tolerance']}) deja fuera a la mayoría de las semanas** cuando un pronosticador falla entradas y el otro no. O se corrige el dimensionado (punto 1) o el emparejamiento debe definirse de otro modo.
-3. Los costes ilustrativos (≈ {pct(F['A1']['mean_costs_over_invested'], 2, False)} semanal sobre lo invertido) son del orden de las diferencias semanales entre pronosticadores.
+3. Los costes ilustrativos (≈ {pct(F['A1']['mean_costs_over_invested'], 2, False)} semanal sobre compras brutas más ventas brutas heredadas) son del orden de las diferencias semanales entre pronosticadores.
 
 ## Lista de la semana en curso (corte {cw['cutoff_at'][:10]} 18:00 Taipei; semana {cw['week_id']})
 
@@ -206,7 +210,7 @@ def header_15b(d, d_std):
 
 **Qué es:** la misma corrida del informe 15 (mismo universo de {twd(s['universe_size'])} acciones, mismas {operated} semanas operadas, misma fuente oficial por fecha, **sin dividendos**), con el dimensionado que corresponde al capital real del usuario (2-3 mil USD): **{twd(initial)} TWD** iniciales, cinco puestos de {twd(a['notional'])} TWD nominales con dimensionado {a['sizing']} (efectivo disponible / {a['slots']}), **lotes sueltos** (`lot_size=1`, 零股), comisión {pct(float(a['commission_per_side']), 4, False)} por lado con **mínimo de {int(float(a.get('min_commission_twd', 20)))} TWD por orden**, impuesto de venta {pct(float(a['sell_tax']), 1, False)} y deslizamiento de {a['slippage_bps']} pb por lado (el mercado de lotes sueltos es menos líquido). Etiqueta: `{s['label']}`; cifras tomadas de `data/store/backtest_{s['label']}.json`, generado con el código corregido en la ronda 17 (la cantidad comprada respeta el nocional del puesto incluida la comisión mínima). Aproximación declarada: los precios son los de la sesión regular, no los del mercado de lotes sueltos (cambio de plan P7: propuesto en el prompt de la ronda 17, evaluado por Astra en su ronda 17, recogido como adenda en el informe 22 §2 y en el informe 23 §2).
 
-**Qué cambia respecto al estándar:** el universo elegible es **mayor**: la regla de liquidez del protocolo exige que la mediana del importe negociado en 20 sesiones sea ≥ {a['liquidity_multiple']} × el nocional del puesto, es decir {twd(liq)} TWD frente a {twd(liq_std)} TWD en el estándar; entran valores pequeños que en el informe 15 quedaban fuera ({elig:,} elegibles por semana de media frente a {elig_std:,}), por lo que **las listas de Q0, Q1 y A1 no coinciden con las del informe 15** (A1 se sortea sobre ese universo distinto) y el universo bruto de referencia rinde {pct(ew)} semanal frente a {pct(ew_std)}. Con lotes sueltos casi todas las entradas caben ({fails}); a cambio, la comisión mínima pesa más sobre importes pequeños (coste medio sobre lo invertido: {costs}). Medias semanales netas frente al escenario estándar: {comp}.
+**Qué cambia respecto al estándar:** el universo elegible es **mayor**: la regla de liquidez del protocolo exige que la mediana del importe negociado en 20 sesiones sea ≥ {a['liquidity_multiple']} × el nocional del puesto, es decir {twd(liq)} TWD frente a {twd(liq_std)} TWD en el estándar; entran valores pequeños que en el informe 15 quedaban fuera ({elig:,} elegibles por semana de media frente a {elig_std:,}), por lo que **las listas de Q0, Q1 y A1 no coinciden con las del informe 15** (A1 se sortea sobre ese universo distinto) y el universo bruto de referencia rinde {pct(ew)} semanal frente a {pct(ew_std)}. Con lotes sueltos casi todas las entradas caben ({fails}); a cambio, la comisión mínima pesa más sobre importes pequeños (coste medio sobre compras brutas más ventas brutas heredadas: {costs}). Medias semanales netas frente al escenario estándar: {comp}.
 
 **Qué NO demuestra:** lo mismo que el informe 15: {operated} semanas no bastan, no hay dividendos, el universo es el censo vigente y el exceso emparejado se calcula con las semanas emparejables que haya. Las cifras siguientes las reproduce `scripts/run_backtest.py` con los parámetros del README.
 

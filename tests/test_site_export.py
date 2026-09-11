@@ -107,7 +107,7 @@ def test_r20_01_02_03_prediction_requires_exact_bytes_per_forecaster_deadline_an
     r = _put(injected, "lab/Q0/2026-W38", {"forecast": {"deadline_at": dl}})
     monkeypatch.setattr(ex, "RAW", tmp_path / "inj"); ex._MANIFEST = None
     fa = ex.forecast_archive("lab", "2026-W38", {"Q0": r.sha256})
-    assert fa["before_deadline"] is False and any(x.startswith("clock:Q0") for x in fa["reasons"])
+    assert fa["before_deadline"] is False and any(x.startswith("clock:") and x.endswith(":Q0") for x in fa["reasons"])
     # plazo sin zona horaria: inutilizable, no un TypeError
     r2 = _put(injected, "lab/Q1/2026-W38", {"forecast": {"deadline_at": "2026-09-14T08:30:00"}})
     ex._MANIFEST = None
@@ -136,6 +136,13 @@ def test_r20_02_each_forecaster_is_checked_against_its_own_deadline(tmp_path, mo
     assert fa["before_deadline"] is False and "late:Q1" in fa["reasons"]
 
 
+def _mark_system(tmp_path):
+    lines = [json.loads(l) for l in (tmp_path / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+    for l in lines:
+        l["clock_source"] = "system"
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
+
+
 def test_r20_06_inputs_must_be_ingested_before_the_cutoff(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     from twlab.store import RawStore
@@ -143,17 +150,17 @@ def test_r20_06_inputs_must_be_ingested_before_the_cutoff(tmp_path, monkeypatch)
     clock = {"t": datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)}                # sábado: antes del corte
     store = RawStore(tmp_path, clock=lambda: clock["t"])
     cap = store.put(source_id="twse", dataset="MI/2026-09-11", payload=b"x", url="u", content_type="application/json")
-    pkt = {"mode": "historical", "admitted": [{"kind": "price_bar_series", "capture_id": cap.capture_id},
+    pkt = {"mode": "historical", "packet_hash": "h1", "admitted": [{"kind": "price_bar_series", "capture_id": cap.capture_id},
                                               {"kind": "capture_manifest", "capture_id": cap.capture_id, "payload": {"session_captures": {"2026-09-11": cap.capture_id}}}]}
     p = store.put(source_id="packet", dataset="lab/2026-W38", payload=json.dumps(pkt).encode(), url="u", content_type="application/json")
-    ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
-    assert ex.inputs_before_cutoff(p.capture_id, "2026-09-13T18:00:00+08:00")["ok"] is True
+    _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear()          # el fixture simula el reloj real
+    assert ex.inputs_before_cutoff(p.capture_id, "2026-09-13T18:00:00+08:00", "h1")["ok"] is True
     clock["t"] = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)                 # domingo 20:00 Taipei: después del corte
     late_cap = store.put(source_id="tpex", dataset="DQ/2026-09-11", payload=b"y", url="u", content_type="application/json")
-    pkt2 = {"mode": "historical", "admitted": [{"kind": "capture_manifest", "capture_id": late_cap.capture_id, "payload": {"session_captures": {"2026-09-11": late_cap.capture_id}}}]}
+    pkt2 = {"mode": "historical", "packet_hash": "h2", "admitted": [{"kind": "capture_manifest", "capture_id": late_cap.capture_id, "payload": {"session_captures": {"2026-09-11": late_cap.capture_id}}}]}
     p2 = store.put(source_id="packet", dataset="lab/2026-W39", payload=json.dumps(pkt2).encode(), url="u", content_type="application/json")
-    ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
-    res = ex.inputs_before_cutoff(p2.capture_id, "2026-09-13T18:00:00+08:00")
+    _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    res = ex.inputs_before_cutoff(p2.capture_id, "2026-09-13T18:00:00+08:00", "h2")
     assert res["ok"] is False and res["reason"] == "late_inputs"
     assert ex.inputs_before_cutoff(None, "2026-09-13T18:00:00+08:00")["ok"] is False
 
@@ -198,3 +205,116 @@ def test_r20_02_boundary_equal_instant_counts_as_on_time(tmp_path, monkeypatch):
         (tmp_path / "manifest.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
         ex._MANIFEST = None
         assert ex.forecast_archive("lab", "2026-W38", {"Q0": sha})["before_deadline"] is expected
+
+
+def _week_fixture(tmp_path, monkeypatch):
+    """Semana sintética íntegra: fuentes antes del corte, paquete, tres predicciones antes del plazo, reloj del sistema."""
+    from datetime import datetime, timezone
+    from twlab.store import RawStore
+    ex = _load(); monkeypatch.setattr(ex, "RAW", tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    clock = {"t": datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)}
+    store = RawStore(tmp_path, clock=lambda: clock["t"])
+    src = store.put(source_id="twse", dataset="MI/2026-09-11", payload=b"x", url="u", content_type="application/json")
+    pkt_body = {"mode": "historical", "packet_hash": "h1", "admitted": [
+        {"kind": "price_bar_series", "capture_id": src.capture_id},
+        {"kind": "capture_manifest", "capture_id": src.capture_id, "payload": {"session_captures": {"2026-09-11": src.capture_id}}}]}
+    pkt = store.put(source_id="packet", dataset="lab/2026-W38", payload=json.dumps(pkt_body).encode(), url="u", content_type="application/json", extra={"packet_hash": "h1"})
+    clock["t"] = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)                      # domingo 20:00 Taipei, antes del plazo del lunes
+    fc = {}
+    for f in ("Q0", "Q1", "A1"):
+        body = {"forecast": {"deadline_at": "2026-09-14T08:30:00+08:00", "status": "selected", "ranking": [{"security_id": "TWSE:A@2000-01-01"}]}, "packet_hash": "h1"}
+        fc[f] = store.put(source_id="forecast", dataset=f"lab/{f}/2026-W38", payload=json.dumps(body).encode(), url="u", content_type="application/json")
+    lines = [json.loads(l) for l in (tmp_path / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+    for l in lines:
+        l["clock_source"] = "system"                                                     # el fixture simula el reloj real
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
+    ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    expected = {f: {"sha": fc[f].sha256, "picks": ["TWSE:A@2000-01-01"], "packet_hash": "h1"} for f in fc}
+    return ex, store, pkt, fc, expected
+
+
+def test_r21_01_every_forecaster_needs_an_identity(tmp_path, monkeypatch):
+    ex, store, pkt, fc, expected = _week_fixture(tmp_path, monkeypatch)
+    assert ex.forecast_archive("lab", "2026-W38", expected)["before_deadline"] is True
+    for bad in (None, ""):
+        e2 = dict(expected); e2["Q1"] = {"sha": bad, "picks": ["TWSE:A@2000-01-01"], "packet_hash": "h1"}
+        fa = ex.forecast_archive("lab", "2026-W38", e2)
+        assert fa["before_deadline"] is False and any(r.startswith("no_forecast_identity") for r in fa["reasons"])
+
+
+def test_r21_02_shown_picks_and_packet_must_match_the_archived_bytes(tmp_path, monkeypatch):
+    ex, store, pkt, fc, expected = _week_fixture(tmp_path, monkeypatch)
+    e2 = json.loads(json.dumps(expected)); e2["Q0"]["picks"] = ["TWSE:FAKE@2000-01-01"]
+    fa = ex.forecast_archive("lab", "2026-W38", e2)
+    assert fa["before_deadline"] is False and "picks_mismatch:Q0" in fa["reasons"]
+    e3 = json.loads(json.dumps(expected)); e3["A1"]["packet_hash"] = "other"
+    fa = ex.forecast_archive("lab", "2026-W38", e3)
+    assert fa["before_deadline"] is False and "packet_link_mismatch:A1" in fa["reasons"]
+    assert ex.inputs_before_cutoff(pkt.capture_id, "2026-09-13T18:00:00+08:00", "other")["reason"] == "packet_hash_mismatch"
+
+
+def test_r21_03_inputs_need_integrity_system_clock_and_complete_provenance(tmp_path, monkeypatch):
+    ex, store, pkt, fc, expected = _week_fixture(tmp_path, monkeypatch)
+    cutoff = "2026-09-13T18:00:00+08:00"
+    assert ex.inputs_before_cutoff(pkt.capture_id, cutoff, "h1")["ok"] is True
+    src = store.captures(source_id="twse")[0]
+    (store.root / src.path).write_bytes(b"broken")                                     # fuente corrupta
+    ex._INPUTS_CACHE.clear()
+    r = ex.inputs_before_cutoff(pkt.capture_id, cutoff, "h1"); assert r["ok"] is False and r["reason"] == "unverified_inputs"
+    (store.root / src.path).unlink()                                                   # fuente ausente
+    ex._INPUTS_CACHE.clear()
+    assert ex.inputs_before_cutoff(pkt.capture_id, cutoff, "h1")["reason"] == "unverified_inputs"
+    (store.root / src.path).write_bytes(b"x")
+    lines = [json.loads(l) for l in (tmp_path / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+    for l in lines:
+        if l["capture_id"] == src.capture_id:
+            l["clock_source"] = "injected"                                             # reloj inyectado en la fuente
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
+    ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    assert ex.inputs_before_cutoff(pkt.capture_id, cutoff, "h1")["reason"] == "unverified_inputs"
+    # paquete alterado sin actualizar su sha
+    ex2, store2, pkt2, fc2, _ = _week_fixture(tmp_path / "b", monkeypatch)
+    (store2.root / pkt2.path).write_bytes(b'{"mode":"historical","packet_hash":"h1","admitted":[]}')
+    ex2._INPUTS_CACHE.clear()
+    assert ex2.inputs_before_cutoff(pkt2.capture_id, cutoff, "h1")["reason"].startswith("packet_")
+    # documento admitido sin captura o manifiesto vacío
+    ex3, store3, _, _, _ = _week_fixture(tmp_path / "c", monkeypatch)
+    src3 = store3.captures(source_id="twse")[0]
+    for body in ({"mode": "historical", "packet_hash": "h1", "admitted": [{"kind": "price_bar_series"}]},
+                 {"mode": "historical", "packet_hash": "h1", "admitted": [{"kind": "capture_manifest", "capture_id": src3.capture_id, "payload": {"session_captures": {}}}]}):
+        p = store3.put(source_id="packet", dataset="lab/2026-W39", payload=json.dumps(body).encode(), url="u", content_type="application/json")
+        lines = [json.loads(l) for l in (tmp_path / "c" / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+        for l in lines: l["clock_source"] = "system"
+        (tmp_path / "c" / "manifest.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
+        ex3._MANIFEST = None; ex3._INPUTS_CACHE.clear()
+        assert ex3.inputs_before_cutoff(p.capture_id, cutoff, "h1")["ok"] is False
+
+
+def test_r21_04_cache_is_keyed_by_cutoff(tmp_path, monkeypatch):
+    ex, store, pkt, fc, expected = _week_fixture(tmp_path, monkeypatch)
+    assert ex.inputs_before_cutoff(pkt.capture_id, "2026-09-13T18:00:00+08:00", "h1")["ok"] is True
+    assert ex.inputs_before_cutoff(pkt.capture_id, "2026-09-11T18:00:00+08:00", "h1")["ok"] is False
+
+
+def test_r21_05_first_ingestion_is_chosen_by_instant_across_offsets(tmp_path, monkeypatch):
+    ex = _load(); monkeypatch.setattr(ex, "RAW", tmp_path); ex._MANIFEST = None
+    import hashlib
+    body = json.dumps({"forecast": {"deadline_at": "2026-09-14T08:30:00+08:00"}}).encode(); sha = hashlib.sha256(body).hexdigest()
+    (tmp_path / "f.json").write_bytes(body)
+    recs = [{"source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": "2026-09-13T19:00:00+08:00", "path": "f.json", "sha256": sha, "clock_source": "injected"},
+            {"source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": "2026-09-13T12:00:00+00:00", "path": "f.json", "sha256": sha, "clock_source": "system"}]
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
+    fa = ex.forecast_archive("lab", "2026-W38", {"Q0": sha})
+    assert fa["before_deadline"] is False and any(r.startswith("clock:injected") for r in fa["reasons"])   # 19:00+08 = 11:00 UTC es la primera
+
+
+def test_r21_06_incomplete_packet_record_fails_closed(tmp_path, monkeypatch):
+    ex, store, pkt, fc, expected = _week_fixture(tmp_path, monkeypatch)
+    lines = [json.loads(l) for l in (tmp_path / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+    for l in lines:
+        if l["capture_id"] == pkt.capture_id:
+            del l["path"]
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
+    ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    r = ex.inputs_before_cutoff(pkt.capture_id, "2026-09-13T18:00:00+08:00", "h1")
+    assert r["ok"] is False and r["reason"] == "packet_incomplete_record:path"

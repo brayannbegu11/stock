@@ -20,7 +20,7 @@
 
 ## Lista de la semana en curso (2026-W37, corte 2026-09-06 18:00 Taipei)
 
-Reconstrucción emitida después de la entrada simulada (`forecast/universe_longhist_2021_2026/<pronosticador>/2026-W37` en `data/raw`), no predicción prospectiva.
+Emitida y archivada (`forecast/universe_longhist_2021_2026/<pronosticador>/2026-W37` en `data/raw`) **después** del plazo o sin identidad verificable (no_forecast_identity:Q0,Q1,A1): es una reconstrucción con datos ya conocidos, no una predicción prospectiva.
 
 | Pronosticador | Selección (símbolo, nombre) | Estado de la entrada simulada |
 |---|---|---|
@@ -39,7 +39,6 @@ Reconstrucción emitida después de la entrada simulada (`forecast/universe_long
 *A continuación, el informe generado automáticamente por `scripts/run_backtest.py` (tablas y selecciones semana a semana).*
 
 ## Informe generado: backtest universe_longhist_2021_2026
-
 Periodo 2026-05-04 → 2026-09-09 · universo 1937 valores (official_daily_quotes:2021-01-04..2026-09-09) · 17 semanas operadas, 0 sin sesiones, 1 pendientes de desenlace.
 
 Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad de barras por política de 24 h. Nada de esto es una estimación de rendimiento futuro.

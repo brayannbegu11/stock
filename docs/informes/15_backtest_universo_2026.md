@@ -1,6 +1,6 @@
 # Backtest del universo completo, mayo-septiembre 2026 (Q0, Q1, A1; sin dividendos)
 
-**Qué es:** el primer recorrido del protocolo sobre **todas** las acciones ordinarias del tablero principal de TWSE y TPEx (1.937 valores del maestro, informe 10), con las cotizaciones oficiales diarias por fecha (`twlab/sources/twse_daily.py`: TWSE `MI_INDEX`, TPEx `dailyQuotes`, capturadas el 9 y 10 de septiembre de 2026 para las sesiones desde julio de 2024; Astra comprobó que 15.538 pares TWSE–FinMind de 2025 coinciden exactamente). Periodo: cortes dominicales del 10 de mayo al 6 de septiembre de 2026 (18 semanas: 17 operadas y la semana en curso, pendiente de desenlace). La corrida no usa ningún LLM; es una reconstrucción histórica con datos archivados después de los cortes, **no** evidencia prospectiva (véase la lista de la semana más abajo). Etiqueta: `universe_2026-05-04_2026-09-09`; cifras tomadas de `data/store/backtest_universe_2026-05-04_2026-09-09.json`, generado con el código corregido en la ronda 17 (dimensionado exacto con comisión, estados de entrada de la semana pendiente).
+**Qué es:** el primer recorrido del protocolo sobre **todas** las acciones ordinarias del tablero principal de TWSE y TPEx (1.937 valores del maestro, informe 10), con las cotizaciones oficiales diarias por fecha (`twlab/sources/twse_daily.py`: TWSE `MI_INDEX`, TPEx `dailyQuotes`, capturadas el 9 y 10 de septiembre de 2026 para las sesiones desde julio de 2024; Astra comprobó que 15.538 pares TWSE–FinMind de 2025 coinciden exactamente). Periodo: cortes dominicales entre 2026-05-04 y 2026-09-09 (18 semanas: 17 operadas y la semana en curso, pendiente de desenlace). La corrida no usa ningún LLM; es una reconstrucción histórica con datos archivados después de los cortes, **no** evidencia prospectiva (véase la lista de la semana más abajo). Etiqueta: `universe_2026-05-04_2026-09-09`; cifras tomadas de `data/store/backtest_universe_2026-05-04_2026-09-09.json`, generado con el código corregido en la ronda 17 (dimensionado exacto con comisión, estados de entrada de la semana pendiente).
 
 **Qué demuestra:** que la cadena completa (paquete → predicción validada → libro → emparejamiento) funciona sobre el universo real, con unos 835 valores elegibles por semana de media; que gestiona una sesión oficial sin datos (viernes 10-07-2026: ninguna de las 1.937 acciones tiene cotización en ninguna de las dos fuentes; no hay anuncio de cierre archivado, sólo la ausencia de datos; las salidas quedaron bloqueadas y se reintentaron la semana siguiente, y la semana 2026-W28 quedó fuera de las medias de retorno por no tener retorno medible, aunque sus costes conocidos sí entran en la media de costes); y que emite y archiva la lista de la semana en curso.
 
@@ -18,15 +18,15 @@
 | Patrimonio final (inicial 5.000.000 TWD) | 3.969.855 (−20,6 %) | 3.962.879 (−20,7 %) | 4.786.273 (−4,3 %) | — |
 | Exceso neto emparejado frente a A1 | +0,80 % con 7 semanas emparejables: **no estimable** | −0,34 % con 5 semanas emparejables: **no estimable** | — | — |
 
-Lectura correcta: en un mercado que subió (+1,23 % semanal el universo elegible, bruto), las dos reglas de precios lo hicieron peor que el azar, y el azar peor que el mercado. La diferencia media neta A1−Q1 (+1,39 % por semana) es mayor que el coste medio (0,74 % del importe invertido); con 17 semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
+Lectura correcta: en un mercado que subió (+1,23 % semanal el universo elegible, bruto), las dos reglas de precios lo hicieron peor que el azar, y el azar peor que el mercado. La diferencia media neta A1−Q1 (+1,39 % por semana) es mayor que el coste medio (0,74 % sobre compras brutas más ventas brutas heredadas); con 17 semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
 
 1. **El dimensionado proporcional (efectivo disponible / 5 por puesto, ≈ 0,8-1 M TWD) no puede comprar un lote de 1.000 acciones de los valores más caros.** Q1 elige con frecuencia 台積電 (2330, ≈ 2.400 TWD), 鴻海, 緯穎 o 欣興: 16 entradas fallidas de 80. Hay que decidir: subir el capital, admitir lotes sueltos (零股; escenario del informe 15b) o filtrar el universo por precio. Es una decisión de protocolo y cambia el universo elegible.
 2. **La regla de emparejamiento (misma exposición ±0.10) deja fuera a la mayoría de las semanas** cuando un pronosticador falla entradas y el otro no. O se corrige el dimensionado (punto 1) o el emparejamiento debe definirse de otro modo.
-3. Los costes ilustrativos (≈ 0,75 % semanal sobre lo invertido) son del orden de las diferencias semanales entre pronosticadores.
+3. Los costes ilustrativos (≈ 0,75 % semanal sobre compras brutas más ventas brutas heredadas) son del orden de las diferencias semanales entre pronosticadores.
 
 ## Lista de la semana en curso (corte 2026-09-06 18:00 Taipei; semana 2026-W37)
 
-Emitida y archivada con hora real **después** de la entrada simulada del lunes siguiente al corte (`forecast/universe_2026-05-04_2026-09-09/<pronosticador>/2026-W37` en `data/raw`): es una reconstrucción, no una predicción prospectiva. La primera lista prospectiva será la del corte del domingo 13-09, emitida antes de la apertura del lunes 14. Entrada simulada en la primera apertura tras el plazo; salida prevista en el último cierre de la semana (pendiente).
+Emitida y archivada (`forecast/universe_2026-05-04_2026-09-09/<pronosticador>/2026-W37` en `data/raw`) **después** del plazo o sin identidad verificable (no_forecast_identity:Q0,Q1,A1): es una reconstrucción con datos ya conocidos, no una predicción prospectiva. Entrada simulada en la primera apertura tras el plazo; salida prevista en el último cierre de la semana (pendiente).
 
 | Pronosticador | Selección (símbolo, nombre) | Estado de la entrada simulada |
 |---|---|---|
@@ -49,7 +49,6 @@ Estas listas son la salida del laboratorio, no una recomendación: los dos prono
 *A continuación, el informe generado automáticamente por `scripts/run_backtest.py` (tablas y selecciones semana a semana).*
 
 ## Informe generado: backtest universe_2026-05-04_2026-09-09
-
 Periodo 2026-05-04 → 2026-09-09 · universo 1937 valores (official_daily_quotes:2024-07-01..2026-09-09) · 17 semanas operadas, 0 sin sesiones, 1 pendientes de desenlace.
 
 Costes ilustrativos (no contratados); universo del censo vigente; disponibilidad de barras por política de 24 h. Nada de esto es una estimación de rendimiento futuro.

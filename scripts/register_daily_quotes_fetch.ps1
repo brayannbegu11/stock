@@ -5,8 +5,8 @@ Registra (o elimina) la tarea programada de Windows que captura a diario las cot
 Por qué existe (ronda 20, R20-06): para que una lista cuente como predicción del protocolo, todos los datos del
 paquete deben haberse recibido ANTES del corte del domingo 18:00 Taipei. El ciclo semanal corre después del corte,
 así que la captura de la sesión del viernes debe ocurrir antes: esta tarea corre todos los días a las 18:45 hora
-local (06:45 Taipei del día siguiente), de modo que la sesión del viernes queda archivada el sábado por la mañana
-en Taipei, con ingested_at real y anterior al corte.
+local del este de EE. UU. (06:45 Taipei del día siguiente en verano, 07:45 en invierno), de modo que la sesión del
+viernes queda archivada el sábado por la mañana en Taipei, con ingested_at real y anterior al corte.
 
 Uso:
   .\scripts\register_daily_quotes_fetch.ps1                 # todos los días a las 18:45 hora local
