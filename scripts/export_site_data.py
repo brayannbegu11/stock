@@ -19,7 +19,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,11 +29,11 @@ SITE = ROOT / "docs" / "site"
 INDEX = ROOT / "docs" / "index.html"
 REPO_URL = "https://github.com/brayannbegu11/stock"
 
-# id, etiqueta del backtest, informe asociado
+# id, patrón del JSON del backtest (se toma el más reciente), informe asociado
 SCENARIOS = [
-    ("standard", "universe_2026-05-04_2026-09-09", "15_backtest_universo_2026.md"),
-    ("user", "user_75kTWD_oddlots_2026", "15b_backtest_universo_2026_lotes_sueltos.md"),
-    ("longhist", "universe_longhist_2021_2026", "15c_backtest_universo_2026_historial_2021.md"),
+    ("standard", "backtest_universe_2026-05-04_*.json", "15_backtest_universo_2026.md"),
+    ("user", "backtest_user_75kTWD_oddlots_*.json", "15b_backtest_universo_2026_lotes_sueltos.md"),
+    ("longhist", "backtest_universe_longhist_2021_*.json", "15c_backtest_universo_2026_historial_2021.md"),
 ]
 FORECASTERS = ("Q0", "Q1", "A1")
 
@@ -78,13 +78,19 @@ def paired_summary(pe: dict) -> dict:
     }
 
 
-def export_scenario(sid: str, label: str, informe: str) -> dict | None:
-    path = STORE / f"backtest_{label}.json"
-    if not path.exists():
+def latest_json(glob: str) -> Path | None:
+    files = sorted(STORE.glob(glob), key=lambda p: p.stat().st_mtime)
+    return files[-1] if files else None
+
+
+def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
+    path = latest_json(glob) if any(ch in glob for ch in "*?") else STORE / f"backtest_{glob}.json"   # sin comodines: etiqueta
+    if path is None or not path.exists():
         return None
     d = json.loads(path.read_text(encoding="utf-8"))
     s = d["summary"]
     a = s.get("assumptions", {})
+    label = s.get("label")
     forecasters = {}
     for f in FORECASTERS:
         fs = s.get("forecasters", {}).get(f)
@@ -153,6 +159,8 @@ def export_scenario(sid: str, label: str, informe: str) -> dict | None:
     return {
         "id": sid,
         "label": label,
+        "archive_label": a.get("archive_label") or label,
+        "source_file": path.name,
         "informe": informe,
         "period": s.get("period"),
         "manifest": s.get("manifest"),
@@ -189,13 +197,19 @@ def export_scenario(sid: str, label: str, informe: str) -> dict | None:
     }
 
 
-def forecast_archive_times(label: str, week_id: str) -> dict[str, str]:
-    """Última hora real de archivo (ingested_at) de la lista de cada pronosticador para esa semana."""
-    out: dict[str, str] = {}
+def forecast_archive(archive_label: str, week_id: str) -> dict:
+    """Primera hora real de archivo (ingested_at) de la lista de cada pronosticador para esa semana, el plazo del
+    protocolo que declara la predicción archivada y si la primera ingestión fue anterior a ese plazo.
+
+    La primera ingestión es la única que vale como fecha de emisión; una corrida posterior que vuelva a archivar los
+    mismos bytes no la adelanta ni la retrasa (RawStore.find). «Anterior al plazo» se decide con el reloj del sistema
+    de la máquina que archivó: no hay sello externo, y así se declara en el sitio."""
+    out: dict = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": None, "before_deadline": None}
     mf = RAW / "manifest.jsonl"
     if not mf.exists():
         return out
-    prefix = f"{label}/"
+    prefix = f"{archive_label}/"
+    first_rec: dict[str, dict] = {}
     with mf.open(encoding="utf-8") as fh:
         for line in fh:
             try:
@@ -208,7 +222,22 @@ def forecast_archive_times(label: str, week_id: str) -> dict[str, str]:
             if not ds.startswith(prefix) or not ds.endswith("/" + week_id):
                 continue
             f = ds[len(prefix):].split("/", 1)[0]
-            out[f] = max(out.get(f, ""), rec.get("ingested_at", ""))
+            t = rec.get("ingested_at", "")
+            if f not in out["archived_at"] or t < out["archived_at"][f]:
+                out["archived_at"][f] = t
+                first_rec[f] = rec
+            out["archived_at_latest"][f] = max(out["archived_at_latest"].get(f, ""), t)
+    for f, rec in first_rec.items():
+        try:
+            body = json.loads((RAW / rec["path"]).read_text(encoding="utf-8"))
+            dl = (body.get("forecast") or {}).get("deadline_at")
+        except (OSError, json.JSONDecodeError):
+            dl = None
+        if dl:
+            out["deadline_at"] = out["deadline_at"] or dl
+    if out["deadline_at"] and out["archived_at"]:
+        dl = datetime.fromisoformat(out["deadline_at"])
+        out["before_deadline"] = all(datetime.fromisoformat(t) <= dl for t in out["archived_at"].values())
     return out
 
 
@@ -347,14 +376,27 @@ def build() -> dict:
     for sid, label, informe in SCENARIOS:
         sc = export_scenario(sid, label, informe)
         if sc:
+            alabel = sc["archive_label"]
+            prospective_weeks = []
+            for w in sc["weeks"]:
+                fa = forecast_archive(alabel, w["week_id"])
+                w["forecast_archived_at"] = fa["archived_at"]
+                w["forecast_deadline_at"] = fa["deadline_at"]
+                w["forecast_before_deadline"] = fa["before_deadline"]
+                if fa["before_deadline"]:
+                    prospective_weeks.append(w["week_id"])
+            sc["prospective_weeks"] = prospective_weeks
             pending = [w for w in sc["weeks"] if w["pending_outcome"]]
             if pending:
                 wk = pending[-1]["week_id"]
-                sc["current_week"] = {"week_id": wk, "archived_at": forecast_archive_times(label, wk)}
+                fa = forecast_archive(alabel, wk)
+                sc["current_week"] = {"week_id": wk, "archived_at": fa["archived_at"], "archived_at_latest": fa["archived_at_latest"],
+                                      "deadline_at": fa["deadline_at"], "before_deadline": fa["before_deadline"]}
             scenarios.append(sc)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "repo": REPO_URL,
+        "status": project_status(scenarios),
         "tests": count_tests(),
         "raw_coverage": raw_coverage(),
         "master": master_stats(),
@@ -363,6 +405,28 @@ def build() -> dict:
         "review_stats": review_stats(rounds),
         "docs": export_docs(),
     }
+
+
+def project_status(scenarios: list[dict]) -> dict:
+    """Fase del proyecto derivada de los artefactos: 1 construir, 2 probar con el pasado, 3 predecir cada semana, 4 decidir.
+
+    La fase 3 empieza cuando existe al menos una semana cuya lista se archivó antes del plazo (reloj del sistema);
+    hasta entonces la primera lista prospectiva posible es la del siguiente corte dominical posterior a la última
+    semana pendiente."""
+    prospective = sorted({w for sc in scenarios for w in sc.get("prospective_weeks", [])})
+    pending = sorted({w["week_id"] for sc in scenarios for w in sc["weeks"] if w["pending_outcome"]})
+    backtested = max((sc["weeks_operated"] for sc in scenarios), default=0)
+    next_cutoff = None
+    if scenarios:
+        last = max(datetime.fromisoformat(w["cutoff_at"]) for sc in scenarios for w in sc["weeks"])
+        nxt = last + timedelta(days=7)
+        while nxt.date() <= datetime.now(timezone.utc).date():
+            nxt += timedelta(days=7)
+        next_cutoff = nxt.date().isoformat()
+    phase = 3 if prospective else (2 if backtested else 1)
+    return {"phase": phase, "phases_total": 4, "prospective_weeks": prospective, "prospective_count": len(prospective),
+            "pending_weeks": pending, "backtested_weeks": backtested, "next_cutoff": next_cutoff,
+            "weekly_pipeline": "scripts/weekly_prospective.ps1", "external_timestamp": False}
 
 
 def inline_into_index(payload: str) -> bool:

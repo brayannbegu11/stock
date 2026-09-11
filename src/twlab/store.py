@@ -190,6 +190,28 @@ class RawStore:
             raise KeyError(capture_id)
         return recs[capture_id]
 
+    def find(self, *, source_id: str, dataset: str, sha256: Optional[str] = None,
+             extra_equal: Optional[Mapping[str, object]] = None) -> Optional[CaptureRecord]:
+        """Primera captura (la más antigua por ``ingested_at``) de ``dataset`` con el mismo contenido.
+
+        Sirve para no volver a archivar bytes idénticos en corridas repetidas: el registro devuelto conserva la hora
+        real de la primera ingestión, que es la que cuenta como evidencia. La igualdad se declara por ``sha256`` de los
+        bytes o por claves de ``extra`` (p. ej. ``packet_hash``, que excluye metadatos de construcción). No escribe nada.
+        """
+        if sha256 is None and not extra_equal:
+            raise ValueError("find() needs sha256 or extra_equal")
+        best: Optional[CaptureRecord] = None
+        for r in self._read_manifest():
+            if r.source_id != source_id or r.dataset != dataset:
+                continue
+            if sha256 is not None and r.sha256 != sha256:
+                continue
+            if extra_equal and any(r.extra.get(k) != v for k, v in extra_equal.items()):
+                continue
+            if best is None or r.ingested_at < best.ingested_at:
+                best = r
+        return best
+
     def captures(
         self,
         *,

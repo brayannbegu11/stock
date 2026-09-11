@@ -12,6 +12,8 @@ reciente aún no tiene desenlace, la selección se emite y archiva igualmente (`
 """
 from __future__ import annotations
 
+import hashlib
+
 import collections
 import json
 import random
@@ -61,6 +63,7 @@ class BacktestConfig:
     par_value: D = D(10)
     baseline: str = "A1"
     label: str = "backtest"
+    archive_label: Optional[str] = None        # dataset del archivo (paquetes y predicciones); estable entre corridas semanales
 
 
 @dataclass
@@ -700,11 +703,16 @@ class Runner:
                 available_at=known[-1].available_at, availability_quality=AvailabilityQuality.CONSERVATIVE_INFERENCE,
                 capture_id=last_cap.capture_id, source_sha256=last_cap.sha256, derivation=s.derivation, payload=payload,
             ))
-        packet = build_packet(packet_id=f"pkt-{self.cfg.label}-{plan.week_id}", cutoff_at=cutoff, documents=docs, mode="historical",
+        alabel = self.cfg.archive_label or self.cfg.label
+        packet = build_packet(packet_id=f"pkt-{alabel}-{plan.week_id}", cutoff_at=cutoff, documents=docs, mode="historical",
                               evidence_class=EVIDENCE, calendar=self.market.calendar)
-        rec = self.store.put(source_id="packet", dataset=f"{self.cfg.label}/{plan.week_id}", payload=packet_to_json(packet),
-                             url="local://backtest", content_type="application/json",
-                             extra={"packet_hash": packet.packet_hash(), "evidence_class": EVIDENCE})
+        # un paquete idéntico (mismo packet_hash, que excluye created_at) ya archivado se reutiliza: conserva la hora
+        # real de su primera ingestión y evita duplicar ~13 MB por semana y corrida (ciclo semanal)
+        rec = self.store.find(source_id="packet", dataset=f"{alabel}/{plan.week_id}", extra_equal={"packet_hash": packet.packet_hash()})
+        if rec is None:
+            rec = self.store.put(source_id="packet", dataset=f"{alabel}/{plan.week_id}", payload=packet_to_json(packet),
+                                 url="local://backtest", content_type="application/json",
+                                 extra={"packet_hash": packet.packet_hash(), "evidence_class": EVIDENCE})
         last_session = self.market.calendar.prev_session(before=cutoff.date())
         candidates: list[Candidate] = []
         for doc in packet.admitted:
@@ -798,9 +806,12 @@ class Runner:
             problems = validate_prediction(obj, packet, calendar=self.market.calendar, experiment_ids=list(self.forecasters))
             if problems:
                 obj["status"], obj["ranking"], obj["status_reason"] = "invalid", [], "; ".join(problems[:3])
-            self.store.put(source_id="forecast", dataset=f"{cfg.label}/{name}/{plan.week_id}",
-                           payload=canonical_bytes({"forecast": obj, "packet_hash": packet.packet_hash()}), url="local://backtest",
-                           content_type="application/json", extra={"packet_hash": packet.packet_hash(), "packet_capture": pkt_rec.capture_id})
+            fpayload = canonical_bytes({"forecast": obj, "packet_hash": packet.packet_hash()})
+            fdataset = f"{cfg.archive_label or cfg.label}/{name}/{plan.week_id}"
+            if self.store.find(source_id="forecast", dataset=fdataset, sha256=hashlib.sha256(fpayload).hexdigest()) is None:
+                # bytes idénticos ya archivados: se conserva la primera ingestión (la única que vale como fecha de emisión)
+                self.store.put(source_id="forecast", dataset=fdataset, payload=fpayload, url="local://backtest",
+                               content_type="application/json", extra={"packet_hash": packet.packet_hash(), "packet_capture": pkt_rec.capture_id})
             picks[name] = [s.security_id for s in selections] if obj["status"] == "selected" else []
             record["forecasters"][name] = {"picks": [{"security_id": p, "symbol": self.market.securities[p].symbol,
                                                       "name": self.market.securities[p].name} for p in picks[name]],

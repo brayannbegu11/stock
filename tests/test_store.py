@@ -149,3 +149,24 @@ def test_verify_detects_tampering(tmp_path):
     rec = store.put(source_id="s", dataset="d", payload=b"original", url="u")
     (tmp_path / rec.path).write_bytes(b"tampered")
     assert store.verify() == [f"hash_mismatch:{rec.capture_id}"]
+
+
+def test_find_returns_the_earliest_identical_capture_and_writes_nothing(tmp_path):
+    clock = [datetime(2026, 9, 13, 12, 0, tzinfo=UTC)]
+    store = RawStore(tmp_path, clock=lambda: clock[0])
+    first = store.put(source_id="forecast", dataset="lab/Q0/2026-W38", payload=b'{"a":1}', url="local://t", content_type="application/json")
+    clock[0] += timedelta(days=7)
+    second = store.put(source_id="forecast", dataset="lab/Q0/2026-W38", payload=b'{"a":1}', url="local://t", content_type="application/json")
+    assert second.capture_id != first.capture_id
+    found = store.find(source_id="forecast", dataset="lab/Q0/2026-W38", sha256=first.sha256)
+    assert found is not None and found.capture_id == first.capture_id           # la primera ingestión, no la última
+    assert store.find(source_id="forecast", dataset="lab/Q0/2026-W39", sha256=first.sha256) is None
+    assert store.find(source_id="packet", dataset="lab/2026-W38", extra_equal={"packet_hash": "x"}) is None
+    p = store.put(source_id="packet", dataset="lab/2026-W38", payload=b'{"created_at":"t1"}', url="local://t", content_type="application/json", extra={"packet_hash": "h1"})
+    clock[0] += timedelta(days=7)
+    store.put(source_id="packet", dataset="lab/2026-W38", payload=b'{"created_at":"t2"}', url="local://t", content_type="application/json", extra={"packet_hash": "h1"})
+    assert store.find(source_id="packet", dataset="lab/2026-W38", extra_equal={"packet_hash": "h1"}).capture_id == p.capture_id
+    n = sum(1 for _ in (tmp_path / "manifest.jsonl").open(encoding="utf-8"))
+    assert n == 4                                                                # find() no escribe
+    with pytest.raises(ValueError):
+        store.find(source_id="packet", dataset="lab/2026-W38")

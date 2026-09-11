@@ -39,6 +39,7 @@ def main() -> int:
     ap.add_argument("--weeks-back", type=int, default=0, help="si se da, start = hoy - N semanas y end = hoy")
     ap.add_argument("--forecasters", default="Q0,Q1,A1")
     ap.add_argument("--label", default=None)
+    ap.add_argument("--archive-label", default=None, help="dataset del archivo para paquetes y predicciones; estable entre corridas semanales (por defecto = label)")
     ap.add_argument("--notional", type=int, default=1_000_000)
     ap.add_argument("--slots", type=int, default=5)
     ap.add_argument("--seed", type=int, default=20260909)
@@ -66,7 +67,7 @@ def main() -> int:
     cfg = BacktestConfig(start=start, end=end, slots=args.slots, notional=args.notional, sizing=args.sizing,
                          exposure_tolerance=D(args.exposure_tolerance), block_length=args.block_length, seed=args.seed,
                          commission_per_side=D(args.commission), slippage_bps=args.slippage_bps, label=label,
-                         lot_size=args.lot_size, min_commission_twd=D(args.min_commission))
+                         lot_size=args.lot_size, min_commission_twd=D(args.min_commission), archive_label=args.archive_label)
     if args.manifest == "daily":
         # universo completo desde las cotizaciones oficiales por fecha (sin derechos); historial desde --lookback-start
         master = load_master_file(sorted((ROOT / "data" / "store").glob("master_*.jsonl"))[-1])

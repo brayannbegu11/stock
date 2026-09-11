@@ -648,3 +648,24 @@ def test_r18_07_summary_counts_measurable_weeks_separately(tmp_path):
         assert e["weeks_measured"] == measured and e["weeks_positive"] <= e["weeks_measured"]
     report = markdown_report(res, title="t")
     assert f"{res['summary']['forecasters']['Q0']['weeks_positive']}/{res['summary']['forecasters']['Q0']['weeks_measured']}" in report
+
+
+def test_weekly_rerun_reuses_identical_packets_and_forecasts_and_keeps_first_ingestion(tmp_path):
+    """Ciclo semanal: una segunda corrida con la misma etiqueta de archivo no duplica paquetes ni predicciones idénticas."""
+    from twlab.backtest import load_market
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="run_a", archive_label="lab", notional=1_000_000, slots=5)
+    Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    packets1 = store.captures(source_id="packet"); forecasts1 = store.captures(source_id="forecast")
+    assert packets1 and all(r.dataset.startswith("lab/") for r in packets1)
+    cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 22), label="run_b", archive_label="lab", notional=1_000_000, slots=5)
+    Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
+    packets2 = store.captures(source_id="packet"); forecasts2 = store.captures(source_id="forecast")
+    weeks1 = {r.dataset for r in packets1}
+    assert {r.dataset for r in packets2 if r.dataset in weeks1} == weeks1
+    assert len([r for r in packets2 if r.dataset in weeks1]) == len(packets1)      # ninguna semana repetida se volvió a archivar
+    assert len(packets2) == len(packets1) + 1                                      # sólo la semana nueva
+    assert len(forecasts2) == len(forecasts1) + 2
+    for r in packets1:
+        assert store.find(source_id="packet", dataset=r.dataset, extra_equal={"packet_hash": r.extra["packet_hash"]}).capture_id == r.capture_id
