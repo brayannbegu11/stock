@@ -19,7 +19,7 @@ import json
 import random
 import statistics
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal as D
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Protocol, Sequence
@@ -167,7 +167,6 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
                 if k in d and d[k] != row[k]:
                     raise ManifestInconsistent(f"{sid}: {k} in delisted != listed")
                 d[k] = row[k]
-    now = datetime.now(TAIPEI)
     master = SecurityMaster()
     securities: dict[str, Security] = {}
     by_symbol: dict[str, str] = {}
@@ -220,8 +219,11 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
             if caps.get("dividend_rows", len(divs)) >= 0 and caps.get("dividend_rows", len(divs)) != len(divs):
                 raise ManifestInconsistent(f"{sid}: manifest declares {caps['dividend_rows']} dividend rows, capture has {len(divs)}")
         name = caps.get("name", names.get(sid, ""))
+        # el segmento se conoció cuando se ingirió la captura de precios que lo declara (no con la hora de esta carga):
+        # es la fecha de registro que decide qué identidades eran conocidas al corte de cada semana (R24-01)
+        known = rec.ingested_at_dt
         sv = SecurityVersion(security_id=sec_id, issuer_id=sec_id, symbol=sid, name_zh=name, market=market, board="main",
-                             instrument_type="ordinary_equity", valid_from=vf, valid_to=None, recorded_at=now, source_id=manifest_path.name)
+                             instrument_type="ordinary_equity", valid_from=vf, valid_to=None, recorded_at=known, source_id=manifest_path.name)
         master.add(sv)
         dl = delisting.get(sid)
         if caps.get("delisting_date"):                        # una retirada declarada en captures cuenta, y no puede contradecir delisted (R10-05)
@@ -230,7 +232,7 @@ def load_market(store: RawStore, manifest_path: Path, calendar: TradingCalendar,
                 raise ManifestInconsistent(f"{sid}: delisting_date in captures != delisted")
             dl = cdl
         if dl:
-            later = now + timedelta(seconds=1)
+            later = known + timedelta(seconds=1)
             master.close_version(sec_id, valid_to=dl, recorded_at=later, source_id="twse:suspendListing",
                                  terminal=TerminalEvent(sec_id, "delisting", dl, later, "twse:suspendListing"))
         events, problems = validated_dividend_events(sec_id, divs, par_value, calendar)
@@ -269,7 +271,9 @@ def master_snapshot_bytes(master: SecurityMaster) -> bytes:
                      "instrument_type": v.instrument_type, "currency": v.currency,
                      "valid_from": v.valid_from.isoformat(), "valid_to": v.valid_to.isoformat() if v.valid_to else None,
                      "recorded_at": v.recorded_at.isoformat(), "source_id": v.source_id})
-    rows.sort(key=lambda r: (r["security_id"], r["valid_from"], r["recorded_at"]))
+    # orden cronológico de registro: al volver a cargar la instantánea fila a fila con ``SecurityMaster.add`` se reproduce
+    # exactamente la historia (sustituciones y cierres validados por el propio maestro, R24-03)
+    rows.sort(key=lambda r: (datetime.fromisoformat(r["recorded_at"]).astimezone(timezone.utc), r["security_id"], r["valid_from"]))
     return ("\n".join(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows) + "\n").encode("utf-8")
 
 
@@ -814,6 +818,7 @@ class Runner:
             record["note"] = "invalid:no_sessions (registrado, sin operaciones; eventos procesados hasta el límite)"
             return
         packet, pkt_rec, candidates = self.build_week_packet(plan)
+        mrec = self.master_record()             # el maestro se archiva antes que cualquier predicción que lo cite (R24-02)
         view = PredictorView(packet)
         entry_s, exit_s = plan.entry_at.date(), plan.exit_at.date()
         # Límite de simulación (R09-06, R10-07): nunca más allá del final del periodo pedido ni del último dato.
@@ -830,7 +835,8 @@ class Runner:
             problems = validate_prediction(obj, packet, calendar=self.market.calendar, experiment_ids=list(self.forecasters))
             if problems:
                 obj["status"], obj["ranking"], obj["status_reason"] = "invalid", [], "; ".join(problems[:3])
-            fpayload = canonical_bytes({"forecast": obj, "packet_hash": packet.packet_hash()})
+            # la predicción archivada fija los bytes del paquete (hash lógico) y del maestro (sha256) con los que se resolvió
+            fpayload = canonical_bytes({"forecast": obj, "packet_hash": packet.packet_hash(), "master_sha256": mrec.sha256})
             fsha = hashlib.sha256(fpayload).hexdigest()
             fdataset = f"{cfg.archive_label or cfg.label}/{name}/{plan.week_id}"
             frec = self.store.find(source_id="forecast", dataset=fdataset, sha256=fsha)
@@ -842,7 +848,8 @@ class Runner:
             if frec is None:
                 # bytes idénticos ya archivados e íntegros: se conserva la primera ingestión (la única que vale como fecha de emisión)
                 frec = self.store.put(source_id="forecast", dataset=fdataset, payload=fpayload, url="local://backtest",
-                                      content_type="application/json", extra={"packet_hash": packet.packet_hash(), "packet_capture": pkt_rec.capture_id})
+                                      content_type="application/json", extra={"packet_hash": packet.packet_hash(), "packet_capture": pkt_rec.capture_id,
+                                                                              "master_capture": mrec.capture_id})
             picks[name] = [s.security_id for s in selections] if obj["status"] == "selected" else []
             record["forecasters"][name] = {"picks": [{"security_id": p, "symbol": self.market.securities[p].symbol,
                                                       "name": self.market.securities[p].name} for p in picks[name]],
@@ -852,7 +859,8 @@ class Runner:
                                            "forecast_sha256": fsha, "forecast_capture_id": frec.capture_id, "deadline_at": obj["deadline_at"]}
         record["packet_capture"] = pkt_rec.capture_id
         record["packet_hash"] = packet.packet_hash()
-        record["master_capture"] = self.master_record().capture_id         # identidad de los valores (R23-01)
+        record["master_capture"] = mrec.capture_id                          # identidad de los valores (R23-01)
+        record["master_sha256"] = mrec.sha256
         if pending_entry:
             record["note"] = f"pending_outcome: entrada prevista {entry_s.isoformat()} posterior al límite {bound.isoformat()}"
             return

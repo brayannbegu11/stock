@@ -352,11 +352,12 @@ def _real_week_fixture(tmp_path, monkeypatch):
     fc = {}
     for f in ("Q0", "Q1", "A1"):
         body = {"forecast": {"cutoff_at": cutoff.isoformat(), "deadline_at": "2026-09-14T08:30:00+08:00", "status": "selected",
-                             "ranking": [{"security_id": "TWSE:A@2000-01-01", "ticker_as_of": "A", "rank": 1}]}, "packet_hash": pk.packet_hash()}
+                             "ranking": [{"security_id": "TWSE:A@2000-01-01", "ticker_as_of": "A", "rank": 1}]}, "packet_hash": pk.packet_hash(),
+                "master_sha256": mrec.sha256}
         fc[f] = store.put(source_id="forecast", dataset=f"lab/{f}/2026-W38", payload=json.dumps(body).encode(), url="u", content_type="application/json")
-    _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear(); ex._MASTER_CACHE.clear()
     week = {"week_id": "2026-W38", "cutoff_at": cutoff.isoformat(), "packet_capture": pkt.capture_id, "packet_hash": pk.packet_hash(),
-            "master_capture": mrec.capture_id,
+            "master_capture": mrec.capture_id, "master_sha256": mrec.sha256,
             "forecasters": {f: {"forecast_sha256": fc[f].sha256, "forecast_status": "selected",
                                 "picks": [{"security_id": "TWSE:A@2000-01-01", "symbol": "A", "name": "甲公司"}]} for f in fc}}
     return ex, store, pkt, pk, fc, week
@@ -376,7 +377,8 @@ def test_r22_real_packet_and_valid_contract_is_a_prediction(tmp_path, monkeypatc
 
 def _save_forecast(store, tmp_path, f, mutate, pk):
     body = {"forecast": {"cutoff_at": pk.cutoff_at.isoformat(), "deadline_at": "2026-09-14T08:30:00+08:00", "status": "selected",
-                         "ranking": [{"security_id": "TWSE:A@2000-01-01", "ticker_as_of": "A", "rank": 1}]}, "packet_hash": pk.packet_hash()}
+                         "ranking": [{"security_id": "TWSE:A@2000-01-01", "ticker_as_of": "A", "rank": 1}]}, "packet_hash": pk.packet_hash(),
+            "master_sha256": store.captures(source_id="master")[0].sha256}
     mutate(body["forecast"])
     rec = store.put(source_id="forecast", dataset=f"lab/{f}/2026-W38", payload=json.dumps(body).encode(), url="u", content_type="application/json")
     _mark_system(tmp_path)
@@ -516,12 +518,14 @@ def test_r22_assembler_names_unverified_provenance(tmp_path, monkeypatch):
     assert "procedencia de las entradas no queda acreditada" in txt and "unverified_inputs" in txt
 
 
-def _rearchive_forecast(ex, store, tmp_path, week, fc, f, mutate, packet_hash=None):
+def _rearchive_forecast(ex, store, tmp_path, week, fc, f, mutate, packet_hash=None, master_sha256=None):
     """Vuelve a archivar la predicción de ``f`` con una mutación y apunta la semana a los bytes nuevos."""
     body = json.loads(store.read(fc[f]))
     mutate(body["forecast"])
     if packet_hash is not None:
         body["packet_hash"] = packet_hash
+    if master_sha256 is not None:
+        body["master_sha256"] = master_sha256
     rec = store.put(source_id="forecast", dataset=f"lab/{f}/{week['week_id']}", payload=json.dumps(body).encode(), url="u", content_type="application/json")
     _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear(); ex._MASTER_CACHE.clear()
     week["forecasters"][f]["forecast_sha256"] = rec.sha256
@@ -575,7 +579,7 @@ def test_r23_01_week_without_archived_master_is_not_a_prediction(tmp_path, monke
     week["master_capture"] = pkt.capture_id                       # un registro que no es un maestro tampoco acredita nada
     ex._MASTER_CACHE.clear()
     c = ex.classify_week("lab", week)
-    assert c["prospective"] is False and any(r.startswith("master_contract:") for r in c["reasons"]), c
+    assert c["prospective"] is False and "master_record_mismatch" in c["reasons"], c        # fuente/dataset (R24-05) antes que el contrato
 
 
 @pytest.mark.parametrize("kind", ["forecast_sid_list", "forecast_time_number", "forecast_dataset_list", "packet_extra_list", "manifest_row_not_object"])
@@ -624,3 +628,141 @@ def test_r23_04_packet_record_must_declare_the_logical_hash(tmp_path, monkeypatc
     _rewrite_manifest(ex, tmp_path, rows)
     c = ex.classify_week("lab", week)
     assert c["prospective"] is False and "packet_record_hash_missing" in c["reasons"], c
+
+
+def _master_rows(store, week):
+    return [json.loads(l) for l in store.read(store.get(week["master_capture"])).decode("utf-8").splitlines()]
+
+
+def _replace_master(ex, store, tmp_path, week, fc, rows, *, source_id="master", dataset="lab/master", relink=True):
+    """Archiva otra instantánea del maestro y, si ``relink``, vuelve a archivar las tres predicciones citándola."""
+    payload = ("\n".join(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows) + "\n").encode("utf-8")
+    rec = store.put(source_id=source_id, dataset=dataset, payload=payload, url="u", content_type="application/x-ndjson")
+    week["master_capture"] = rec.capture_id
+    if relink:
+        for f in ("Q0", "Q1", "A1"):
+            _rearchive_forecast(ex, store, tmp_path, week, fc, f, lambda fo: None, master_sha256=rec.sha256)
+    _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear(); ex._MASTER_CACHE.clear()
+    return rec
+
+
+@pytest.mark.parametrize("kind", ["recorded_after_cutoff", "revision_after_cutoff", "revision_before_cutoff", "expired_at_cutoff", "nonsegment"])
+def test_r24_01_master_view_is_the_one_known_at_the_cutoff(tmp_path, monkeypatch, kind):
+    """Sólo las filas registradas hasta el corte (2026-09-13 18:00 Taipéi = 10:00 UTC) acreditan identidad."""
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    rows = _master_rows(store, week)
+    row = rows[0]
+    if kind == "recorded_after_cutoff":
+        row["recorded_at"] = "2026-09-13T11:00:00+00:00"
+    elif kind in ("revision_after_cutoff", "revision_before_cutoff"):
+        row["symbol"] = "OLD"
+        revised = dict(row, symbol="A", recorded_at="2026-09-13T11:00:00+00:00" if kind == "revision_after_cutoff" else "2026-09-13T09:00:00+00:00")
+        rows.append(revised)
+    elif kind == "expired_at_cutoff":
+        row["valid_to"] = "2026-09-13"
+    elif kind == "nonsegment":
+        row["kind"] = "terminal_event"
+    _replace_master(ex, store, tmp_path, week, fc, rows)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is (kind == "revision_before_cutoff"), (kind, c)
+    if kind == "revision_after_cutoff":
+        assert "identity_symbol_mismatch:Q0:TWSE:A@2000-01-01" in c["reasons"]
+    if kind in ("recorded_after_cutoff", "expired_at_cutoff", "nonsegment"):
+        assert "identity_unknown_security:Q0:TWSE:A@2000-01-01" in c["reasons"]
+
+
+def test_r24_02_master_archived_after_the_deadline_does_not_accredit(tmp_path, monkeypatch):
+    """Maestro original corrupto y repuesto (mismos bytes) después del plazo: la primera ingestión íntegra es tardía."""
+    from datetime import datetime, timezone
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    original = store.get(week["master_capture"])
+    payload = store.read(original)
+    (store.root / original.path).write_bytes(b"corrupt")
+    store._clock = lambda: datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc)      # martes, después del plazo del lunes 08:30
+    rec = store.put(source_id="master", dataset="lab/master", payload=payload, url="u", content_type="application/x-ndjson")
+    assert rec.sha256 == original.sha256
+    week["master_capture"] = rec.capture_id
+    _mark_system(tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear(); ex._MASTER_CACHE.clear()
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and "master_late:Q0" in c["reasons"], c
+
+
+def test_r24_02_forecast_must_declare_the_master_bytes_it_used(tmp_path, monkeypatch):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    rows = _master_rows(store, week)
+    _replace_master(ex, store, tmp_path, week, fc, rows + [dict(rows[0], security_id="TWSE:B@2000-01-01", issuer_id="B", symbol="B", name_zh="乙公司")],
+                    relink=False)                                                 # maestro nuevo, predicciones sin volver a archivar
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and {"master_link_mismatch:Q0", "master_link_mismatch:Q1", "master_link_mismatch:A1"} <= set(c["reasons"]), c
+    _replace_master(ex, store, tmp_path, week, fc, _master_rows(store, week))       # mismas filas, predicciones re-archivadas citándolas
+    assert ex.classify_week("lab", week)["prospective"] is True
+
+
+@pytest.mark.parametrize("field,value", [("valid_to", False), ("valid_to", 0), ("valid_to", []), ("valid_to", ""), ("valid_to", 42),
+                                         ("recorded_at", "2026-01-01T00:00:00"), ("recorded_at", 42), ("valid_from", []),
+                                         ("security_id", ["A"]), ("symbol", ["A"]), ("currency", None), ("extra_field", "x")])
+def test_r24_03_master_rows_with_invalid_types_do_not_accredit(tmp_path, monkeypatch, field, value):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    rows = _master_rows(store, week)
+    rows[0][field] = value
+    _replace_master(ex, store, tmp_path, week, fc, rows)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and any(r.startswith("master_contract:") for r in c["reasons"]), (field, value, c)
+
+
+def test_r24_03_conflicting_rows_with_equal_recorded_at_are_invalid(tmp_path, monkeypatch):
+    """Dos filas del mismo segmento con el mismo recorded_at y distinto símbolo: SecurityMaster.add las rechaza."""
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    rows = _master_rows(store, week)
+    rows.append(dict(rows[0], symbol="OTHER"))
+    _replace_master(ex, store, tmp_path, week, fc, rows)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and "master_contract:ValueError" in c["reasons"], c
+
+
+@pytest.mark.parametrize("kind", ["series_of_another_symbol", "unselected_ghost_series"])
+def test_r24_04_packet_series_must_be_coherent_with_the_master(tmp_path, monkeypatch, kind):
+    from twlab.packet import packet_to_json
+    from dataclasses import replace
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    bars = next(d for d in pk.admitted if d.kind == "price_bar_series")
+    if kind == "series_of_another_symbol":
+        docs = tuple(replace(d, doc_id="B:bars:2026-W38") if d is bars else d for d in pk.admitted)   # serie de B con identidad de A
+        expected = "packet_symbol_mismatch:TWSE:A@2000-01-01"
+    else:
+        payload = dict(bars.payload); payload["name"] = "GHOST"
+        docs = pk.admitted + (replace(bars, doc_id="GHOST:bars:2026-W38", security_ids=("TWSE:GHOST@2000-01-01",), payload=payload),)
+        expected = "packet_unknown_security:TWSE:GHOST@2000-01-01"
+    pk2 = replace(pk, admitted=docs)
+    prec = store.put(source_id="packet", dataset="lab/2026-W38", payload=packet_to_json(pk2), url="u", content_type="application/json",
+                     extra={"packet_hash": pk2.packet_hash()})
+    week.update(packet_capture=prec.capture_id, packet_hash=pk2.packet_hash())
+    for f in ("Q0", "Q1", "A1"):
+        _rearchive_forecast(ex, store, tmp_path, week, fc, f, lambda fo: None, packet_hash=pk2.packet_hash())
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and expected in c["reasons"], (kind, c)
+
+
+@pytest.mark.parametrize("source_id,dataset", [("untrusted", "lab/master"), ("master", "other/not-master"), ("packet", "lab/master")])
+def test_r24_05_master_record_must_come_from_the_master_source_and_dataset(tmp_path, monkeypatch, source_id, dataset):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    _replace_master(ex, store, tmp_path, week, fc, _master_rows(store, week), source_id=source_id, dataset=dataset)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and "master_record_mismatch" in c["reasons"], c
+
+
+def test_r24_06_a_failing_stage_keeps_the_evidence_already_verified(tmp_path, monkeypatch):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    before = ex.classify_week("lab", week)
+    assert before["fa"]["before_deadline"] is True and before["prospective"] is True
+    week["packet_capture"] = ["malformed"]
+    after = ex.classify_week("lab", week)
+    assert after["prospective"] is False
+    assert after["reasons"] == ["classification_error:TypeError"], after["reasons"]
+    assert after["fa"]["before_deadline"] is True and after["fa"]["archived_at"] == before["fa"]["archived_at"]
+    assert after["master"]["ok"] is True and after["inp"]["reason"] == "classification_error:TypeError"
+    # la etapa de identidad también cierra sola cuando falla
+    week["packet_capture"] = pkt.capture_id
+    monkeypatch.setattr(ex, "master_identity", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and c["fa"]["before_deadline"] is True and "classification_error:RuntimeError" in c["reasons"], c

@@ -165,6 +165,7 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
             "forecasters": fw,
             "packet_capture": w.get("packet_capture"),
             "master_capture": w.get("master_capture"),
+            "master_sha256": w.get("master_sha256"),
             "packet_hash": w.get("packet_hash"),
         })
     initial = (a.get("notional") or 0) * (a.get("slots") or 0)
@@ -288,7 +289,7 @@ def forecast_archive(archive_label: str, week_id: str, expected: dict | None = N
     declara (R20-02). ``before_deadline`` sólo es True si **todos** los pronosticadores esperados tienen identidad y
     cumplen (R21-01). Sin identidad no hay predicción, pero se informa de la primera ingestión íntegra por dataset."""
     out: dict = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": None,
-                 "reasons": [], "ranking": {}}
+                 "reasons": [], "ranking": {}, "master_sha256": {}}
     prefix = f"{archive_label}/"
     recs_week = [r for r in manifest() if r.get("source_id") == "forecast" and isinstance(r.get("dataset"), str)
                  and r["dataset"].startswith(prefix) and r["dataset"].endswith("/" + week_id)]
@@ -360,6 +361,7 @@ def forecast_archive(archive_label: str, week_id: str, expected: dict | None = N
             ok = False; out["reasons"].append(f"forecast_contract:{f}:rank_order")
         if contract_ok:
             out["ranking"][f] = [{"security_id": x["security_id"], "ticker_as_of": x.get("ticker_as_of")} for x in ranking]
+        out["master_sha256"][f] = (body or {}).get("master_sha256")       # vínculo con el maestro evaluado (R24-02)
         if "status" in spec and spec.get("status") != status:
             ok = False; out["reasons"].append(f"status_mismatch:{f}")
         if "picks" in spec:
@@ -450,9 +452,12 @@ def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
             ids.update(sc.values())
     # nombres archivados por valor (R22-05): el nombre que ve el usuario debe ser el del paquete, no el del JSON de resultados
     names: dict[str, str] = {}
+    series: list[dict] = []
     for d in pk.admitted:
-        if d.kind == "price_bar_series" and d.security_ids and isinstance(d.payload, Mapping) and isinstance(d.payload.get("name"), str):
-            names[d.security_ids[0]] = d.payload["name"]
+        if d.kind == "price_bar_series":
+            series.append({"security_id": d.security_ids[0] if d.security_ids else None, "doc_id": d.doc_id})
+            if d.security_ids and isinstance(d.payload, Mapping) and isinstance(d.payload.get("name"), str):
+                names[d.security_ids[0]] = d.payload["name"]
     late, bad, latest = [], [], None
     for cid in sorted(ids):
         r = _BY_ID.get(cid)
@@ -467,18 +472,75 @@ def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
     reason = None if not late and not bad else ("late_inputs" if late and not bad else "unverified_inputs")
     return {"ok": reason is None, "captures": len(ids), "late": len(late), "unverified": len(bad),
             "latest_ingested_at": latest.isoformat() if latest else None, "mode": pk.mode, "packet_cutoff_at": pk.cutoff_at.isoformat(),
-            "names": names, "reason": reason}
+            "names": names, "series": series, "reason": reason}
 
 
 _MASTER_CACHE: dict[str, dict] = {}
 
 
-def master_identity(master_capture_id, cutoff_at, ranking: Mapping[str, list]) -> dict:
-    """Identidad económica de cada valor seleccionado según el maestro **archivado** por la corrida (R23-01).
+_MASTER_FIELDS = {"security_id", "issuer_id", "symbol", "name_zh", "market", "board", "instrument_type", "source_id", "currency"}
 
-    Cada ``security_id`` del ranking archivado debe tener un segmento del maestro vigente en la fecha del corte y ese
-    segmento debe llevar exactamente el símbolo ``ticker_as_of`` archivado; un código desconocido o un símbolo de otro
-    valor no puede contarse como predicción, aunque el paquete contenga una serie para él."""
+
+def _master_row(row):
+    """Fila de la instantánea del maestro con tipos estrictos (R24-03); ``None`` si no es un segmento."""
+    from twlab.master import SecurityVersion
+    if not isinstance(row, dict):
+        raise ValueError("row_not_object")
+    row = dict(row)
+    if row.pop("kind", "segment") != "segment":
+        return None
+    unknown = set(row) - _MASTER_FIELDS - {"name_en", "valid_from", "valid_to", "recorded_at"}
+    if unknown:
+        raise ValueError("unknown_field:" + ",".join(sorted(unknown)))
+    for k in _MASTER_FIELDS:
+        if not isinstance(row.get(k), str) or not row[k]:
+            raise ValueError(f"field_not_text:{k}")
+    if row.get("name_en") is not None and not isinstance(row.get("name_en"), str):
+        raise ValueError("field_not_text:name_en")
+    if not isinstance(row.get("valid_from"), str):
+        raise ValueError("field_not_text:valid_from")
+    row["valid_from"] = date.fromisoformat(row["valid_from"])
+    if row.get("valid_to") is None:
+        row["valid_to"] = None
+    elif isinstance(row["valid_to"], str) and row["valid_to"]:
+        row["valid_to"] = date.fromisoformat(row["valid_to"])
+    else:
+        raise ValueError("field_not_date:valid_to")
+    if not isinstance(row.get("recorded_at"), str):
+        raise ValueError("field_not_text:recorded_at")
+    row["recorded_at"] = datetime.fromisoformat(row["recorded_at"])
+    if row["recorded_at"].tzinfo is None:
+        raise ValueError("recorded_at_naive")
+    return SecurityVersion(**row)
+
+
+def _load_master(rec: dict):
+    """Maestro archivado reconstruido fila a fila con ``SecurityMaster.add`` (mismas validaciones que el laboratorio)."""
+    from twlab.master import SecurityMaster
+    key = f"{rec.get('capture_id')}|{rec.get('sha256')}"
+    m = _MASTER_CACHE.get(key)
+    if m is None:
+        m = SecurityMaster()
+        for line in (RAW / rec["path"]).read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            v = _master_row(json.loads(line))
+            if v is not None:
+                m.add(v)
+        _MASTER_CACHE[key] = m
+    return m
+
+
+def master_identity(master_capture_id, cutoff_at, ranking: Mapping[str, list], *, archive_label: str | None = None,
+                    deadlines: Mapping[str, str | None] | None = None, links: Mapping[str, str | None] | None = None) -> dict:
+    """Identidad económica de cada valor seleccionado según el maestro **archivado** por la corrida (R23-01, R24-01..05).
+
+    Se exige: registro completo, íntegro y con reloj del sistema, de la fuente ``master`` y del dataset del maestro de
+    la corrida (R24-05); que cada predicción archivada declare exactamente el sha256 de esos bytes (R24-02) y que su
+    primera ingestión íntegra sea anterior o igual al plazo de cada predicción (R24-02); filas con tipos estrictos y
+    validadas por el propio ``SecurityMaster`` (R24-03); y, con la vista del maestro **conocida al corte** (R24-01),
+    que cada ``security_id`` del ranking tenga un segmento vigente en la fecha del corte cuyo símbolo sea exactamente
+    el ``ticker_as_of`` archivado."""
     if not isinstance(master_capture_id, str) or not master_capture_id:
         return {"ok": False, "reasons": ["no_master_identity"]}
     manifest()
@@ -486,33 +548,39 @@ def master_identity(master_capture_id, cutoff_at, ranking: Mapping[str, list]) -
     why = _record_ok(rec)
     if why:
         return {"ok": False, "reasons": [f"master_{why}"]}
-    key = f"{master_capture_id}|{rec.get('sha256')}"
-    seg_index = _MASTER_CACHE.get(key)
-    if seg_index is None:
-        try:
-            from twlab.master import SecurityMaster, SecurityVersion
-            rows = []
-            for line in (RAW / rec["path"]).read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                if not isinstance(row, dict) or row.pop("kind", "segment") != "segment":
-                    continue
-                for k in ("valid_from", "valid_to"):
-                    row[k] = date.fromisoformat(row[k]) if row.get(k) else None
-                row["recorded_at"] = datetime.fromisoformat(row["recorded_at"])
-                rows.append(SecurityVersion(**row))
-            seg_index = {}
-            for v in SecurityMaster._effective_from(rows, None):  # noqa: SLF001 - misma regla de vigencia que el laboratorio
-                seg_index.setdefault(v.security_id, []).append(v)
-        except Exception as exc:  # noqa: BLE001 - un maestro que no cumple el contrato no acredita nada
-            return {"ok": False, "reasons": [f"master_contract:{type(exc).__name__}"]}
-        _MASTER_CACHE[key] = seg_index
+    dataset = f"{archive_label}/master" if archive_label else None
+    if rec.get("source_id") != "master" or (dataset is not None and rec.get("dataset") != dataset):
+        return {"ok": False, "reasons": ["master_record_mismatch"]}
+    sha = rec["sha256"]
+    reasons: list[str] = []
+    for f, declared in (links or {}).items():
+        if declared != sha:
+            reasons.append(f"master_link_mismatch:{f}")
+    # oportunidad temporal: la primera ingestión íntegra (por instante) de esos bytes en el dataset del maestro, con reloj
+    # del sistema, no puede ser posterior al plazo de ninguna predicción (un maestro repuesto después no acredita nada)
+    same = [r for r in manifest() if r.get("source_id") == "master" and r.get("dataset") == rec.get("dataset") and r.get("sha256") == sha]
+    same.sort(key=lambda r: (_instant(r.get("ingested_at")) or datetime.max.replace(tzinfo=timezone.utc)))
+    first = next((r for r in same if _record_ok(r) is None or (_record_ok(r) or "").startswith("clock:")), None)
+    why = _record_ok(first)
+    if why:
+        return {"ok": False, "reasons": reasons + [f"master_{why}"]}
+    t_first = _instant(first["ingested_at"])
+    for f, dl in (deadlines or {}).items():
+        d = _instant(dl)
+        if d is None or t_first > d:
+            reasons.append(f"master_late:{f}")
+    try:
+        m = _load_master(rec)
+    except Exception as exc:  # noqa: BLE001 - un maestro que no cumple el contrato no acredita nada
+        return {"ok": False, "reasons": reasons + [f"master_contract:{type(exc).__name__}"]}
     cutoff = _aware(cutoff_at)
     if cutoff is None:
-        return {"ok": False, "reasons": ["cutoff_unusable"]}
+        return {"ok": False, "reasons": reasons + ["cutoff_unusable"]}
+    known_at = cutoff.astimezone(timezone.utc)
+    seg_index: dict[str, list] = {}
+    for v in m._effective(known_at):  # noqa: SLF001 - vista del maestro conocida al corte (R24-01)
+        seg_index.setdefault(v.security_id, []).append(v)
     as_of = cutoff.astimezone(_TAIPEI).date()
-    reasons: list[str] = []
     for f, entries in (ranking or {}).items():
         for e in entries or []:
             sid = e.get("security_id")
@@ -522,7 +590,8 @@ def master_identity(master_capture_id, cutoff_at, ranking: Mapping[str, list]) -
             seg = max(covering, key=lambda v: v.valid_from)
             if seg.symbol != e.get("ticker_as_of"):
                 reasons.append(f"identity_symbol_mismatch:{f}:{sid}")
-    return {"ok": not reasons, "reasons": reasons, "securities": len(seg_index)}
+    return {"ok": not reasons, "reasons": reasons, "securities": len(seg_index), "archived_at": first["ingested_at"],
+            "as_of": as_of.isoformat(), "segments": seg_index}
 
 
 def classify_week(archive_label: str, w: dict) -> dict:
@@ -533,39 +602,64 @@ def classify_week(archive_label: str, w: dict) -> dict:
     paquete archivado (R22-05) **y** código y símbolo de cada valor vigentes en el maestro archivado (`master_identity`,
     R23-01). Cualquier excepción durante la clasificación cierra la semana como no acreditada (R23-02).
     Devuelve `fa`, `inp`, `master`, `prospective` y `reasons`."""
+    return _classify_week(archive_label, w)
+
+
+def _stage(fn, fallback):
+    """Ejecuta una etapa de la clasificación; una excepción cierra esa etapa con motivo y no borra las anteriores (R24-06)."""
     try:
-        return _classify_week(archive_label, w)
+        return fn()
     except Exception as exc:  # noqa: BLE001 - datos malformados: no se aborta, no se acredita
-        why = f"classification_error:{type(exc).__name__}"
-        fa = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": False,
-              "reasons": [why], "ranking": {}}
-        return {"fa": fa, "inp": {"ok": None, "reason": "not_checked"}, "master": {"ok": None, "reasons": []},
-                "prospective": False, "reasons": [why]}
+        return fallback(f"classification_error:{type(exc).__name__}")
 
 
 def _classify_week(archive_label: str, w: dict) -> dict:
-    expected = {f: {"sha": x.get("forecast_sha256"), "picks": [p.get("security_id") for p in x.get("picks") or []],
-                    "symbols": [p.get("symbol") for p in x.get("picks") or []], "status": x.get("forecast_status", x.get("status")),
-                    "packet_hash": w.get("packet_hash"), "cutoff_at": w.get("cutoff_at")} for f, x in (w.get("forecasters") or {}).items()}
-    fa = forecast_archive(archive_label, w["week_id"], expected)
+    not_checked = {"ok": None, "reason": "not_checked"}
+    fa = _stage(lambda: forecast_archive(archive_label, w["week_id"], {
+        f: {"sha": x.get("forecast_sha256"), "picks": [p.get("security_id") for p in x.get("picks") or []],
+            "symbols": [p.get("symbol") for p in x.get("picks") or []], "status": x.get("forecast_status", x.get("status")),
+            "packet_hash": w.get("packet_hash"), "cutoff_at": w.get("cutoff_at")} for f, x in (w.get("forecasters") or {}).items()}),
+        lambda why: {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": False,
+                     "reasons": [why], "ranking": {}, "master_sha256": {}})
     reasons = list(fa["reasons"])
     if not fa["before_deadline"]:
-        return {"fa": fa, "inp": {"ok": None, "reason": "not_checked"}, "master": {"ok": None, "reasons": []},
-                "prospective": False, "reasons": reasons}
-    mi = master_identity(w.get("master_capture"), w["cutoff_at"], fa.get("ranking") or {})
+        return {"fa": fa, "inp": dict(not_checked), "master": {"ok": None, "reasons": []}, "prospective": False, "reasons": reasons}
+    mi = _stage(lambda: master_identity(w.get("master_capture"), w["cutoff_at"], fa.get("ranking") or {}, archive_label=archive_label,
+                                        deadlines=fa.get("deadline_at") or {}, links=fa.get("master_sha256") or {}),
+                lambda why: {"ok": False, "reasons": [why]})
     reasons.extend(mi["reasons"])
-    inp = inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"], w.get("packet_hash"))
+    inp = _stage(lambda: inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"], w.get("packet_hash")),
+                 lambda why: {"ok": False, "reason": why})
     if inp.get("reason"):
         reasons.append(inp["reason"])
-    names_ok = inp.get("ok") is True
-    if names_ok:
+    coherent = inp.get("ok") is True
+
+    def names_and_packet():
+        ok = True
         archived = inp.get("names") or {}
         for f, x in (w.get("forecasters") or {}).items():
             for p in x.get("picks") or []:
                 if archived.get(p.get("security_id")) is None or archived.get(p.get("security_id")) != p.get("name"):
-                    names_ok = False; reasons.append(f"name_mismatch:{f}"); break
+                    ok = False; reasons.append(f"name_mismatch:{f}"); break
+        if mi.get("ok") is True:
+            # coherencia paquete-maestro (R24-04): cada serie del paquete pertenece a un valor con segmento vigente al
+            # corte y su identificador de documento lleva el símbolo de ese segmento (así los construye el Runner)
+            as_of = date.fromisoformat(mi["as_of"])
+            for s in inp.get("series") or []:
+                sid = s.get("security_id")
+                covering = [v for v in (mi.get("segments") or {}).get(sid, []) if v.covers(as_of)]
+                if not covering:
+                    ok = False; reasons.append(f"packet_unknown_security:{sid}"); continue
+                seg = max(covering, key=lambda v: v.valid_from)
+                doc_id = s.get("doc_id") or ""
+                if ":bars:" not in doc_id or doc_id.split(":bars:", 1)[0] != seg.symbol:
+                    ok = False; reasons.append(f"packet_symbol_mismatch:{sid}")
+        return ok
+
+    if coherent:
+        coherent = _stage(names_and_packet, lambda why: reasons.append(why) or False)
     return {"fa": fa, "inp": inp, "master": mi, "reasons": reasons,
-            "prospective": bool(fa["before_deadline"]) and inp.get("ok") is True and names_ok and mi["ok"] is True}
+            "prospective": bool(fa["before_deadline"]) and inp.get("ok") is True and coherent and mi.get("ok") is True}
 
 
 def export_rounds() -> list[dict]:

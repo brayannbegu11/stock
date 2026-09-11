@@ -719,9 +719,26 @@ def test_r23_01_runner_archives_the_master_snapshot_once_and_links_every_week(tm
     res = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
     masters = store.captures(source_id="master")
     assert len(masters) == 1 and masters[0].dataset == "lab/master"
-    assert all(w["master_capture"] == masters[0].capture_id for w in res["weeks"])
+    assert all(w["master_capture"] == masters[0].capture_id and w["master_sha256"] == masters[0].sha256 for w in res["weeks"])
     payload = store.read(masters[0])
     assert payload == master_snapshot_bytes(market.master)
+    # cada predicción archivada declara el maestro con el que se resolvió, archivado antes que ella (R24-02)
+    for w in res["weeks"]:
+        for name, x in w["forecasters"].items():
+            frec = store.get(x["forecast_capture_id"])
+            assert json.loads(store.read(frec))["master_sha256"] == masters[0].sha256
+            assert frec.ingested_at_dt >= masters[0].ingested_at_dt
+    # la instantánea vuelve a cargarse fila a fila con las validaciones del maestro y reproduce la vista efectiva (R24-03)
+    from twlab.master import SecurityMaster, SecurityVersion
+    m2 = SecurityMaster()
+    for r in (json.loads(l) for l in payload.decode("utf-8").splitlines()):
+        r.pop("kind")
+        for k in ("valid_from", "valid_to"):
+            r[k] = date.fromisoformat(r[k]) if r[k] else None
+        r["recorded_at"] = datetime.fromisoformat(r["recorded_at"])
+        m2.add(SecurityVersion(**r))
+    assert {(v.security_id, v.valid_from, v.symbol, v.valid_to) for v in m2._effective(None)} == \
+           {(v.security_id, v.valid_from, v.symbol, v.valid_to) for v in market.master._effective(None)}
     rows = [json.loads(l) for l in payload.decode("utf-8").splitlines()]
     assert {r["security_id"] for r in rows} == set(market.securities) and all(r["kind"] == "segment" for r in rows)
     for r in rows:

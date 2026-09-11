@@ -28,3 +28,8 @@ Con este código, `review/out/astra_scratch/test_r23.py` pasa entera (17/17) y `
 ## 5. Pendientes que siguen abiertos
 
 Readmisión verificada en modo prospectivo (extractor multicaptura) y construcción del paquete en ese modo; sello externo de fecha; dividendos del universo completo; política de cierres sobrevenidos; adaptador oficial de lotes sueltos. Los bloqueantes que dependen del usuario no cambian (informe 21 §4).
+
+## 6. Fe de erratas (tras la ronda 24)
+
+Tres afirmaciones de este informe excedían lo que el código acreditaba, como señaló Astra en la ronda 24: (1) la identidad se contrastaba con la vista **actual** del maestro archivado, no con la conocida al corte, y no se comprobaba que el maestro se hubiera archivado antes del plazo ni que fuera el que cada predicción usó (R24-01, R24-02); (2) «tipos malformados» en la instantánea del maestro se normalizaban en lugar de rechazarse, y no se aplicaban las validaciones de `SecurityMaster.add` (R24-03); (3) «un registro que no es un maestro» sólo se rechazaba si no podía deserializarse, no por su fuente o dataset (R24-05). Todo queda corregido en el informe 30.
+
