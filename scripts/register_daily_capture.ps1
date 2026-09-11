@@ -39,7 +39,9 @@ $log = Join-Path $root "data\capture_daily.log"
 if (-not (Test-Path $script)) { throw "No existe $script" }
 
 $cmd = "`"$python`" `"$script`" >> `"$log`" 2>&1"
-$action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $cmd" -WorkingDirectory $root
+# cmd /c recorta la primera y la última comilla cuando el comando empieza por comilla y tiene más de dos: el comando
+# entero va entre otro par de comillas, si no la tarea termina con código 1 sin ejecutar nada ni escribir el log
+$action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$cmd`"" -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -Daily -At $Hora
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $Nombre -Action $action -Trigger $trigger -Settings $settings -Description "Captura diaria de TWSE/TPEx/FinMind a data/raw (taiwan-ia-lab)" -Force | Out-Null
