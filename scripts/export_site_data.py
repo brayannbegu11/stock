@@ -15,6 +15,7 @@ Uso: python scripts/export_site_data.py [--no-inline]
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -143,6 +144,9 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
                 "excess_net": _num(paired.get("excess_net_vs_baseline")),
                 "unpaired_reason": (paired.get("unpaired_reason") or "").split(":", 1)[0] or None,
                 "picks": [_pick(p) for p in x.get("picks") or []],
+                "forecast_sha256": x.get("forecast_sha256"),
+                "forecast_capture_id": x.get("forecast_capture_id"),
+                "deadline_at": x.get("deadline_at"),
             }
         weeks.append({
             "week_id": w["week_id"],
@@ -154,6 +158,8 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
             "coverage_reasons": w.get("coverage_reasons") or {},
             "ew_gross": _num(w.get("universe_ew_gross_open_close")),
             "forecasters": fw,
+            "packet_capture": w.get("packet_capture"),
+            "packet_hash": w.get("packet_hash"),
         })
     initial = (a.get("notional") or 0) * (a.get("slots") or 0)
     return {
@@ -197,48 +203,139 @@ def export_scenario(sid: str, glob: str, informe: str) -> dict | None:
     }
 
 
-def forecast_archive(archive_label: str, week_id: str) -> dict:
-    """Primera hora real de archivo (ingested_at) de la lista de cada pronosticador para esa semana, el plazo del
-    protocolo que declara la predicción archivada y si la primera ingestión fue anterior a ese plazo.
+_MANIFEST: list[dict] | None = None
+_BY_ID: dict[str, dict] = {}
 
-    La primera ingestión es la única que vale como fecha de emisión; una corrida posterior que vuelva a archivar los
-    mismos bytes no la adelanta ni la retrasa (RawStore.find). «Anterior al plazo» se decide con el reloj del sistema
-    de la máquina que archivó: no hay sello externo, y así se declara en el sitio."""
-    out: dict = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": None, "before_deadline": None}
-    mf = RAW / "manifest.jsonl"
-    if not mf.exists():
-        return out
+
+def manifest() -> list[dict]:
+    """Registros del archivo (una lectura por ejecución)."""
+    global _MANIFEST, _BY_ID
+    if _MANIFEST is None:
+        _MANIFEST = []
+        mf = RAW / "manifest.jsonl"
+        if mf.exists():
+            with mf.open(encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    _MANIFEST.append(rec)
+        _BY_ID = {r.get("capture_id"): r for r in _MANIFEST}
+    return _MANIFEST
+
+
+def _aware(s: str | None) -> datetime | None:
+    """ISO-8601 con zona; una marca sin zona no sirve como evidencia temporal (R20-02)."""
+    if not s:
+        return None
+    try:
+        d = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return d if d.tzinfo is not None else None
+
+
+def _intact(rec: dict) -> bool:
+    p = RAW / rec.get("path", "")
+    try:
+        return hashlib.sha256(p.read_bytes()).hexdigest() == rec.get("sha256")
+    except OSError:
+        return False
+
+
+def forecast_archive(archive_label: str, week_id: str, expected: dict[str, str] | None = None) -> dict:
+    """Clasificación temporal de la lista de una semana, pronosticador a pronosticador.
+
+    Para cada pronosticador esperado se busca la **primera** ingestión de la predicción con exactamente los bytes
+    evaluados (``expected[f]`` = sha256 registrado por el Runner; R20-01), se comprueba que el archivo sigue íntegro,
+    que se archivó con el reloj del sistema (``clock_source == "system"``, R20-03) y que esa primera ingestión es
+    anterior o igual al ``deadline_at`` que la propia predicción declara (R20-02). ``before_deadline`` sólo es True si
+    todos los pronosticadores esperados cumplen. Sin sha esperado (JSON antiguo) no hay identidad: False."""
+    out: dict = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": None, "reasons": []}
     prefix = f"{archive_label}/"
-    first_rec: dict[str, dict] = {}
-    with mf.open(encoding="utf-8") as fh:
-        for line in fh:
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if rec.get("source_id") != "forecast":
-                continue
-            ds = rec.get("dataset", "")
-            if not ds.startswith(prefix) or not ds.endswith("/" + week_id):
-                continue
-            f = ds[len(prefix):].split("/", 1)[0]
-            t = rec.get("ingested_at", "")
-            if f not in out["archived_at"] or t < out["archived_at"][f]:
-                out["archived_at"][f] = t
-                first_rec[f] = rec
-            out["archived_at_latest"][f] = max(out["archived_at_latest"].get(f, ""), t)
-    for f, rec in first_rec.items():
+    if not expected:
+        out["before_deadline"] = False
+        out["reasons"].append("no_forecast_identity")
+        expected = {}
+    ok = True
+    for f, sha in expected.items():
+        recs = [r for r in manifest() if r.get("source_id") == "forecast" and r.get("dataset", "").startswith(prefix)
+                and r.get("dataset", "").endswith("/" + week_id) and r.get("dataset", "")[len(prefix):].split("/", 1)[0] == f]
+        if recs:
+            out["archived_at_latest"][f] = max(r.get("ingested_at", "") for r in recs)
+        same = sorted((r for r in recs if r.get("sha256") == sha), key=lambda r: r.get("ingested_at", ""))
+        first = next((r for r in same if _intact(r)), None)
+        if first is None:
+            ok = False; out["reasons"].append(f"missing_or_corrupt:{f}")
+            continue
+        out["archived_at"][f] = first["ingested_at"]
+        out["clock_source"][f] = first.get("clock_source")
         try:
-            body = json.loads((RAW / rec["path"]).read_text(encoding="utf-8"))
+            body = json.loads((RAW / first["path"]).read_text(encoding="utf-8"))
             dl = (body.get("forecast") or {}).get("deadline_at")
         except (OSError, json.JSONDecodeError):
             dl = None
-        if dl:
-            out["deadline_at"] = out["deadline_at"] or dl
-    if out["deadline_at"] and out["archived_at"]:
-        dl = datetime.fromisoformat(out["deadline_at"])
-        out["before_deadline"] = all(datetime.fromisoformat(t) <= dl for t in out["archived_at"].values())
+        out["deadline_at"][f] = dl
+        t, d = _aware(first["ingested_at"]), _aware(dl)
+        if first.get("clock_source") != "system":
+            ok = False; out["reasons"].append(f"clock:{f}:{first.get('clock_source')}")
+        if t is None or d is None:
+            ok = False; out["reasons"].append(f"deadline_or_time_unusable:{f}")
+        elif t > d:
+            ok = False; out["reasons"].append(f"late:{f}")
+    if expected:
+        out["before_deadline"] = ok
     return out
+
+
+_INPUTS_CACHE: dict[str, dict] = {}
+
+
+def inputs_before_cutoff(packet_capture_id: str | None, cutoff_at: str) -> dict:
+    """Todos los documentos admitidos del paquete archivado, y todas las capturas por sesión que enumeran sus
+    manifiestos, deben haber sido **ingeridos antes del corte** (R20-06, PIT-06). Se lee el paquete archivado (no el
+    de memoria) y se resuelve cada ``capture_id`` en el manifiesto del archivo. Sin paquete o con alguna captura
+    desconocida o posterior al corte: False."""
+    if not packet_capture_id:
+        return {"ok": False, "reason": "no_packet_capture"}
+    if packet_capture_id in _INPUTS_CACHE:
+        return _INPUTS_CACHE[packet_capture_id]
+    manifest()
+    rec = _BY_ID.get(packet_capture_id)
+    res: dict
+    if rec is None:
+        res = {"ok": False, "reason": "packet_not_in_manifest"}
+    else:
+        try:
+            body = json.loads((RAW / rec["path"]).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            body = None
+        if not body:
+            res = {"ok": False, "reason": "packet_unreadable"}
+        else:
+            cutoff = _aware(cutoff_at)
+            ids: set[str] = set()
+            for d in body.get("admitted", []):
+                if d.get("capture_id"):
+                    ids.add(d["capture_id"])
+                if d.get("kind") == "capture_manifest":
+                    ids.update((d.get("payload") or {}).get("session_captures", {}).values())
+            late, unknown, latest = [], [], None
+            for cid in ids:
+                r = _BY_ID.get(cid)
+                if r is None:
+                    unknown.append(cid); continue
+                t = _aware(r.get("ingested_at"))
+                if t is None or cutoff is None or t > cutoff:
+                    late.append(cid)
+                if t is not None and (latest is None or t > latest):
+                    latest = t
+            res = {"ok": not late and not unknown and bool(ids), "captures": len(ids), "late": len(late), "unknown": len(unknown),
+                   "latest_ingested_at": latest.isoformat() if latest else None, "mode": body.get("mode"),
+                   "reason": None if (not late and not unknown and ids) else ("late_inputs" if late else "unknown_inputs" if unknown else "no_inputs")}
+    _INPUTS_CACHE[packet_capture_id] = res
+    return res
 
 
 def export_rounds() -> list[dict]:
@@ -379,19 +476,30 @@ def build() -> dict:
             alabel = sc["archive_label"]
             prospective_weeks = []
             for w in sc["weeks"]:
-                fa = forecast_archive(alabel, w["week_id"])
+                expected = {f: x["forecast_sha256"] for f, x in w["forecasters"].items() if x.get("forecast_sha256")}
+                fa = forecast_archive(alabel, w["week_id"], expected)
                 w["forecast_archived_at"] = fa["archived_at"]
                 w["forecast_deadline_at"] = fa["deadline_at"]
                 w["forecast_before_deadline"] = fa["before_deadline"]
-                if fa["before_deadline"]:
+                w["forecast_reasons"] = fa["reasons"]
+                inp = inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"]) if fa["before_deadline"] else {"ok": None, "reason": "not_checked"}
+                w["inputs_before_cutoff"] = inp["ok"]
+                w["inputs_reason"] = inp.get("reason")
+                w["packet_mode"] = inp.get("mode")
+                # predicción del protocolo (P9 revisado): identidad exacta, reloj del sistema, cada pronosticador dentro de su
+                # plazo y todos los datos del paquete recibidos antes del corte; el paquete sigue construido en modo histórico y
+                # sin sello externo, y así se declara
+                w["prospective"] = bool(fa["before_deadline"]) and inp["ok"] is True
+                if w["prospective"]:
                     prospective_weeks.append(w["week_id"])
             sc["prospective_weeks"] = prospective_weeks
             pending = [w for w in sc["weeks"] if w["pending_outcome"]]
             if pending:
-                wk = pending[-1]["week_id"]
-                fa = forecast_archive(alabel, wk)
-                sc["current_week"] = {"week_id": wk, "archived_at": fa["archived_at"], "archived_at_latest": fa["archived_at_latest"],
-                                      "deadline_at": fa["deadline_at"], "before_deadline": fa["before_deadline"]}
+                w = pending[-1]
+                sc["current_week"] = {"week_id": w["week_id"], "archived_at": w["forecast_archived_at"], "deadline_at": w["forecast_deadline_at"],
+                                      "before_deadline": w["forecast_before_deadline"], "inputs_before_cutoff": w["inputs_before_cutoff"],
+                                      "prospective": w["prospective"], "reasons": w["forecast_reasons"] + ([w["inputs_reason"]] if w["inputs_reason"] and w["inputs_reason"] != "not_checked" else []),
+                                      "packet_mode": w["packet_mode"]}
             scenarios.append(sc)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -420,13 +528,15 @@ def project_status(scenarios: list[dict]) -> dict:
     if scenarios:
         last = max(datetime.fromisoformat(w["cutoff_at"]) for sc in scenarios for w in sc["weeks"])
         nxt = last + timedelta(days=7)
-        while nxt.date() <= datetime.now(timezone.utc).date():
+        now = datetime.now(timezone.utc)
+        while nxt <= now:                       # instante completo del corte (18:00 Taipei), no la fecha UTC (R20-07)
             nxt += timedelta(days=7)
         next_cutoff = nxt.date().isoformat()
     phase = 3 if prospective else (2 if backtested else 1)
     return {"phase": phase, "phases_total": 4, "prospective_weeks": prospective, "prospective_count": len(prospective),
             "pending_weeks": pending, "backtested_weeks": backtested, "next_cutoff": next_cutoff,
-            "weekly_pipeline": "scripts/weekly_prospective.ps1", "external_timestamp": False}
+            "weekly_pipeline": "scripts/weekly_prospective.ps1", "external_timestamp": False,
+            "prospective_mode_admission": False}
 
 
 def inline_into_index(payload: str) -> bool:

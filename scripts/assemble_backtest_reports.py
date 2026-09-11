@@ -75,6 +75,30 @@ def paired_txt(p):
     return base + f", IC 95 % [{pct(ci[0])}, {pct(ci[1])}]{extra}"
 
 
+def temporal_sentence(s, cw) -> str:
+    """Clasificación temporal de la lista de la semana, derivada del archivo con las mismas reglas que el sitio."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("export_site_data", Path(__file__).with_name("export_site_data.py"))
+        ex = importlib.util.module_from_spec(spec); spec.loader.exec_module(ex)
+    except Exception:  # noqa: BLE001 - sin exportador no se afirma nada
+        return "Clasificación temporal no determinada (exportador no disponible)."
+    alabel = (s.get("assumptions") or {}).get("archive_label") or s["label"]
+    expected = {f: x["forecast_sha256"] for f, x in cw["forecasters"].items() if x.get("forecast_sha256")}
+    fa = ex.forecast_archive(alabel, cw["week_id"], expected)
+    ruta = f"`forecast/{alabel}/<pronosticador>/{cw['week_id']}` en `data/raw`"
+    if not fa["before_deadline"]:
+        return (f"Emitida y archivada ({ruta}) **después** del plazo o sin identidad verificable ({', '.join(fa['reasons']) or 'plazo superado'}): "
+                "es una reconstrucción con datos ya conocidos, no una predicción prospectiva.")
+    inp = ex.inputs_before_cutoff(cw.get("packet_capture"), cw["cutoff_at"])
+    if inp.get("ok") is True:
+        return (f"Archivada ({ruta}) antes del plazo declarado por cada predicción, con reloj del sistema, y con todos los datos del "
+                "paquete ingeridos antes del corte: predicción del protocolo según el reloj de esta máquina, sin sello externo y con el "
+                "paquete construido en modo histórico (readmisión verificada pendiente).")
+    return (f"Archivada ({ruta}) antes del plazo, pero con datos del paquete recibidos después del corte ({inp.get('reason')}): "
+            "no cuenta como predicción del protocolo.")
+
+
 def picks_table(cw, note_col):
     rows = []
     for f in FC:
@@ -82,9 +106,12 @@ def picks_table(cw, note_col):
         picks = x.get("picks", [])
         sel = " · ".join(f"{p['symbol']} {p['name']}" for p in picks)
         failed = [p for p in picks if p.get("entry_status") == "entry_failed"]
-        st = f"{x['filled']} de {x['filled'] + x['failed']} ejecutadas"
-        if failed:
-            st += "; sin lote posible: " + ", ".join(p["symbol"] for p in failed)
+        if x.get("filled") is None:
+            st = "entrada pendiente (la apertura del lunes aún no ha ocurrido)"          # R20-05
+        else:
+            st = f"{x['filled']} de {x['filled'] + x['failed']} ejecutadas"
+            if failed:
+                st += "; sin lote posible: " + ", ".join(p["symbol"] for p in failed)
         rows.append(f"| {NAMES[f]} | {sel} | {st} |")
     return f"| Pronosticador | Selección (símbolo, nombre) | {note_col} |\n|---|---|---|\n" + "\n".join(rows)
 
@@ -132,7 +159,7 @@ def header_15(d):
 
 {common_table(s, a, initial)}
 
-Lectura correcta: en un mercado que subió ({pct(s['universe_ew']['mean_weekly_gross_open_close'])} semanal el universo elegible, bruto), {lectura}. La diferencia media neta A1−Q1 ({pct(diff_a1_q1)} por semana) {comp_costes} el coste medio ({pct(F['Q1']['mean_costs_over_invested'], 2, False)} del importe invertido); con {operated} semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
+Lectura correcta: en un mercado que subió ({pct(s['universe_ew']['mean_weekly_gross_open_close'])} semanal el universo elegible, bruto), {lectura}. La diferencia media neta A1−Q1 ({pct(diff_a1_q1)} por semana) {comp_costes} el coste medio ({pct(F['Q1']['mean_costs_over_invested'], 2, False)} sobre compras brutas más ventas brutas heredadas); con {operated} semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
 
 1. **El dimensionado proporcional (efectivo disponible / {a['slots']} por puesto, ≈ 0,8-1 M TWD) no puede comprar un lote de 1.000 acciones de los valores más caros.** Q1 elige con frecuencia 台積電 (2330, ≈ 2.400 TWD), 鴻海, 緯穎 o 欣興: {F['Q1']['entry_failures']} entradas fallidas de {F['Q1']['weeks_selected'] * a['slots']}. Hay que decidir: subir el capital, admitir lotes sueltos (零股; escenario del informe 15b) o filtrar el universo por precio. Es una decisión de protocolo y cambia el universo elegible.
 2. **La regla de emparejamiento (misma exposición ±{a['exposure_tolerance']}) deja fuera a la mayoría de las semanas** cuando un pronosticador falla entradas y el otro no. O se corrige el dimensionado (punto 1) o el emparejamiento debe definirse de otro modo.
@@ -140,7 +167,7 @@ Lectura correcta: en un mercado que subió ({pct(s['universe_ew']['mean_weekly_g
 
 ## Lista de la semana en curso (corte {cw['cutoff_at'][:10]} 18:00 Taipei; semana {cw['week_id']})
 
-Emitida y archivada con hora real **después** de la entrada simulada del lunes siguiente al corte (`forecast/{s['label']}/<pronosticador>/{cw['week_id']}` en `data/raw`): es una reconstrucción, no una predicción prospectiva. La primera lista prospectiva será la del corte del domingo 13-09, emitida antes de la apertura del lunes 14. Entrada simulada en la primera apertura tras el plazo; salida prevista en el último cierre de la semana (pendiente).
+{temporal_sentence(s, cw)} Entrada simulada en la primera apertura tras el plazo; salida prevista en el último cierre de la semana (pendiente).
 
 {picks_table(cw, "Estado de la entrada simulada")}
 
@@ -191,7 +218,7 @@ Lectura: el orden entre pronosticadores y el signo de las medias se leen en la t
 
 ## Lista de la semana en curso ({cw['week_id']}, corte {cw['cutoff_at'][:10]} 18:00 Taipei)
 
-Lista **distinta** de la del informe 15: el universo elegible con {twd(a['notional'])} TWD por puesto incluye valores menos líquidos (regla de liquidez escalada con el nocional), y Q0, Q1 y A1 se calculan sobre él. Emitida y archivada después de la entrada simulada (`forecast/{s['label']}/<pronosticador>/{cw['week_id']}` en `data/raw`): reconstrucción, no predicción prospectiva.
+Lista **distinta** de la del informe 15: el universo elegible con {twd(a['notional'])} TWD por puesto incluye valores menos líquidos (regla de liquidez escalada con el nocional), y Q0, Q1 y A1 se calculan sobre él. {temporal_sentence(s, cw)}
 
 {picks_table(cw, "Estado de la entrada simulada con lotes sueltos")}
 
@@ -234,7 +261,7 @@ def header_15c(d, d_std):
 
 ## Lista de la semana en curso ({cw['week_id']}, corte {cw['cutoff_at'][:10]} 18:00 Taipei)
 
-Reconstrucción emitida después de la entrada simulada (`forecast/{s['label']}/<pronosticador>/{cw['week_id']}` en `data/raw`), no predicción prospectiva.
+{temporal_sentence(s, cw)}
 
 {picks_table(cw, "Estado de la entrada simulada")}
 

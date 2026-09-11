@@ -29,12 +29,12 @@ from .evaluation import IntervalMismatch, IntervalReturn, WeeklyObservation, blo
 from .ledger import CorporateAction, CostModel, LedgerError, MissingPrice, PaperLedger
 from .master import SecurityMaster, SecurityVersion, TerminalEvent, UnknownSymbol, classify_coverage, security_id_for
 from .models import q1 as q1mod
-from .packet import Document, Packet, PredictorView, build_packet, canonical_bytes, packet_to_json
+from .packet import Document, Packet, PredictorView, build_packet, canonical_bytes, packet_to_json, packet_from_json
 from .schemas import validate_prediction
 from .simulation import basket_report, enter_basket, exit_basket
 from .sources import finmind
 from .sources.finmind import SourceIdentityMismatch
-from .store import RawStore
+from .store import RawStore, IntegrityError
 from .timeutil import TAIPEI, AvailabilityQuality, derive_available_at, taipei
 from .weekly import WeekPlan, plan_week
 
@@ -709,6 +709,14 @@ class Runner:
         # un paquete idéntico (mismo packet_hash, que excluye created_at) ya archivado se reutiliza: conserva la hora
         # real de su primera ingestión y evita duplicar ~13 MB por semana y corrida (ciclo semanal)
         rec = self.store.find(source_id="packet", dataset=f"{alabel}/{plan.week_id}", extra_equal={"packet_hash": packet.packet_hash()})
+        if rec is not None:
+            # los metadatos no bastan (R20-04): se leen los bytes (integridad sha256) y se re-deriva el hash de contenido
+            try:
+                archived = packet_from_json(self.store.read(rec))
+            except (IntegrityError, ValueError, KeyError, TypeError) as exc:
+                raise ManifestInconsistent(f"archived packet {rec.capture_id} is unreadable or corrupt: {exc}") from exc
+            if archived.packet_hash() != packet.packet_hash():
+                raise ManifestInconsistent(f"archived packet {rec.capture_id} does not re-derive to packet_hash {packet.packet_hash()}")
         if rec is None:
             rec = self.store.put(source_id="packet", dataset=f"{alabel}/{plan.week_id}", payload=packet_to_json(packet),
                                  url="local://backtest", content_type="application/json",
@@ -807,16 +815,27 @@ class Runner:
             if problems:
                 obj["status"], obj["ranking"], obj["status_reason"] = "invalid", [], "; ".join(problems[:3])
             fpayload = canonical_bytes({"forecast": obj, "packet_hash": packet.packet_hash()})
+            fsha = hashlib.sha256(fpayload).hexdigest()
             fdataset = f"{cfg.archive_label or cfg.label}/{name}/{plan.week_id}"
-            if self.store.find(source_id="forecast", dataset=fdataset, sha256=hashlib.sha256(fpayload).hexdigest()) is None:
-                # bytes idénticos ya archivados: se conserva la primera ingestión (la única que vale como fecha de emisión)
-                self.store.put(source_id="forecast", dataset=fdataset, payload=fpayload, url="local://backtest",
-                               content_type="application/json", extra={"packet_hash": packet.packet_hash(), "packet_capture": pkt_rec.capture_id})
+            frec = self.store.find(source_id="forecast", dataset=fdataset, sha256=fsha)
+            if frec is not None:
+                try:
+                    self.store.read(frec)                        # integridad de los bytes reutilizados (R20-04)
+                except IntegrityError:
+                    frec = None
+            if frec is None:
+                # bytes idénticos ya archivados e íntegros: se conserva la primera ingestión (la única que vale como fecha de emisión)
+                frec = self.store.put(source_id="forecast", dataset=fdataset, payload=fpayload, url="local://backtest",
+                                      content_type="application/json", extra={"packet_hash": packet.packet_hash(), "packet_capture": pkt_rec.capture_id})
             picks[name] = [s.security_id for s in selections] if obj["status"] == "selected" else []
             record["forecasters"][name] = {"picks": [{"security_id": p, "symbol": self.market.securities[p].symbol,
                                                       "name": self.market.securities[p].name} for p in picks[name]],
                                            "forecast_status": obj["status"], "status_reason": obj.get("status_reason"),
-                                           "training_manifest_id": meta.get("training_manifest_id"), "validation_problems": problems}
+                                           "training_manifest_id": meta.get("training_manifest_id"), "validation_problems": problems,
+                                           # identidad exacta de la predicción evaluada (R20-01): la clasificación temporal se resuelve por estos bytes
+                                           "forecast_sha256": fsha, "forecast_capture_id": frec.capture_id, "deadline_at": obj["deadline_at"]}
+        record["packet_capture"] = pkt_rec.capture_id
+        record["packet_hash"] = packet.packet_hash()
         if pending_entry:
             record["note"] = f"pending_outcome: entrada prevista {entry_s.isoformat()} posterior al límite {bound.isoformat()}"
             return

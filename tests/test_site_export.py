@@ -79,3 +79,122 @@ def test_r18_08_export_keeps_final_valuation_conditions(tmp_path, monkeypatch):
     sc = ex.export_scenario("t", "x", "i.md")
     q = sc["forecasters"]["Q0"]
     assert q["final_flags"] == ["TWSE:1436@1988-04-11:fractional_shares_unresolved"] and q["final_valued_at"].startswith("2025-12-31") and q["weeks_measured"] == 16
+
+
+def _put(store, dataset, body, **extra):
+    return store.put(source_id="forecast", dataset=dataset, payload=json.dumps(body).encode("utf-8"), url="local://t", content_type="application/json", **extra)
+
+
+def test_r20_01_02_03_prediction_requires_exact_bytes_per_forecaster_deadline_and_system_clock(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from twlab.store import RawStore
+    ex = _load(); monkeypatch.setattr(ex, "RAW", tmp_path); ex._MANIFEST = None
+    dl = "2026-09-14T08:30:00+08:00"
+    store = RawStore(tmp_path)                                                   # reloj del sistema
+    early = _put(store, "lab/Q0/2026-W38", {"forecast": {"deadline_at": dl, "ranking": ["A"]}})
+    late = _put(store, "lab/Q0/2026-W38", {"forecast": {"deadline_at": dl, "ranking": ["B"]}})
+    # la lista mostrada es la tardía (bytes de `late`): no hereda la hora de la temprana (R20-01)
+    fa = ex.forecast_archive("lab", "2026-W38", {"Q0": late.sha256})
+    assert fa["archived_at"]["Q0"] == late.ingested_at
+    # un pronosticador esperado sin archivo → False (R20-02)
+    fa = ex.forecast_archive("lab", "2026-W38", {"Q0": early.sha256, "Q1": "0" * 64})
+    assert fa["before_deadline"] is False and "missing_or_corrupt:Q1" in fa["reasons"]
+    # sin identidad esperada no hay predicción
+    assert ex.forecast_archive("lab", "2026-W38", None)["before_deadline"] is False
+    # reloj inyectado, aunque sea temprano, no es evidencia (R20-03)
+    ex._MANIFEST = None
+    injected = RawStore(tmp_path / "inj", clock=lambda: datetime(2026, 9, 13, 12, tzinfo=timezone.utc))
+    r = _put(injected, "lab/Q0/2026-W38", {"forecast": {"deadline_at": dl}})
+    monkeypatch.setattr(ex, "RAW", tmp_path / "inj"); ex._MANIFEST = None
+    fa = ex.forecast_archive("lab", "2026-W38", {"Q0": r.sha256})
+    assert fa["before_deadline"] is False and any(x.startswith("clock:Q0") for x in fa["reasons"])
+    # plazo sin zona horaria: inutilizable, no un TypeError
+    r2 = _put(injected, "lab/Q1/2026-W38", {"forecast": {"deadline_at": "2026-09-14T08:30:00"}})
+    ex._MANIFEST = None
+    fa = ex.forecast_archive("lab", "2026-W38", {"Q1": r2.sha256})
+    assert fa["before_deadline"] is False
+
+
+def test_r20_02_each_forecaster_is_checked_against_its_own_deadline(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from twlab.store import RawStore
+    ex = _load(); monkeypatch.setattr(ex, "RAW", tmp_path); ex._MANIFEST = None
+    clock = {"t": datetime(2026, 9, 14, 0, 20, tzinfo=timezone.utc)}
+    store = RawStore(tmp_path, clock=lambda: clock["t"])
+    q0 = _put(store, "lab/Q0/2026-W38", {"forecast": {"deadline_at": "2026-09-14T10:30:00+08:00"}})
+    clock["t"] = datetime(2026, 9, 14, 0, 40, tzinfo=timezone.utc)                # 08:40 Taipei: diez minutos tarde para Q1
+    q1 = _put(store, "lab/Q1/2026-W38", {"forecast": {"deadline_at": "2026-09-14T08:30:00+08:00"}})
+    for r in (q0, q1):
+        # el reloj inyectado no cuenta (R20-03); aquí sólo se comprueba el plazo individual marcando system a mano
+        pass
+    lines = [json.loads(l) for l in (tmp_path / "manifest.jsonl").read_text(encoding="utf-8").splitlines()]
+    for l in lines:
+        l["clock_source"] = "system"
+    (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(l) for l in lines) + "\n", encoding="utf-8")
+    ex._MANIFEST = None
+    fa = ex.forecast_archive("lab", "2026-W38", {"Q0": q0.sha256, "Q1": q1.sha256})
+    assert fa["before_deadline"] is False and "late:Q1" in fa["reasons"]
+
+
+def test_r20_06_inputs_must_be_ingested_before_the_cutoff(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from twlab.store import RawStore
+    ex = _load(); monkeypatch.setattr(ex, "RAW", tmp_path); ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    clock = {"t": datetime(2026, 9, 12, 8, 0, tzinfo=timezone.utc)}                # sábado: antes del corte
+    store = RawStore(tmp_path, clock=lambda: clock["t"])
+    cap = store.put(source_id="twse", dataset="MI/2026-09-11", payload=b"x", url="u", content_type="application/json")
+    pkt = {"mode": "historical", "admitted": [{"kind": "price_bar_series", "capture_id": cap.capture_id},
+                                              {"kind": "capture_manifest", "capture_id": cap.capture_id, "payload": {"session_captures": {"2026-09-11": cap.capture_id}}}]}
+    p = store.put(source_id="packet", dataset="lab/2026-W38", payload=json.dumps(pkt).encode(), url="u", content_type="application/json")
+    ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    assert ex.inputs_before_cutoff(p.capture_id, "2026-09-13T18:00:00+08:00")["ok"] is True
+    clock["t"] = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)                 # domingo 20:00 Taipei: después del corte
+    late_cap = store.put(source_id="tpex", dataset="DQ/2026-09-11", payload=b"y", url="u", content_type="application/json")
+    pkt2 = {"mode": "historical", "admitted": [{"kind": "capture_manifest", "capture_id": late_cap.capture_id, "payload": {"session_captures": {"2026-09-11": late_cap.capture_id}}}]}
+    p2 = store.put(source_id="packet", dataset="lab/2026-W39", payload=json.dumps(pkt2).encode(), url="u", content_type="application/json")
+    ex._MANIFEST = None; ex._INPUTS_CACHE.clear()
+    res = ex.inputs_before_cutoff(p2.capture_id, "2026-09-13T18:00:00+08:00")
+    assert res["ok"] is False and res["reason"] == "late_inputs"
+    assert ex.inputs_before_cutoff(None, "2026-09-13T18:00:00+08:00")["ok"] is False
+
+
+def test_r20_07_next_cutoff_uses_the_full_instant(monkeypatch):
+    from datetime import datetime, timezone
+    ex = _load()
+    scenarios = [{"weeks": [{"week_id": "2026-W37", "cutoff_at": "2026-09-06T18:00:00+08:00", "pending_outcome": True}], "weeks_operated": 17, "prospective_weeks": []}]
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc)                # 08:00 Taipei del domingo 13: el corte aún no ha pasado
+    monkeypatch.setattr(ex, "datetime", FakeDT)
+    assert ex.project_status(scenarios)["next_cutoff"] == "2026-09-13"
+    class FakeDT2(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 13, 10, 30, tzinfo=timezone.utc)              # 18:30 Taipei: ya pasó
+    monkeypatch.setattr(ex, "datetime", FakeDT2)
+    assert ex.project_status(scenarios)["next_cutoff"] == "2026-09-20"
+
+
+def test_r20_05_report_headers_survive_a_pending_entry_week():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("asm", ROOT / "scripts" / "assemble_backtest_reports.py")
+    asm = importlib.util.module_from_spec(spec); spec.loader.exec_module(asm)
+    cw = {"week_id": "2026-W38", "cutoff_at": "2026-09-13T18:00:00+08:00", "packet_capture": None,
+          "forecasters": {f: {"picks": [{"symbol": "2330", "name": "台積電"}], "forecast_status": "selected"} for f in ("Q0", "Q1", "A1")}}
+    txt = asm.picks_table(cw, "Estado")
+    assert "entrada pendiente" in txt and "KeyError" not in txt
+
+
+def test_r20_02_boundary_equal_instant_counts_as_on_time(tmp_path, monkeypatch):
+    """Ingestión exactamente en el plazo (00:30 UTC = 08:30 Taipei) es «a tiempo»; un segundo después, tarde."""
+    ex = _load(); monkeypatch.setattr(ex, "RAW", tmp_path); ex._MANIFEST = None
+    body = json.dumps({"forecast": {"deadline_at": "2026-09-14T08:30:00+08:00"}}).encode("utf-8")
+    import hashlib
+    sha = hashlib.sha256(body).hexdigest()
+    (tmp_path / "f.json").write_bytes(body)
+    for at, expected in (("2026-09-14T00:30:00+00:00", True), ("2026-09-14T00:30:01+00:00", False)):
+        rec = {"source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": at, "path": "f.json", "sha256": sha, "clock_source": "system"}
+        (tmp_path / "manifest.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+        ex._MANIFEST = None
+        assert ex.forecast_archive("lab", "2026-W38", {"Q0": sha})["before_deadline"] is expected

@@ -1,0 +1,212 @@
+{
+  "ronda": "20",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: quedan seis hallazgos altos. R19-01 y R19-02 están parcialmente corregidos; R19-03 y R19-04, corregidos. Pasan 306 pruebas de aceptación. Ejecuté 38 controles adversariales: 12 pasan y 26 fallan. Las medias y tablas de los tres informes coinciden con sus JSON; las 162 listas examinadas coinciden con las primeras selecciones archivadas. Verificados los hashes de configuración de Q1: mínimos de 40/40/52 semanas. Los contraejemplos revelan sustitución temporal de listas, clasificación prospectiva indebida, omisión de integridad y fallo del ensamblador dominical. Sólo escribí bajo review/out/astra_scratch/; no ejecuté capturas, publicaciones, tareas del sistema ni backtests completos del universo.",
+  "hallazgos": [
+    {
+      "id": "R19-01/verificacion",
+      "severidad": "media",
+      "categoria": "unidades",
+      "archivo": "docs/informes/15_backtest_universo_2026.md",
+      "linea": 21,
+      "afirmacion": "Corrección parcial: sitio y tablas describen el denominador correcto, pero las cabeceras narrativas de 15 y 15b siguen diciendo «importe invertido»; el ensamblador reproduce esas frases.",
+      "contraejemplo": "El informe 15:21 llama al 0,74 % «del importe invertido» y 15:25 describe el 0,75 % «sobre lo invertido». El informe 15b:5 conserva «coste medio sobre lo invertido». El denominador incluye ventas heredadas: W29 Q0 estándar tiene cero compras, costes de 33.381 TWD y denominador de 6.159.300 TWD vendidos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k 'r19_01 or assembler_cost_prose'",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r20 import asm, source\n\ndef test_denominador_narrativo():\n    texts = [asm.header_15(source('standard')), asm.header_15b(source('user'), source('standard'))]\n    for text in texts:\n        assert 'sobre lo invertido' not in text\n        assert 'del importe invertido' not in text",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-02/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "docs/index.html",
+      "linea": 405,
+      "afirmacion": "Corrección parcial: la respuesta principal deriva las pérdidas de los dos escenarios originales, pero los límites y las fases conservan conclusiones literales; además, facts() excluye longhist de las afirmaciones universales.",
+      "contraejemplo": "Con rentabilidades totales de +25 %, medias Q0/Q1 de +3 %, A1 de +1 % e IC [0,01, 0,03], los tres idiomas siguen afirmando en límites que el intervalo incluye cero y en fases que ningún programa supera al azar. Si sólo longhist pasa a +25 %, facts().allLose sigue siendo true y aparece «ningún programa ganó dinero». ciKnown y ciZero se calculan, pero no gobiernan estos textos.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k 'r19_02 or profitable_phases or all_scenarios'",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r20 import render\n\ndef test_conclusiones_completas():\n    x = render('profitable')['es']\n    assert not x['facts']['ciZero']\n    assert 'pero incluye el cero' not in str(x['limits'])\n    assert 'Resultado: ninguno supera al azar' not in x['status']\n\ndef test_incluir_historial_largo():\n    assert render('longhist')['es']['facts']['allLose'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-03/verificacion",
+      "severidad": "media",
+      "categoria": "contabilidad",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 841,
+      "afirmacion": "Corregido: las entradas de la semana pendiente publican costes conocidos, denominador y costs_scope.",
+      "contraejemplo": "La compra sintética de 99 acciones a 100 TWD publica 20 TWD de costes, denominador 9.900 y entries_only_pending_exit; W37 conserva ese alcance en los tres JSON.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k r19_03 --basetemp review/out/astra_scratch/r20_verify03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-04/verificacion",
+      "severidad": "baja",
+      "categoria": "estadistica",
+      "archivo": "docs/informes/15_backtest_universo_2026.md",
+      "linea": 5,
+      "afirmacion": "Corregido: W28 se excluye expresamente de las medias de retorno y permanece en la media de costes.",
+      "contraejemplo": "La cabecera distingue ambos conjuntos; las medias de retorno y costes recalculadas desde las semanas coinciden con los tres JSON.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k 'r19_04 or all_scenario_summary'",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-01",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 225,
+      "afirmacion": "La primera ingestión se asigna por dataset, pronosticador y semana, sin vincularla a los bytes de la predicción mostrada. Una corrida posterior puede sustituir la lista visible y heredar la clasificación temporal de otra lista.",
+      "contraejemplo": "En lab/A1/2024-W02, la primera corrida con semilla 1 selecciona A y archiva el domingo 07/01 a las 12:00 UTC. Una corrida con semilla 5 selecciona B el lunes 08/01 a las 01:00 UTC, después del plazo de las 00:30 UTC. La primera captura permanece intacta, pero forecast_archive devuelve before_deadline=true mientras la corrida posterior contiene B. El sitio obtiene los picks del JSON reciente y la hora del archivo antiguo.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k late_changed_list --basetemp review/out/astra_scratch/r20_identity_repro",
+      "prueba_propuesta": "Prueba completa ejecutada: review/out/astra_scratch/test_r20.py::test_late_changed_list_not_given_first_list_timestamp. Registrar en cada resultado el capture_id y sha256 exactos del forecast evaluado; resolver su primera ingestión por esos bytes. Una revisión posterior al plazo debe conservar identidad y clasificación propias, y no sustituir la selección prospectiva.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-02",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 237,
+      "afirmacion": "before_deadline usa el primer deadline_at disponible para todos los pronosticadores y sólo exige las capturas encontradas. No implementa la condición «cada pronosticador contra su propio plazo».",
+      "contraejemplo": "Q0 declara 14/09/2026 10:30 +08:00; Q1 declara 08:30 +08:00 y se archiva a las 00:40 UTC, diez minutos tarde. El resultado es true porque se usa el plazo de Q0. También devuelve true si Q1 carece de deadline_at o si sólo existe Q0. Un deadline sin zona provoca TypeError y aborta la exportación.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k 'each_forecaster or missing_forecasters or naive_deadline' --basetemp review/out/astra_scratch/r20_deadlines_repro",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r20 import archive\n\ndef test_plazo_individual(tmp_path, monkeypatch):\n    x = archive(tmp_path, monkeypatch, [\n        ('Q0', '2026-09-14T00:20:00+00:00', '2026-09-14T10:30:00+08:00'),\n        ('Q1', '2026-09-14T00:40:00+00:00', '2026-09-14T08:30:00+08:00'),\n        ('A1', '2026-09-14T00:20:00+00:00', '2026-09-14T08:30:00+08:00')])\n    assert x['before_deadline'] is not True\n\nExigir todas las predicciones esperadas, timestamps conscientes de zona y comparación individual. La igualdad exacta entre 00:30 UTC y 08:30 Taipei sí pasó el control.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-03",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 221,
+      "afirmacion": "El exportador no comprueba clock_source y presenta capturas sintéticas como evidencia obtenida con el reloj del sistema.",
+      "contraejemplo": "RawStore(clock=...) archiva explícitamente con clock_source='injected' a las 12:00 UTC del 13/09/2026. Con plazo 14/09 08:30 Taipei, forecast_archive devuelve before_deadline=true. build() puede incluir esa semana en prospective_weeks y activar la fase 3.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k injected_clock --basetemp review/out/astra_scratch/r20_clock_repro",
+      "prueba_propuesta": "from datetime import datetime, timezone\nfrom twlab.store import RawStore\nfrom review.out.astra_scratch.test_r20 import ex\n\ndef test_reloj_sintetico_no_es_evidencia(tmp_path, monkeypatch):\n    raw = RawStore(tmp_path, clock=lambda: datetime(2026, 9, 13, 12, tzinfo=timezone.utc))\n    raw.put(source_id='forecast', dataset='lab/Q0/2026-W38', payload=b'{\"forecast\":{\"deadline_at\":\"2026-09-14T08:30:00+08:00\"}}', url='synthetic', content_type='application/json')\n    monkeypatch.setattr(ex, 'RAW', tmp_path)\n    assert ex.forecast_archive('lab', '2026-W38')['before_deadline'] is not True",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-04",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 711,
+      "afirmacion": "La reutilización acepta el registro encontrado por packet_hash sin leer ni verificar los bytes archivados. Una captura corrupta puede respaldar nuevas predicciones.",
+      "contraejemplo": "Después de archivar pkt-lab-2024-W02, sustituyo únicamente su archivo sintético por {\"corrupt\":true}. RawStore.read detecta IntegrityError. Runner.run_week no detecta el fallo: reutiliza la captura por sus metadatos y continúa con el paquete recién construido en memoria.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k reused_packet_integrity --basetemp review/out/astra_scratch/r20_integrity_repro",
+      "prueba_propuesta": "Prueba completa ejecutada: review/out/astra_scratch/test_r20.py::test_reused_packet_integrity_is_checked. Antes de reutilizar, verificar store.read(rec), deserializar y contrastar el hash de contenido con el esperado. Aplicar también integridad a los forecasts reutilizados. Los controles positivos confirmaron que created_at puede diferir sin cambiar packet_hash y que etiquetas de archivo distintas permanecen aisladas; el problema es aceptar metadatos sin comprobar sus bytes.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-05",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "scripts/assemble_backtest_reports.py",
+      "linea": 85,
+      "afirmacion": "El ciclo dominical falla al ensamblar cualquiera de los tres informes porque exige filled y failed antes de que ocurra la entrada.",
+      "contraejemplo": "_sundays incluye el domingo de --end. Con end=07/01/2024, Runner emite W02 con entrada prevista el lunes 08/01 y pending_outcome=true; sus pronosticadores todavía no contienen filled ni failed. header_15, header_15b y header_15c lanzan KeyError: 'filled'. Ese mismo estado corresponde al corte del domingo 13/09/2026. weekly_prospective.ps1 sale tras el fallo de ensamblado, antes de exportar y publicar.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k sunday_pending_entry --basetemp review/out/astra_scratch/r20_sunday_repro",
+      "prueba_propuesta": "Prueba completa parametrizada ejecutada: review/out/astra_scratch/test_r20.py::test_sunday_pending_entry_report_does_not_crash. Obtiene una semana pendiente real de Runner y la entrega a cada cabecera. Mostrar «entrada pendiente» cuando aún no exista ejecución; no sustituir ausencia de ejecución por cero compras ejecutadas. Las cabeceras también deben derivar su clasificación temporal, en lugar de afirmar siempre que fueron emitidas después de la entrada.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-06",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "src/twlab/backtest.py",
+      "linea": 707,
+      "afirmacion": "La fase llamada prospectiva sigue construyendo paquetes históricos sin exigir recepción de los datos antes del corte. Archivar el forecast antes del plazo no subsana esa infracción temporal.",
+      "contraejemplo": "En el control sintético, todas las fuentes se capturan el domingo 07/01/2024 a las 19:00 Taipei, una hora después del corte. Runner admite sus documentos en mode='historical' y archiva la lista a las 20:00. El exportador devuelve before_deadline=true. La especificación exige live_first_seen_before_cutoff_required y PIT-06; el ciclo semanal captura sesiones faltantes después del corte.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k late_inputs --basetemp review/out/astra_scratch/r20_inputs_repro",
+      "prueba_propuesta": "Prueba completa ejecutada: review/out/astra_scratch/test_r20.py::test_late_inputs_cannot_be_called_protocol_prediction. Fija capturas sintéticas a 19:00, emisión a 20:00 y corte a 18:00, comprueba que todos los documentos admitidos llegaron tarde y exige que no se clasifique como predicción del protocolo. Separar «archivada antes del plazo» de «cumple el corte prospectivo» hasta implementar la admisión correspondiente.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-07",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 423,
+      "afirmacion": "next_cutoff descarta el domingo actual comparando fechas UTC, aunque el corte de las 18:00 Taipei todavía no haya ocurrido.",
+      "contraejemplo": "Con última semana W37 y reloj 13/09/2026 00:00 UTC —08:00 Taipei— devuelve 20/09/2026. El siguiente corte sigue siendo 13/09/2026 18:00 Taipei, diez horas después. El control a 12/09 23:00 UTC sí devuelve 13/09, por lo que la fecha cambia anticipadamente al llegar la medianoche UTC.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k next_cutoff",
+      "prueba_propuesta": "Comparar el instante completo del candidato, convertido a UTC, con now; no comparar nxt.date() con la fecha UTC. Los dos casos completos están en test_r20.py::test_next_cutoff_uses_instant_not_date.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-08",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "docs/index.html",
+      "linea": 352,
+      "afirmacion": "La reescritura vuelve a prometer reintentos el viernes siguiente, aunque el motor reintenta en el último cierre efectivo de la semana siguiente.",
+      "contraejemplo": "Bloqueo la salida del viernes 12/01/2024 y declaro festivo el viernes 19/01. El libro vende la posición heredada el jueves 18/01. El sitio sigue diciendo «viernes siguiente», «next Friday» y «下週五», tanto en el funcionamiento como en lo que falta construir.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k weekly_retry --basetemp review/out/astra_scratch/r20_retry_repro",
+      "prueba_propuesta": "Prueba completa parametrizada ejecutada: test_r20.py::test_weekly_retry_respects_next_weeks_holiday. Conserva la posición bloqueada, verifica el Fill del 18/01 y contrasta los textos de los tres idiomas. Usar «último cierre de la semana siguiente» y describir también el plazo como el de la primera sesión efectiva.",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R20-09",
+      "severidad": "baja",
+      "categoria": "datos",
+      "archivo": "README.md",
+      "linea": 14,
+      "afirmacion": "README conserva un recuento de pruebas desfasado y presenta la equivalencia horaria de verano sin acotarla.",
+      "contraejemplo": "La suite ejecutada contiene 306 pruebas y todas pasan; README:14 y README:43 dicen 304. Las 08:00 de Toronto corresponden a las 20:00 Taipei el 13/09/2026, pero a las 21:00 el 08/11/2026. Ambos horarios mantienen margen; la igualdad permanente de README:33 es incorrecta.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py -k 'readme_current_test_count or schedule_time'",
+      "prueba_propuesta": "Actualizar el recuento o remitir a la colección vigente; escribir «20:00 Taipei en verano, 21:00 en invierno». Los controles ejecutados son test_readme_current_test_count y test_schedule_time_across_dst.",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Mantener explícitamente pendiente la readmisión verificada multicaptura. Su ausencia no permite considerar prospectivos los paquetes históricos del ciclo semanal; corregir R20-04 y R20-06."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "W37 sigue siendo reconstrucción en los tres escenarios. El 13/09 es una fecha prevista, no evidencia de cumplimiento: exigir identidad de la lista, recepción antes del corte y clasificación temporal efectiva."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de aceptación del libro, lotes y comisiones; también la prueba adversarial que conserva una posición bloqueada hasta su salida efectiva."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto",
+      "argumento": "Las pruebas de conservación de las condiciones de valoración final pasan. No encontré una nueva discrepancia en este cambio."
+    },
+    {
+      "id": "P5",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de inmutabilidad del mercado. Los hashes de configuración archivados confirman mínimos de entrenamiento 40/40/52 para los tres escenarios."
+    },
+    {
+      "id": "P6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Las medias y tablas regeneradas coinciden con los JSON, incluido 15c. Persisten las correcciones parciales R19-01 y R19-02; reparar además el ensamblado de semanas con entrada pendiente."
+    },
+    {
+      "id": "P7",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "R19-03 está corregido y la aproximación con precios regulares permanece declarada. Corregir las etiquetas narrativas del denominador y el ensamblado dominical también en 15b."
+    },
+    {
+      "id": "P8",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de identificadores completos y verificaciones posteriores; el sitio admite rondas aprobadas en las mutaciones. El recuento representa verificaciones registradas, incluidas las parciales, y no debe equipararse a cierre íntegro de todos los fallos."
+    },
+    {
+      "id": "P9",
+      "posicion": "rechazo",
+      "argumento": "Como condición suficiente para llamar «predicción» a una lista, omite recepción de datos antes del corte e integridad e identidad de la predicción evaluada. Además, la implementación no exige reloj del sistema ni el plazo individual de cada pronosticador. Aceptaría publicar «archivada antes del plazo según el reloj local, sin sello externo» como atributo separado, vinculado a bytes íntegros concretos; no sustituye el cumplimiento prospectivo del protocolo."
+    }
+  ],
+  "veredicto": "rechazado"
+}

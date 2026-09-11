@@ -669,3 +669,42 @@ def test_weekly_rerun_reuses_identical_packets_and_forecasts_and_keeps_first_ing
     assert len(forecasts2) == len(forecasts1) + 2
     for r in packets1:
         assert store.find(source_id="packet", dataset=r.dataset, extra_equal={"packet_hash": r.extra["packet_hash"]}).capture_id == r.capture_id
+
+
+def test_r20_01_week_records_carry_the_exact_forecast_identity(tmp_path):
+    from twlab.backtest import load_market
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="t", archive_label="lab", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    res = r.run()
+    w = res["weeks"][0]
+    assert w["packet_capture"] and w["packet_hash"]
+    for name, x in w["forecasters"].items():
+        rec = store.get(x["forecast_capture_id"])
+        assert rec.sha256 == x["forecast_sha256"] and rec.dataset == f"lab/{name}/{w['week_id']}"
+        assert x["deadline_at"] and datetime.fromisoformat(x["deadline_at"]).tzinfo is not None
+
+
+def test_r20_04_reused_packet_and_forecast_bytes_are_verified(tmp_path):
+    from twlab.backtest import load_market, ManifestInconsistent
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    pkt = store.captures(source_id="packet")[0]
+    (store.root / pkt.path).write_bytes(b'{"corrupt":true}')
+    cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="b", archive_label="lab", notional=1_000_000, slots=5)
+    with pytest.raises(ManifestInconsistent):
+        Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
+    # un forecast corrupto no se reutiliza: se vuelve a archivar con bytes íntegros
+    store2, path2 = make_market(tmp_path / "b")
+    market2 = load_market(store2, path2, CAL)
+    Runner(store2, market2, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    fc = store2.captures(source_id="forecast")[0]
+    (store2.root / fc.path).write_bytes(b'{"corrupt":true}')
+    n_before = len(store2.captures(source_id="forecast"))
+    res = Runner(store2, market2, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
+    assert len(store2.captures(source_id="forecast")) == n_before + 1
+    name = fc.dataset.split("/")[1]
+    assert res["weeks"][0]["forecasters"][name]["forecast_capture_id"] != fc.capture_id
