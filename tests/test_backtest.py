@@ -708,3 +708,32 @@ def test_r20_04_reused_packet_and_forecast_bytes_are_verified(tmp_path):
     assert len(store2.captures(source_id="forecast")) == n_before + 1
     name = fc.dataset.split("/")[1]
     assert res["weeks"][0]["forecasters"][name]["forecast_capture_id"] != fc.capture_id
+
+
+def test_r23_01_runner_archives_the_master_snapshot_once_and_links_every_week(tmp_path):
+    """Cada semana enlaza la instantánea del maestro con la que se resolvieron símbolos y nombres; bytes idénticos se reutilizan."""
+    from twlab.backtest import load_market, master_snapshot_bytes
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    res = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)]).run()
+    masters = store.captures(source_id="master")
+    assert len(masters) == 1 and masters[0].dataset == "lab/master"
+    assert all(w["master_capture"] == masters[0].capture_id for w in res["weeks"])
+    payload = store.read(masters[0])
+    assert payload == master_snapshot_bytes(market.master)
+    rows = [json.loads(l) for l in payload.decode("utf-8").splitlines()]
+    assert {r["security_id"] for r in rows} == set(market.securities) and all(r["kind"] == "segment" for r in rows)
+    for r in rows:
+        assert market.securities[r["security_id"]].symbol == r["symbol"]
+    # segunda corrida con la misma etiqueta: misma instantánea, sin duplicar
+    cfg2 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 22), label="b", archive_label="lab", notional=1_000_000, slots=5)
+    res2 = Runner(store, market, cfg2, [MomentumForecaster(), RandomForecaster(1)]).run()
+    assert len(store.captures(source_id="master")) == 1
+    assert all(w["master_capture"] == masters[0].capture_id for w in res2["weeks"])
+    # instantánea corrupta: se vuelve a archivar con bytes íntegros
+    (store.root / masters[0].path).write_bytes(b"corrupt")
+    cfg3 = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="c", archive_label="lab", notional=1_000_000, slots=5)
+    res3 = Runner(store, market, cfg3, [MomentumForecaster(), RandomForecaster(1)]).run()
+    fresh = [m for m in store.captures(source_id="master") if m.capture_id != masters[0].capture_id]
+    assert len(fresh) == 1 and store.read(fresh[0]) == payload and all(w["master_capture"] == fresh[0].capture_id for w in res3["weeks"])

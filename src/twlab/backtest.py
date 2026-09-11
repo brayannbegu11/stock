@@ -34,7 +34,7 @@ from .schemas import validate_prediction
 from .simulation import basket_report, enter_basket, exit_basket
 from .sources import finmind
 from .sources.finmind import SourceIdentityMismatch
-from .store import RawStore, IntegrityError
+from .store import CaptureRecord, RawStore, IntegrityError
 from .timeutil import TAIPEI, AvailabilityQuality, derive_available_at, taipei
 from .weekly import WeekPlan, plan_week
 
@@ -256,6 +256,21 @@ def load_master_file(path: Path) -> SecurityMaster:
             row["recorded_at"] = datetime.fromisoformat(row["recorded_at"])
             master.add(SecurityVersion(**row))
     return master
+
+
+def master_snapshot_bytes(master: SecurityMaster) -> bytes:
+    """Instantánea determinista del maestro (todas las filas registradas, JSONL ``kind == "segment"``) para archivarla
+    junto a los paquetes y predicciones de una corrida: la identidad de cada valor seleccionado (código y símbolo) se
+    contrasta después con esta instantánea, no con el JSON de resultados (R23-01)."""
+    rows = []
+    for v in master._versions:  # noqa: SLF001 - serialización fiel de lo registrado (nada se borra en el maestro)
+        rows.append({"kind": "segment", "security_id": v.security_id, "issuer_id": v.issuer_id, "symbol": v.symbol,
+                     "name_zh": v.name_zh, "name_en": v.name_en, "market": v.market, "board": v.board,
+                     "instrument_type": v.instrument_type, "currency": v.currency,
+                     "valid_from": v.valid_from.isoformat(), "valid_to": v.valid_to.isoformat() if v.valid_to else None,
+                     "recorded_at": v.recorded_at.isoformat(), "source_id": v.source_id})
+    rows.sort(key=lambda r: (r["security_id"], r["valid_from"], r["recorded_at"]))
+    return ("\n".join(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows) + "\n").encode("utf-8")
 
 
 def load_market_daily(store: RawStore, calendar: TradingCalendar, master: SecurityMaster, *, as_of: date, start: date, end: date,
@@ -541,6 +556,7 @@ def _sundays(start: date, end: date):
 class Runner:
     def __init__(self, store: RawStore, market: MarketData, cfg: BacktestConfig, forecasters: Sequence[Forecaster]) -> None:
         self.store, self.market, self.cfg = store, market, cfg
+        self._master_rec: Optional[CaptureRecord] = None
         self.forecasters = {f.name: f for f in forecasters}
         if cfg.baseline not in self.forecasters:
             raise ValueError(f"baseline {cfg.baseline!r} is not among the forecasters")
@@ -836,6 +852,7 @@ class Runner:
                                            "forecast_sha256": fsha, "forecast_capture_id": frec.capture_id, "deadline_at": obj["deadline_at"]}
         record["packet_capture"] = pkt_rec.capture_id
         record["packet_hash"] = packet.packet_hash()
+        record["master_capture"] = self.master_record().capture_id         # identidad de los valores (R23-01)
         if pending_entry:
             record["note"] = f"pending_outcome: entrada prevista {entry_s.isoformat()} posterior al límite {bound.isoformat()}"
             return
@@ -972,6 +989,25 @@ class Runner:
             record["paired"][name] = entry
 
     # -- todo el periodo -------------------------------------------------------------------------------
+    def master_record(self) -> CaptureRecord:
+        """Archiva (una vez por corrida) la instantánea del maestro con la que se resolvieron símbolos y nombres; bytes
+        idénticos ya archivados e íntegros se reutilizan, como los paquetes y las predicciones (R23-01)."""
+        if self._master_rec is None:
+            payload = master_snapshot_bytes(self.market.master)
+            sha = hashlib.sha256(payload).hexdigest()
+            dataset = f"{self.cfg.archive_label or self.cfg.label}/master"
+            rec = self.store.find(source_id="master", dataset=dataset, sha256=sha)
+            if rec is not None:
+                try:
+                    self.store.read(rec)
+                except IntegrityError:
+                    rec = None
+            if rec is None:
+                rec = self.store.put(source_id="master", dataset=dataset, payload=payload, url="local://backtest",
+                                     content_type="application/x-ndjson", extra={"rows": len(self.market.master._versions)})  # noqa: SLF001
+            self._master_rec = rec
+        return self._master_rec
+
     def run(self) -> dict:
         cfg = self.cfg
         for sunday in _sundays(cfg.start, cfg.end):

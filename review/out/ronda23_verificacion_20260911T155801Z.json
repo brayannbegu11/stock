@@ -1,0 +1,164 @@
+{
+  "ronda": "23",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: cuatro hallazgos nuevos reproducidos, uno alto, dos medios y uno bajo. Pasan las 330 pruebas de aceptación. La batería original de ronda 22 obtiene 29 pases y un fallo de expectativa obsoleta en rank_order; confirmé la explicación del informe 28 §5 y el rechazo al corregir ticker_as_of. Los 17 controles nuevos obtienen 8 pases y 9 fallos. El ciclo dominical, el ensamblador y las mutaciones del sitio distinguen los cuatro estados en español, inglés y chino. Se rechazan nombres ausentes o distintos, valores ausentes del paquete y cortes incoherentes. Las cabeceras, tablas y métricas de 15/15b/15c coinciden con sus JSON; las semanas publicadas siguen siendo reconstrucciones. Las garantías generales de contrato, identidad y cierre ante tipos malformados del informe 28 exceden lo comprobado. Sólo escribí bajo review/out/astra_scratch/; no ejecuté comandos prohibidos. Los 132 archivos legibles del manifiesto inicial conservan sus hashes; .pytest_cache/README.md no permitió lectura.",
+  "hallazgos": [
+    {
+      "id": "R22-01/verificacion",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 341,
+      "afirmacion": "Corregidos los contraejemplos originales de estados, duplicados y listas incoherentes; queda la discrepancia de tipos de rank descrita en R23-03.",
+      "contraejemplo": "invalid, selected vacío, abstained no vacío y duplicados se rechazan; la abstención válida pasa. rank_order se rechaza con ticker_as_of='A' y también tras corregirlo a 'B'.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k 'invalid_runner or (forecast_contract and not rank_order)' --basetemp review/out/astra_scratch/r23_verify01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-02/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 403,
+      "afirmacion": "Corregido el hash lógico no recalculado; la obligatoriedad del hash en el registro sigue incompleta, véase R23-04.",
+      "contraejemplo": "Payload fabricado, source_sha256 alterado, rejected añadido y packet_id ausente se rechazan; dos paquetes válidos que sólo difieren en created_at conservan legítimamente el mismo hash lógico.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k 'packet_logical_hash or two_valid_packets' --basetemp review/out/astra_scratch/r23_verify02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-03/verificacion",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 423,
+      "afirmacion": "Corregido: se exige coherencia entre los cortes de semana, paquete y predicciones.",
+      "contraejemplo": "Mover el corte de resultados de 18:00 a 23:00 Taipei no convierte fuentes tardías en predicción; un paquete válido rearchivado con corte desplazado una hora y hashes actualizados también se rechaza cuando los forecasts conservan el corte original.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py review/out/astra_scratch/test_r23.py -k 'cutoff_must_match or real_packet_cutoff' --basetemp review/out/astra_scratch/r23_verify03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-04/verificacion",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 253,
+      "afirmacion": "Corregidos los cuatro tipos malformados originales; el cierre general sigue incompleto, véase R23-02.",
+      "contraejemplo": "path=42 e ingested_at=42 en el registro del paquete, admitted=['bad'] y session_captures=['bad'] devuelven clasificación negativa sin abortar.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k malformed_provenance --basetemp review/out/astra_scratch/r23_verify04",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-05/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 359,
+      "afirmacion": "Corregida la sustitución exclusivamente visual de símbolo y nombre; falta comprobar la identidad económica del ticker archivado, véase R23-01.",
+      "contraejemplo": "symbol='9999' frente a ticker_as_of='A' se rechaza. También se rechazan payload.name ausente o distinto del nombre mostrado y una selección cuyo valor está ausente del paquete.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py review/out/astra_scratch/test_r23.py -k 'visible_symbol or packet_names_and_membership' --basetemp review/out/astra_scratch/r23_verify05",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R23-01",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 359,
+      "afirmacion": "La coincidencia entre JSON y archivo no acredita identidad: un ticker de otro valor o un security_id inexistente en el maestro pueden clasificarse como predicción.",
+      "contraejemplo": "En W02, con fuentes del 06/01/2024 08:00 UTC y forecasts del 07/01 12:00 UTC, mantengo security_id='TWSE:A@2000-01-01' y name='A', pero archivo ticker_as_of='B' y muestro symbol='B': prospective=true, reasons=[]. El ranking cumple el esquema. Además, añadir al paquete una serie para 'TWSE:GHOST@2000-01-01', inexistente en el maestro, recalcular todos los hashes y seleccionarla como GHOST también produce prospective=true. Sin esa serie, GHOST sí se rechaza.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r23.py -k 'ticker_of_other_security or unknown_security' --basetemp review/out/astra_scratch/r23_repro01",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r23 import setup, classify\nfrom review.out.astra_scratch.test_r22 import save_forecast\nfrom twlab.schemas import prediction_validator\n\ndef test_ticker_de_otro_valor_no_es_prediccion(tmp_path, monkeypatch):\n    raw, market, data, ex, week = setup(tmp_path, monkeypatch)\n    body = save_forecast(raw, data, lambda f: f['ranking'][0].update(ticker_as_of='B'))\n    prediction_validator().validate(body['forecast'])\n    assert body['forecast']['ranking'][0]['security_id'] == market.by_symbol['A']\n    week['forecasters']['Q0']['picks'][0]['symbol'] = 'B'\n    assert classify(ex, week)['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R23-02",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 345,
+      "afirmacion": "Todavía hay datos malformados que abortan la clasificación compartida en lugar de devolver procedencia sin acreditar.",
+      "contraejemplo": "security_id=['A'] en el ranking archivado lanza TypeError en set(ranked), línea 345. ingested_at=42 en el registro del forecast lanza TypeError en max, línea 292; dataset=['bad'] lanza AttributeError en startswith, línea 287; extra=['bad'] en el registro del paquete lanza AttributeError en get, línea 415. Los cuatro casos se ejecutaron.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r23.py -k malformed_archive --basetemp review/out/astra_scratch/r23_repro02",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r23 import setup, classify\nfrom review.out.astra_scratch.test_r22 import save_forecast\n\ndef test_security_id_malformado_falla_cerrado(tmp_path, monkeypatch):\n    raw, market, data, ex, week = setup(tmp_path, monkeypatch)\n    save_forecast(raw, data, lambda f: f['ranking'][0].update(security_id=['A']))\n    result = classify(ex, week)\n    assert result['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R23-03",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 348,
+      "afirmacion": "La comprobación rank=1..n admite booleanos y flotantes que el validador del laboratorio rechaza.",
+      "contraejemplo": "Sustituir el rank=1 de Q0 por true o 1.0, rearchivando los bytes y actualizando su SHA, mantiene prospective=true y reasons=[]. validate_prediction devuelve ranking[0]:rank_not_int para ambas variantes. La igualdad de listas de Python considera True == 1 y 1.0 == 1.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r23.py -k rank_requires --basetemp review/out/astra_scratch/r23_repro03",
+      "prueba_propuesta": "from review.out.astra_scratch.test_r23 import setup, classify\nfrom review.out.astra_scratch.test_r22 import save_forecast\nfrom twlab.packet import packet_from_json\nfrom twlab.schemas import validate_prediction\n\ndef test_rank_booleano_no_es_prediccion(tmp_path, monkeypatch):\n    raw, market, data, ex, week = setup(tmp_path, monkeypatch)\n    body = save_forecast(raw, data, lambda f: f['ranking'][0].update(rank=True))\n    packet = packet_from_json(raw.read(raw.get(week['packet_capture'])))\n    errors = validate_prediction(body['forecast'], packet, calendar=market.calendar)\n    assert any('rank_not_int' in e for e in errors)\n    assert classify(ex, week)['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R23-04",
+      "severidad": "baja",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 415,
+      "afirmacion": "El hash lógico del registro del paquete es opcional, pese a que el informe 28 §1 exige su coincidencia.",
+      "contraejemplo": "Eliminar únicamente extra.packet_hash del registro del paquete de W02 mantiene prospective=true y reasons=[]. La expresión not in (None, logical) acepta explícitamente la ausencia. El SHA de bytes y los vínculos restantes permanecen comprobados, por lo que el alcance es una discrepancia contractual.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r23.py -k packet_registry_hash --basetemp review/out/astra_scratch/r23_repro04",
+      "prueba_propuesta": "import json\nfrom review.out.astra_scratch.test_r23 import setup, classify\n\ndef test_hash_del_registro_es_obligatorio(tmp_path, monkeypatch):\n    raw, market, data, ex, week = setup(tmp_path, monkeypatch)\n    path = raw.root / 'manifest.jsonl'\n    rows = [json.loads(line) for line in path.read_text(encoding='utf8').splitlines()]\n    for row in rows:\n        if row['capture_id'] == week['packet_capture']:\n            row['extra'].pop('packet_hash')\n    path.write_text('\\n'.join(map(json.dumps, rows)), encoding='utf8')\n    assert classify(ex, week)['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Reutilización e integridad lógica verificadas también en el exportador. Mantener pendiente la readmisión multicaptura y resolver la obligatoriedad del hash del registro."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "W37 sigue siendo reconstrucción. El ciclo con fin dominical clasifica sólo W02 como predicción entre los cortes sintéticos comprobados, con contratos, hashes y cortes coherentes. El 13/09 continúa siendo candidato, condicionado a corregir R23-01."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Pasan las pruebas de libro, lotes, comisiones y conservación de posiciones bloqueadas."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto",
+      "argumento": "Las condiciones de valoración final se conservan; patrimonios y tablas publicados coinciden con sus JSON."
+    },
+    {
+      "id": "P5",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de inmutabilidad del mercado y de configuración Q1 para los mínimos de entrenamiento 40/40/52."
+    },
+    {
+      "id": "P6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "15/15b/15c reproducen sus cabeceras, tablas, selecciones y métricas. Corregir o acotar las garantías generales del informe 28 y la atribución de predicción del README conforme a los hallazgos nuevos. La explicación de rank_order del informe 28 §5 está comprobada."
+    },
+    {
+      "id": "P7",
+      "posicion": "acepto",
+      "argumento": "La aproximación de lotes sueltos mediante precios regulares continúa declarada; dimensionado, denominadores y entrada pendiente pasan."
+    },
+    {
+      "id": "P8",
+      "posicion": "acepto",
+      "argumento": "Los controles de identificadores y verificaciones posteriores pasan; el recuento sigue representando verificaciones registradas, incluidas parciales."
+    },
+    {
+      "id": "P9",
+      "posicion": "rechazo",
+      "argumento": "La reformulación del informe 26 §2, ampliada por 27 y 28, sigue permitiendo llamar predicción a identidades económicas no acreditadas y a rangos rechazados por el validador del laboratorio. Además, ciertos tipos abortan la clasificación y el hash del registro no es obligatorio. Declarar modo histórico y ausencia de sello externo no resuelve esos casos."
+    }
+  ],
+  "veredicto": "rechazado"
+}
