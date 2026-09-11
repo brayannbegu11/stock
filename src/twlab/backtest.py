@@ -694,7 +694,7 @@ class Runner:
                     provenance_rejected.append((sec_id, s.symbol, len(missing)))
                     continue
             last_cap = self.store.get(s.bar_captures[known[-1].session]) if s.bar_captures else s.price_capture
-            payload = {"history_sessions": len(known), "last_session": known[-1].session.isoformat(),
+            payload = {"history_sessions": len(known), "last_session": known[-1].session.isoformat(), "name": s.name,
                        "sessions": [[b.session.isoformat(), str(b.open), str(b.close), b.volume_shares, str(b.value_twd)] for b in window]}
             if s.bar_captures:
                 payload["captures_doc"] = f"{s.source_id}:captures:{plan.week_id}"

@@ -15,6 +15,7 @@ Uso: python scripts/export_site_data.py [--no-inline]
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import hashlib
 import json
 import re
@@ -24,6 +25,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))          # twlab.packet se necesita para recalcular el hash lógico (R22-02), también fuera de pytest
 STORE = ROOT / "data" / "store"
 RAW = ROOT / "data" / "raw"
 SITE = ROOT / "docs" / "site"
@@ -227,20 +230,20 @@ def manifest() -> list[dict]:
 
 def _aware(s: str | None) -> datetime | None:
     """ISO-8601 con zona; una marca sin zona no sirve como evidencia temporal (R20-02)."""
-    if not s:
+    if not s or not isinstance(s, str):
         return None
     try:
         d = datetime.fromisoformat(s)
-    except ValueError:
+    except (ValueError, TypeError):
         return None
     return d if d.tzinfo is not None else None
 
 
 def _intact(rec: dict) -> bool:
-    p = RAW / rec.get("path", "")
     try:
+        p = RAW / str(rec.get("path", ""))
         return hashlib.sha256(p.read_bytes()).hexdigest() == rec.get("sha256")
-    except OSError:
+    except (OSError, TypeError, ValueError):
         return False
 
 
@@ -251,14 +254,17 @@ def _instant(s: str | None) -> datetime | None:
 
 def _record_ok(rec: dict | None) -> str | None:
     """Motivo por el que un registro del manifiesto no sirve como evidencia; None si sirve."""
-    if rec is None:
+    if not isinstance(rec, dict):
         return "missing_record"
     for k in ("path", "sha256", "ingested_at", "clock_source"):
-        if not rec.get(k):
+        if not rec.get(k) or not isinstance(rec.get(k), str):
             return f"incomplete_record:{k}"
     if rec.get("clock_source") != "system":
         return f"clock:{rec.get('clock_source')}"
-    if _instant(rec.get("ingested_at")) is None:
+    try:
+        if _instant(rec.get("ingested_at")) is None:
+            return "time_unusable"
+    except (TypeError, ValueError):
         return "time_unusable"
     if not _intact(rec):
         return "corrupt"
@@ -320,21 +326,43 @@ def forecast_archive(archive_label: str, week_id: str, expected: dict | None = N
             body = json.loads((RAW / first["path"]).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             body = None
-        fc = (body or {}).get("forecast") or {}
+        fc = (body or {}).get("forecast") if isinstance(body, dict) else None
+        fc = fc if isinstance(fc, dict) else {}
         dl = fc.get("deadline_at")
-        out["deadline_at"][f] = dl
+        out["deadline_at"][f] = dl if isinstance(dl, str) else None
         t, d = _instant(first["ingested_at"]), _instant(dl)
         if body is None or d is None:
             ok = False; out["reasons"].append(f"deadline_or_time_unusable:{f}")
             continue
         if t > d:
             ok = False; out["reasons"].append(f"late:{f}")
+        # contrato de la predicción archivada (R22-01): sólo «selected» con ranking no vacío y sin repetidos, o «abstained»
+        # con ranking vacío, son decisiones válidas; «invalid» o incoherencias no pueden ser predicción
+        status = fc.get("status")
+        ranking = fc.get("ranking") if isinstance(fc.get("ranking"), list) else None
+        ranked = [x.get("security_id") if isinstance(x, dict) else None for x in (ranking or [])]
+        contract_ok = (status == "selected" and ranking and all(isinstance(x, dict) and x.get("security_id") for x in ranking)
+                       and len(set(ranked)) == len(ranked)) or (status == "abstained" and ranking == [])
+        if not contract_ok:
+            ok = False; out["reasons"].append(f"forecast_contract:{f}:{status}")
+        elif status == "selected" and [x.get("rank") for x in ranking] != list(range(1, len(ranking) + 1)):
+            # el orden mostrado es el del array archivado; los campos ``rank`` deben declarar exactamente ese orden (1..n),
+            # de lo contrario la predicción es ambigua y no puede contarse (falla cerrado)
+            ok = False; out["reasons"].append(f"forecast_contract:{f}:rank_order")
+        if "status" in spec and spec.get("status") != status:
+            ok = False; out["reasons"].append(f"status_mismatch:{f}")
         if "picks" in spec:
-            ranked = [x.get("security_id") for x in (fc.get("ranking") or [])] if fc.get("status") != "abstained" else []
             if list(spec.get("picks") or []) != ranked:
                 ok = False; out["reasons"].append(f"picks_mismatch:{f}")
+        if "symbols" in spec and status == "selected":
+            # el símbolo que ve el usuario debe ser el ticker archivado en la predicción (R22-05)
+            tickers = [x.get("ticker_as_of") if isinstance(x, dict) else None for x in (ranking or [])]
+            if list(spec.get("symbols") or []) != tickers:
+                ok = False; out["reasons"].append(f"symbol_mismatch:{f}")
         if "packet_hash" in spec and (body or {}).get("packet_hash") != spec.get("packet_hash"):
             ok = False; out["reasons"].append(f"packet_link_mismatch:{f}")
+        if "cutoff_at" in spec and (_instant(fc.get("cutoff_at")) is None or _instant(fc.get("cutoff_at")) != _instant(spec.get("cutoff_at"))):
+            ok = False; out["reasons"].append(f"cutoff_mismatch:{f}")                 # corte de la predicción archivada (R22-03)
     out["before_deadline"] = ok
     return out
 
@@ -367,26 +395,48 @@ def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
     if why:
         return {"ok": False, "reason": f"packet_{why}"}
     try:
-        body = json.loads((RAW / rec["path"]).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        body = None
-    if not isinstance(body, dict) or not body.get("admitted"):
+        raw = (RAW / rec["path"]).read_bytes()
+    except (OSError, TypeError):
         return {"ok": False, "reason": "packet_unreadable_or_empty"}
-    if packet_hash is not None and body.get("packet_hash") != packet_hash:
-        return {"ok": False, "reason": "packet_hash_mismatch", "mode": body.get("mode")}
+    # el paquete se deserializa con el contrato del laboratorio y su hash lógico se recalcula (R22-02): el campo
+    # packet_hash del archivo no se toma como cierto; cualquier fallo de contrato o tipo cierra la clasificación (R22-04)
+    try:
+        from twlab.packet import packet_from_json
+        pk = packet_from_json(raw)
+        logical = pk.packet_hash()
+    except Exception as exc:  # noqa: BLE001 - un paquete que no cumple el contrato no acredita nada
+        return {"ok": False, "reason": f"packet_contract:{type(exc).__name__}"}
+    try:
+        declared = json.loads(raw).get("packet_hash")
+    except Exception:  # noqa: BLE001
+        declared = None
+    if packet_hash is not None and logical != packet_hash:
+        return {"ok": False, "reason": "packet_hash_mismatch", "mode": pk.mode}
+    if declared != logical or (rec.get("extra") or {}).get("packet_hash") not in (None, logical):
+        return {"ok": False, "reason": "packet_hash_mismatch", "mode": pk.mode}
+    if not pk.admitted:
+        return {"ok": False, "reason": "packet_unreadable_or_empty", "mode": pk.mode}
     cutoff = _instant(cutoff_at)
-    if cutoff is None:
-        return {"ok": False, "reason": "cutoff_unusable", "mode": body.get("mode")}
+    pk_cutoff = pk.cutoff_at.astimezone(timezone.utc) if pk.cutoff_at is not None and pk.cutoff_at.tzinfo else None
+    if cutoff is None or pk_cutoff is None:
+        return {"ok": False, "reason": "cutoff_unusable", "mode": pk.mode}
+    if pk_cutoff != cutoff:
+        return {"ok": False, "reason": "cutoff_mismatch", "mode": pk.mode}   # el corte del paquete archivado manda (R22-03)
     ids: set[str] = set()
-    for d in body.get("admitted", []):
-        if not d.get("capture_id"):
-            return {"ok": False, "reason": "admitted_without_capture", "mode": body.get("mode")}
-        ids.add(d["capture_id"])
-        if d.get("kind") == "capture_manifest":
-            sc = (d.get("payload") or {}).get("session_captures") or {}
-            if not sc:
-                return {"ok": False, "reason": "empty_capture_manifest", "mode": body.get("mode")}
+    for d in pk.admitted:
+        if not d.capture_id:
+            return {"ok": False, "reason": "admitted_without_capture", "mode": pk.mode}
+        ids.add(d.capture_id)
+        if d.kind == "capture_manifest":
+            sc = d.payload.get("session_captures") if isinstance(d.payload, Mapping) else None
+            if not isinstance(sc, Mapping) or not sc or not all(isinstance(v, str) and v for v in sc.values()):
+                return {"ok": False, "reason": "empty_capture_manifest", "mode": pk.mode}
             ids.update(sc.values())
+    # nombres archivados por valor (R22-05): el nombre que ve el usuario debe ser el del paquete, no el del JSON de resultados
+    names: dict[str, str] = {}
+    for d in pk.admitted:
+        if d.kind == "price_bar_series" and d.security_ids and isinstance(d.payload, Mapping) and isinstance(d.payload.get("name"), str):
+            names[d.security_ids[0]] = d.payload["name"]
     late, bad, latest = [], [], None
     for cid in sorted(ids):
         r = _BY_ID.get(cid)
@@ -394,13 +444,40 @@ def _inputs_before_cutoff(packet_capture_id, cutoff_at, packet_hash) -> dict:
         if w:
             bad.append(f"{cid}:{w}"); continue
         t = _instant(r["ingested_at"])
-        if t > cutoff:
+        if t > pk_cutoff:
             late.append(cid)
         if latest is None or t > latest:
             latest = t
     reason = None if not late and not bad else ("late_inputs" if late and not bad else "unverified_inputs")
     return {"ok": reason is None, "captures": len(ids), "late": len(late), "unverified": len(bad),
-            "latest_ingested_at": latest.isoformat() if latest else None, "mode": body.get("mode"), "reason": reason}
+            "latest_ingested_at": latest.isoformat() if latest else None, "mode": pk.mode, "packet_cutoff_at": pk.cutoff_at.isoformat(),
+            "names": names, "reason": reason}
+
+
+def classify_week(archive_label: str, w: dict) -> dict:
+    """Clasificación temporal completa de una semana del JSON de resultados (exportador y ensamblador comparten esta función).
+
+    predicción ⇔ identidad, contrato, plazo, reloj y vínculo de cada predicción (`forecast_archive`) **y** procedencia
+    íntegra del paquete con entradas antes del corte (`inputs_before_cutoff`) **y** nombres mostrados iguales a los del
+    paquete archivado (R22-05). Devuelve `fa`, `inp`, `prospective` y `reasons`."""
+    expected = {f: {"sha": x.get("forecast_sha256"), "picks": [p.get("security_id") for p in x.get("picks") or []],
+                    "symbols": [p.get("symbol") for p in x.get("picks") or []], "status": x.get("forecast_status", x.get("status")),
+                    "packet_hash": w.get("packet_hash"), "cutoff_at": w.get("cutoff_at")} for f, x in (w.get("forecasters") or {}).items()}
+    fa = forecast_archive(archive_label, w["week_id"], expected)
+    reasons = list(fa["reasons"])
+    if not fa["before_deadline"]:
+        return {"fa": fa, "inp": {"ok": None, "reason": "not_checked"}, "prospective": False, "reasons": reasons}
+    inp = inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"], w.get("packet_hash"))
+    if inp.get("reason"):
+        reasons.append(inp["reason"])
+    names_ok = inp.get("ok") is True
+    if names_ok:
+        archived = inp.get("names") or {}
+        for f, x in (w.get("forecasters") or {}).items():
+            for p in x.get("picks") or []:
+                if archived.get(p.get("security_id")) is None or archived.get(p.get("security_id")) != p.get("name"):
+                    names_ok = False; reasons.append(f"name_mismatch:{f}"); break
+    return {"fa": fa, "inp": inp, "prospective": bool(fa["before_deadline"]) and inp.get("ok") is True and names_ok, "reasons": reasons}
 
 
 def export_rounds() -> list[dict]:
@@ -541,22 +618,17 @@ def build() -> dict:
             alabel = sc["archive_label"]
             prospective_weeks = []
             for w in sc["weeks"]:
-                # todos los pronosticadores de la semana, con su lista mostrada y el paquete de la semana (R21-01, R21-02)
-                expected = {f: {"sha": x.get("forecast_sha256"), "picks": [p["security_id"] for p in x.get("picks") or []],
-                                "packet_hash": w.get("packet_hash")} for f, x in w["forecasters"].items()}
-                fa = forecast_archive(alabel, w["week_id"], expected)
+                # clasificación completa (informes 26-28): identidad, contrato, plazo, reloj, vínculo, procedencia y nombres
+                c = classify_week(alabel, w)
+                fa, inp = c["fa"], c["inp"]
                 w["forecast_archived_at"] = fa["archived_at"]
                 w["forecast_deadline_at"] = fa["deadline_at"]
                 w["forecast_before_deadline"] = fa["before_deadline"]
-                w["forecast_reasons"] = fa["reasons"]
-                inp = inputs_before_cutoff(w.get("packet_capture"), w["cutoff_at"], w.get("packet_hash")) if fa["before_deadline"] else {"ok": None, "reason": "not_checked"}
-                w["inputs_before_cutoff"] = inp["ok"]
+                w["forecast_reasons"] = c["reasons"]
+                w["inputs_before_cutoff"] = inp.get("ok")
                 w["inputs_reason"] = inp.get("reason")
                 w["packet_mode"] = inp.get("mode")
-                # predicción del protocolo (P9 revisado): identidad exacta, reloj del sistema, cada pronosticador dentro de su
-                # plazo y todos los datos del paquete recibidos antes del corte; el paquete sigue construido en modo histórico y
-                # sin sello externo, y así se declara
-                w["prospective"] = bool(fa["before_deadline"]) and inp["ok"] is True
+                w["prospective"] = c["prospective"]
                 if w["prospective"]:
                     prospective_weeks.append(w["week_id"])
             sc["prospective_weeks"] = prospective_weeks
@@ -565,7 +637,7 @@ def build() -> dict:
                 w = pending[-1]
                 sc["current_week"] = {"week_id": w["week_id"], "archived_at": w["forecast_archived_at"], "deadline_at": w["forecast_deadline_at"],
                                       "before_deadline": w["forecast_before_deadline"], "inputs_before_cutoff": w["inputs_before_cutoff"],
-                                      "prospective": w["prospective"], "reasons": w["forecast_reasons"] + ([w["inputs_reason"]] if w["inputs_reason"] and w["inputs_reason"] != "not_checked" else []),
+                                      "prospective": w["prospective"], "reasons": w["forecast_reasons"],
                                       "packet_mode": w["packet_mode"]}
             scenarios.append(sc)
     return {

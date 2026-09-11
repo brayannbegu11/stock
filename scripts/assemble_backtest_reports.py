@@ -84,23 +84,21 @@ def temporal_sentence(s, cw) -> str:
     except Exception:  # noqa: BLE001 - sin exportador no se afirma nada
         return "Clasificación temporal no determinada (exportador no disponible)."
     alabel = (s.get("assumptions") or {}).get("archive_label") or s["label"]
-    expected = {f: {"sha": x.get("forecast_sha256"), "picks": [p["security_id"] for p in x.get("picks") or []], "packet_hash": cw.get("packet_hash")}
-                for f, x in cw["forecasters"].items()}
-    fa = ex.forecast_archive(alabel, cw["week_id"], expected)
+    c = ex.classify_week(alabel, cw)
+    fa, inp = c["fa"], c["inp"]
     ruta = f"`forecast/{alabel}/<pronosticador>/{cw['week_id']}` en `data/raw`"
     if not fa["before_deadline"]:
         return (f"Emitida y archivada ({ruta}) **después** del plazo o sin identidad verificable ({', '.join(fa['reasons']) or 'plazo superado'}): "
                 "es una reconstrucción con datos ya conocidos, no una predicción prospectiva.")
-    inp = ex.inputs_before_cutoff(cw.get("packet_capture"), cw["cutoff_at"], cw.get("packet_hash"))
-    if inp.get("ok") is True:
-        return (f"Archivada ({ruta}) antes del plazo declarado por cada predicción, con reloj del sistema, y con todos los datos del "
-                "paquete ingeridos antes del corte: predicción del protocolo según el reloj de esta máquina, sin sello externo y con el "
-                "paquete construido en modo histórico (readmisión verificada pendiente).")
+    if c["prospective"]:
+        return (f"Archivada ({ruta}) antes del plazo declarado por cada predicción, con reloj del sistema, con todos los datos del "
+                "paquete ingeridos antes del corte y con la lista igual a la archivada: predicción del protocolo según el reloj de "
+                "esta máquina, sin sello externo y con el paquete construido en modo histórico (readmisión verificada pendiente).")
     if inp.get("reason") == "late_inputs":
         return (f"Archivada ({ruta}) antes del plazo, pero con datos del paquete recibidos después del corte: "
                 "no cuenta como predicción del protocolo.")
-    return (f"Archivada ({ruta}) antes del plazo, pero la procedencia de las entradas no queda acreditada ({inp.get('reason')}): "
-            "no cuenta como predicción del protocolo.")
+    return (f"Archivada ({ruta}) antes del plazo, pero la procedencia de las entradas no queda acreditada o la identidad de lo "
+            f"mostrado no coincide con el archivo ({', '.join(c['reasons'])}): no cuenta como predicción del protocolo.")
 
 
 def picks_table(cw, note_col):

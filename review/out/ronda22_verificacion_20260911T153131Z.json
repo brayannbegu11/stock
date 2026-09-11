@@ -1,0 +1,248 @@
+{
+  "ronda": "22",
+  "revisor": "GPT-6 Astra",
+  "resumen": "Rechazado: cinco hallazgos nuevos reproducidos, cuatro altos y uno medio. Pasan las 320 pruebas de aceptación y los 77 controles adversariales anteriores adaptados. Las 30 pruebas nuevas producen 15 pases y 15 fallos. El ciclo dominical completo distingue correctamente los cuatro estados en ensamblador y sitio trilingüe, pero admite falsos positivos ante predicciones inválidas, hashes lógicos no verificados, cortes sustituidos y símbolos mostrados distintos de los archivados. Las cabeceras, tablas y métricas de 15/15b/15c coinciden con sus JSON; todas las semanas publicadas siguen siendo reconstrucciones. El test_r20 original produce 33 pases y cinco fallos por las incompatibilidades de arnés descritas en el informe 26. Sólo escribí bajo review/out/astra_scratch/ y no ejecuté comandos prohibidos. Los 130 archivos legibles del manifiesto inicial conservan sus hashes; .pytest_cache/README.md no permitió lectura.",
+  "hallazgos": [
+    {
+      "id": "R21-01/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 544,
+      "afirmacion": "Corregido: un SHA ausente o vacío en Q1 impide clasificar la semana como prospectiva.",
+      "contraejemplo": "Las variantes Q1.forecast_sha256=null y '' ahora devuelven forecast_before_deadline=false.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k partial_missing_forecast_identity --basetemp review/out/astra_scratch/r22_v01",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-02/verificacion",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 333,
+      "afirmacion": "Parcial: compara identificadores y orden, pero no valida el contrato del forecast, los símbolos visibles ni el hash lógico del paquete; véanse R22-01, R22-02 y R22-05.",
+      "contraejemplo": "Cambiar únicamente el orden de picks se rechaza; conservar security_id y mostrar símbolo 9999 con nombre EMPRESA INVENTADA mantiene prospective=true.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k 'forecast_contract or visible_symbol or packet_logical' --basetemp review/out/astra_scratch/r22_v02",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-03/verificacion",
+      "severidad": "alta",
+      "categoria": "datos",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 361,
+      "afirmacion": "Parcial: rechaza fuentes ausentes, corruptas, con reloj inyectado y referencias incompletas; todavía acredita paquetes cuyo contenido contradice su packet_hash.",
+      "contraejemplo": "Archivar íntegramente un paquete con payload={'fabricated':123} y conservar su antiguo packet_hash produce prospective=true, aunque packet_from_json lo rechaza.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k packet_logical_hash --basetemp review/out/astra_scratch/r22_v03",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-04/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 353,
+      "afirmacion": "Corregido: la caché distingue captura, corte y hash.",
+      "contraejemplo": "La misma captura pasa para 07/01/2024 18:00 Taipei y falla para 05/01/2024 18:00 Taipei después de consultar el primer corte.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k inputs_cache_uses_cutoff --basetemp review/out/astra_scratch/r22_v04",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-05/verificacion",
+      "severidad": "media",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 306,
+      "afirmacion": "Corregido: la primera ingestión del forecast se escoge por instante.",
+      "contraejemplo": "La captura injected de 19:00+08:00 precede a la system de 12:00+00:00 y ahora impide before_deadline=true.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k duplicate_sha_first_clock --basetemp review/out/astra_scratch/r22_v05",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-06/verificacion",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 252,
+      "afirmacion": "Corregido para campos ausentes; los tipos incorrectos siguen abortando la exportación, como demuestra R22-04.",
+      "contraejemplo": "Sin path devuelve packet_incomplete_record:path; con path=42 lanza TypeError.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider tests/test_site_export.py -k r21_06 --basetemp review/out/astra_scratch/r22_v06",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-07/verificacion",
+      "severidad": "media",
+      "categoria": "datos",
+      "archivo": "docs/index.html",
+      "linea": 836,
+      "afirmacion": "Corregido: sitio y ensamblador separan datos tardíos de procedencia sin acreditar.",
+      "contraejemplo": "El ciclo dominical con una fuente borrada muestra procedencia sin acreditar; con fuentes ingeridas a las 12:00 UTC del domingo muestra datos tardíos. Pasan los cuatro estados en español, inglés y chino.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k 'sunday_full_chain or site_four_mutations' --basetemp review/out/astra_scratch/r22_v07",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-08/verificacion",
+      "severidad": "baja",
+      "categoria": "datos",
+      "archivo": "README.md",
+      "linea": 49,
+      "afirmacion": "Corregida la referencia a la última ronda; el informe 26 explica las incompatibilidades del arnés antiguo, pero las garantías generales del informe 27 quedan refutadas por los nuevos hallazgos.",
+      "contraejemplo": "README identifica ronda 21/informe 27. test_r20.py produce cinco fallos: excepción envuelta, frontera sin identidad y limits en tres idiomas; su versión adaptada pasa.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r20.py --basetemp review/out/astra_scratch/r22_v08",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R21-09/verificacion",
+      "severidad": "baja",
+      "categoria": "tiempo",
+      "archivo": "scripts/register_daily_quotes_fetch.ps1",
+      "linea": 8,
+      "afirmacion": "Corregido: documentación y script distinguen verano e invierno.",
+      "contraejemplo": "08/11/2026 18:45 Toronto corresponde a 09/11/2026 07:45 Taipei; el texto ya no afirma 06:45 permanentemente.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py -k daily_schedule_timezone_prose",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-01/verificacion",
+      "severidad": "media",
+      "categoria": "unidades",
+      "archivo": "scripts/assemble_backtest_reports.py",
+      "linea": 167,
+      "afirmacion": "Corregido: las narrativas publicadas y generadas usan compras brutas más ventas brutas heredadas.",
+      "contraejemplo": "Las cabeceras completas de 15/15b/15c coinciden con el generador; desaparecen del importe invertido y sobre lo invertido.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21.py review/out/astra_scratch/test_r21_old_adapted.py -k 'published_cost_prose or assembler_cost_prose'",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R19-02/verificacion",
+      "severidad": "media",
+      "categoria": "estadistica",
+      "archivo": "docs/index.html",
+      "linea": 736,
+      "afirmacion": "Corregido: allLose y anyBeat incluyen el escenario de historial largo.",
+      "contraejemplo": "Mutar únicamente longhist a +25 % total y Q0/Q1 a +3 % semanal frente a A1 +1 % elimina la conclusión universal de pérdidas en los tres idiomas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r21_old_adapted.py -k 'all_scenarios_in_universal_loss_claim or profitable_phases or limits_interval'",
+      "prueba_propuesta": null,
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-01",
+      "severidad": "alta",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 333,
+      "afirmacion": "El exportador confunde una lista vacía con una decisión válida y no valida el contrato del forecast: decisiones invalid y rankings inválidos cuentan como predicciones prospectivas.",
+      "contraejemplo": "En W02, con fuentes del 06/01/2024 08:00 UTC y forecasts del 07/01 12:00 UTC, devuelve prospective=true para status=invalid/ranking=[], selected/ranking=[], abstained con ranking no vacío y picks=[], y ranking=[A,A] con picks=[A,A]. También ocurre cuando el propio Runner registra los tres forecasts como invalid después de fallar validate_prediction. La abstención válida con ranking=[] y picks=[] sí pasa correctamente. Un cambio de orden sólo en picks se rechaza; cambiar coherentemente ambos arrays se admite.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k 'forecast_contract or invalid_runner' --basetemp review/out/astra_scratch/r22_repro01",
+      "prueba_propuesta": "from review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r22 import save_forecast, exported\n\ndef test_invalid_no_es_prediccion(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = prev.sunday_fixture(tmp_path, monkeypatch)\n    d['weeks'][-1]['forecasters']['Q0']['picks'] = []\n    save_forecast(raw, d, lambda fc: fc.update(status='invalid', ranking=[], status_reason='fixture'))\n    assert exported(raw, d, tmp_path, monkeypatch)['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-02",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 375,
+      "afirmacion": "Se comprueba el SHA de los bytes archivados, pero se confía en el campo packet_hash sin recalcularlo ni deserializar el contrato. El vínculo predicción-paquete-semana prometido por el informe 27 §2 no queda acreditado.",
+      "contraejemplo": "Paquete W02 con hash declarado f85ab71c18e3c7b8fe7f6f2e9f37818a87070ca48b60eb90bb70972273ffcd5c: cambiar payload a {'fabricated':123}, source_sha256 a 64 ceros, añadir rejected=['X','unknown_availability','availability could not be established'] o quitar packet_id, y archivarlo con su SHA correcto, mantiene prospective=true. packet_from_json rechaza las cuatro variantes. Como control, dos paquetes válidos en datasets distintos que sólo difieren en created_at comparten legítimamente packet_hash y pasan; una captura exclusivamente rechazada tampoco contamina las entradas admitidas.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k 'packet_logical_hash or two_valid_packets' --basetemp review/out/astra_scratch/r22_repro02",
+      "prueba_propuesta": "import json\nimport pytest\nfrom twlab.packet import packet_from_json\nfrom review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r22 import exported\n\ndef test_recalcular_hash_logico(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = prev.sunday_fixture(tmp_path, monkeypatch)\n    w = d['weeks'][-1]\n    body = json.loads(raw.read(raw.get(w['packet_capture'])))\n    body['admitted'][0]['payload'] = {'fabricated': 123}\n    rec = raw.put(source_id='packet', dataset='other/2024-W02', payload=json.dumps(body).encode(), url='fixture')\n    with pytest.raises(ValueError):\n        packet_from_json(raw.read(rec))\n    w['packet_capture'] = rec.capture_id\n    assert exported(raw, d, tmp_path, monkeypatch)['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-03",
+      "severidad": "alta",
+      "categoria": "tiempo",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 377,
+      "afirmacion": "La comprobación temporal usa el cutoff_at del JSON de resultados sin contrastarlo con el corte del paquete y de las predicciones archivadas.",
+      "contraejemplo": "Paquete y forecasts íntegros declaran corte 07/01/2024 18:00 Taipei (10:00 UTC). Fuentes ingeridas a las 12:00 UTC producen late_inputs. Cambiar únicamente weeks[-1].cutoff_at a 2024-01-07T23:00:00+08:00 convierte la misma semana en prospective=true, sin cambiar ningún forecast ni paquete.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k cutoff_must_match --basetemp review/out/astra_scratch/r22_repro03",
+      "prueba_propuesta": "import json\nfrom review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r22 import exported\n\ndef test_corte_vinculado_al_paquete(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = prev.sunday_fixture(tmp_path, monkeypatch)\n    mf = raw.root / 'manifest.jsonl'\n    rows = [json.loads(line) for line in mf.read_text().splitlines()]\n    for row in rows:\n        if row['source_id'] not in ('packet', 'forecast'):\n            row['ingested_at'] = '2024-01-07T12:00:00+00:00'\n    mf.write_text('\\n'.join(map(json.dumps, rows)), encoding='utf8')\n    assert exported(raw, d, tmp_path, monkeypatch)['inputs_reason'] == 'late_inputs'\n    d['weeks'][-1]['cutoff_at'] = '2024-01-07T23:00:00+08:00'\n    assert exported(raw, d, tmp_path, monkeypatch)['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-04",
+      "severidad": "media",
+      "categoria": "contrato",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 257,
+      "afirmacion": "El cierre ante registros incompletos no se extiende a campos con tipos incorrectos: datos malformados abortan la exportación y el ensamblado en lugar de producir procedencia sin acreditar.",
+      "contraejemplo": "En el registro del paquete, path=42 lanza TypeError al construir la ruta e ingested_at=42 lanza TypeError en fromisoformat. Un paquete íntegramente archivado con admitted=['bad'] lanza AttributeError en d.get; session_captures=['bad'] lo lanza en sc.values().",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k malformed_provenance --basetemp review/out/astra_scratch/r22_repro04",
+      "prueba_propuesta": "import json\nfrom review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r22 import exported\n\ndef test_tipo_de_registro_falla_cerrado(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = prev.sunday_fixture(tmp_path, monkeypatch)\n    mf = raw.root / 'manifest.jsonl'\n    rows = [json.loads(line) for line in mf.read_text().splitlines()]\n    for row in rows:\n        if row['capture_id'] == d['weeks'][-1]['packet_capture']:\n            row['path'] = 42\n    mf.write_text('\\n'.join(map(json.dumps, rows)), encoding='utf8')\n    assert exported(raw, d, tmp_path, monkeypatch)['prospective'] is False",
+      "estado_verificacion": "reproducido"
+    },
+    {
+      "id": "R22-05",
+      "severidad": "alta",
+      "categoria": "identidad",
+      "archivo": "scripts/export_site_data.py",
+      "linea": 58,
+      "afirmacion": "La identidad comprobada no protege la identidad que ve el usuario: symbol y name se copian de picks sin contrastarlos con el forecast archivado o el maestro correspondiente.",
+      "contraejemplo": "Conservo security_id=TWSE:A@2000-01-01, SHA y captura de un forecast cuyo ticker_as_of='A'. Cambio únicamente el pick a symbol='9999', name='EMPRESA INVENTADA'. build devuelve prospective=true y weekSection muestra 9999 y EMPRESA INVENTADA bajo la etiqueta Predicción en español, inglés y chino.",
+      "comando_reproduccion": "python -B -m pytest -q -p no:cacheprovider review/out/astra_scratch/test_r22.py -k visible_symbol --basetemp review/out/astra_scratch/r22_repro05",
+      "prueba_propuesta": "from review.out.astra_scratch import test_r21 as prev\nfrom review.out.astra_scratch.test_r22 import exported\n\ndef test_simbolo_visible_corresponde_al_archivo(tmp_path, monkeypatch):\n    raw, _, _, _, d, _ = prev.sunday_fixture(tmp_path, monkeypatch)\n    d['weeks'][-1]['forecasters']['Q0']['picks'][0].update(symbol='9999', name='EMPRESA INVENTADA')\n    w = exported(raw, d, tmp_path, monkeypatch)\n    assert not w['prospective'] or w['forecasters']['Q0']['picks'][0]['symbol'] == 'A'",
+      "estado_verificacion": "reproducido"
+    }
+  ],
+  "preguntas_al_constructor": [],
+  "cambios_del_plan_evaluados": [
+    {
+      "id": "P1",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "La reutilización del Runner comprueba integridad y hash lógico, incluidos rejected. Mantener explícitamente pendiente la readmisión multicaptura y extender esa validación al exportador: R22-02 demuestra que actualmente no la realiza."
+    },
+    {
+      "id": "P2",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "W37 permanece como reconstrucción. El ciclo dominical completo funciona con fuentes tempranas, tardías, ausentes y forecasts tardíos, pero el 13/09 sigue siendo una fecha candidata; corregir los falsos positivos antes de atribuir clasificación prospectiva."
+    },
+    {
+      "id": "P3",
+      "posicion": "acepto",
+      "argumento": "Pasan las pruebas del libro, lotes y comisiones, incluida la conservación de posiciones bloqueadas hasta el cierre efectivo siguiente."
+    },
+    {
+      "id": "P4",
+      "posicion": "acepto",
+      "argumento": "Las condiciones de valoración final se conservan y los patrimonios publicados coinciden con los JSON."
+    },
+    {
+      "id": "P5",
+      "posicion": "acepto",
+      "argumento": "Pasan los controles de inmutabilidad del mercado y los hashes de configuración Q1 para mínimos de entrenamiento 40/40/52."
+    },
+    {
+      "id": "P6",
+      "posicion": "acepto_con_condiciones",
+      "argumento": "Se cierran las parciales R19-01/R19-02 y se reproducen las cabeceras completas, tablas, selecciones y medias publicadas. Corregir las garantías de clasificación del informe 27 y README conforme a R22-01/R22-02/R22-03/R22-05."
+    },
+    {
+      "id": "P7",
+      "posicion": "acepto",
+      "argumento": "La aproximación con precios regulares sigue declarada; dimensionado, denominadores y estados de entrada pasan, incluido el ensamblado dominical pendiente."
+    },
+    {
+      "id": "P8",
+      "posicion": "acepto",
+      "argumento": "Los controles de identificadores y verificaciones posteriores pasan. El recuento continúa representando verificaciones registradas, incluidas parciales, sin equivaler a cierres completos."
+    },
+    {
+      "id": "P9",
+      "posicion": "rechazo",
+      "argumento": "La reformulación del informe 26 §2, respaldada supuestamente por el informe 27 §2, sigue sin cumplirse: se aceptan forecasts inválidos, paquetes cuyo hash lógico no corresponde al contenido, cortes distintos del archivado y símbolos visibles distintos de la predicción. Declarar reloj local, modo histórico y ausencia de sello externo no subsana esos falsos positivos."
+    }
+  ],
+  "veredicto": "rechazado"
+}
