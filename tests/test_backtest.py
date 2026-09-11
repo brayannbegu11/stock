@@ -1020,3 +1020,143 @@ def test_r27_06_market_without_a_security_master_is_contained(tmp_path, value):
     r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
     r.run_week(list(_sundays(cfg.start, cfg.end))[0])
     assert r.weeks[-1]["status"] == "invalid:archive" and "security master unavailable" in r.weeks[-1]["archive_error"]
+
+
+def test_r28_02_consecutive_failed_weeks_settle_rights_and_reach_the_close(tmp_path):
+    """Dos semanas fallidas seguidas: el reloj de cada libro llega al cierre de cada semana aunque no queden cestas."""
+    from twlab.backtest import load_market, _sundays
+    from twlab.weekly import plan_week
+    from twlab.timeutil import taipei
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 2, 26), end=date(2024, 3, 22), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    sundays = list(_sundays(cfg.start, cfg.end))
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    r.run_week(sundays[0])
+    original = store.find
+    def fail(**kwargs):
+        if kwargs["source_id"] == "packet":
+            raise OSError("injected disk read failure")
+        return original(**kwargs)
+    store.find = fail
+    for sunday in sundays[1:3]:
+        r.run_week(sunday)
+        plan = plan_week(taipei(sunday, time(18, 0)), CAL)
+        w = r.weeks[-1]
+        assert w["status"] == "invalid:archive"
+        for name, lg in r.ledgers.items():
+            assert lg._last_at == plan.exit_at, (name, lg._last_at, plan.exit_at)    # reloj del libro en el cierre (R28-02)
+            assert w["forecasters"][name]["equity_end"] is not None
+    store.find = original
+
+
+@pytest.mark.parametrize("case", ["manifest_not_utf8", "forecaster_returns_none", "forecaster_raises", "calendar_none", "by_session_none", "master_rows_none"])
+def test_r28_04_malformed_structures_do_not_escape_run_week(tmp_path, case):
+    from twlab.backtest import load_market, _sundays
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    if case == "manifest_not_utf8":
+        (store.root / "manifest.jsonl").write_bytes(bytes.fromhex("ff"))
+    elif case == "forecaster_returns_none":
+        r.make_forecast = lambda *a, **k: None
+    elif case == "forecaster_raises":
+        def boom(*a, **k):
+            raise RuntimeError("forecaster exploded")
+        r.forecasters["Q0"].forecast = boom
+    elif case == "calendar_none":
+        market.calendar = None
+    elif case == "by_session_none":
+        market.by_session = None
+    else:
+        market.master._versions.append(None)
+    r.run_week(list(_sundays(cfg.start, cfg.end))[0])
+    w = r.weeks[-1]
+    if case in ("forecaster_returns_none", "forecaster_raises"):
+        assert w["status"] == "valid"
+        bad = [n for n, x in w["forecasters"].items() if x["forecast_status"] == "invalid"]
+        assert bad and all("forecast_error:" in w["forecasters"][n]["status_reason"] for n in bad)
+        assert all(x["forecast_sha256"] for x in w["forecasters"].values())        # la predicción inválida también se archiva
+    else:
+        assert w["status"] == "invalid:archive", (case, w.get("archive_error"))
+
+
+def test_r28_05_an_evaluation_failure_is_not_an_archive_failure(tmp_path):
+    """Un error al valorar (fuera de la emisión) se propaga tal cual: la semana no se marca invalid:archive ni se retrocede el libro."""
+    from twlab.backtest import load_market, _sundays
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    r = Runner(store, market, cfg, [MomentumForecaster(), RandomForecaster(1)])
+    original = r.marks
+    def fail(session, ledger, kind, **kwargs):
+        if ledger is r.ledgers["A1"]:
+            raise OSError("market mark unavailable for A1")
+        return original(session, ledger, kind, **kwargs)
+    r.marks = fail
+    with pytest.raises(OSError):
+        r.run_week(list(_sundays(cfg.start, cfg.end))[0])
+    assert r.weeks[-1]["status"] == "valid" and "archive_error" not in r.weeks[-1]
+
+
+def test_r28_07_a_historical_failure_is_not_the_current_week(tmp_path, monkeypatch):
+    import importlib.util
+    store, market, res, target = _run_with_failure(tmp_path, failure="packet", fail_last=False, start=date(2024, 2, 5), end=date(2024, 3, 15))
+    assert res["weeks"][0]["status"] == "invalid:archive" and res["weeks"][-1]["status"] == "valid"
+    spec = importlib.util.spec_from_file_location("assemble_backtest_reports", _ROOT / "scripts" / "assemble_backtest_reports.py")
+    asm = importlib.util.module_from_spec(spec); spec.loader.exec_module(asm)
+    assert asm.current_week(res["weeks"])["week_id"] == res["weeks"][-1]["week_id"]
+    spec = importlib.util.spec_from_file_location("export_site_data", _ROOT / "scripts" / "export_site_data.py")
+    ex = importlib.util.module_from_spec(spec); spec.loader.exec_module(ex)
+    monkeypatch.setattr(ex, "RAW", store.root); monkeypatch.setattr(ex, "STORE", tmp_path)
+    monkeypatch.setattr(ex, "SCENARIOS", [("standard", "a", "fixture.md")])
+    for name, value in [("export_rounds", []), ("export_docs", []), ("count_tests", 0), ("raw_coverage", {}), ("master_stats", {})]:
+        monkeypatch.setattr(ex, name, lambda v=value: v)
+    (tmp_path / "backtest_a.json").write_text(json.dumps(res, default=str), encoding="utf-8")
+    sc = ex.build()["scenarios"][0]
+    assert sc["current_week"]["week_id"] == res["weeks"][-1]["week_id"] != target          # la última semana, no el fallo histórico
+    for name in ("header_15", "header_15b", "header_15c"):
+        text = getattr(asm, name)(res) if name == "header_15" else getattr(asm, name)(res, res)
+        assert "injected disk read failure" in text and target in text, name          # la causa histórica se conserva (R28-08)
+
+
+def test_r28_08_markdown_report_and_site_table_keep_every_failure_cause(tmp_path, monkeypatch):
+    import shutil, subprocess, importlib.util
+    from twlab.backtest import markdown_report
+    store, market, res, target = _run_with_failure(tmp_path, failure="packet", fail_last=False, start=date(2024, 2, 5), end=date(2024, 3, 15))
+    assert "injected disk read failure" in markdown_report(res, title="t")
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node no disponible")
+    spec = importlib.util.spec_from_file_location("export_site_data", _ROOT / "scripts" / "export_site_data.py")
+    ex = importlib.util.module_from_spec(spec); spec.loader.exec_module(ex)
+    monkeypatch.setattr(ex, "RAW", store.root); monkeypatch.setattr(ex, "STORE", tmp_path)
+    monkeypatch.setattr(ex, "SCENARIOS", [("standard", "a", "fixture.md")])
+    for name, value in [("export_rounds", []), ("export_docs", []), ("count_tests", 0), ("raw_coverage", {}), ("master_stats", {})]:
+        monkeypatch.setattr(ex, name, lambda v=value: v)
+    (tmp_path / "backtest_a.json").write_text(json.dumps(res, default=str), encoding="utf-8")
+    site = tmp_path / "site.json"; site.write_text(json.dumps(ex.build()), encoding="utf-8")
+    r = subprocess.run([node, str(_ROOT / "tests" / "site_render.cjs"), str(site)], capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+    assert r.returncode == 0, r.stderr[-800:]
+    for lang, out in json.loads(r.stdout).items():
+        assert "injected disk read failure" in out["table"], lang
+
+
+def test_r28_09_header_15_survives_a_first_failed_week_without_statistics(tmp_path):
+    import importlib.util
+    from twlab.backtest import load_market
+    store, path = make_market(tmp_path)
+    market = load_market(store, path, CAL)
+    cfg = BacktestConfig(start=date(2024, 3, 4), end=date(2024, 3, 15), label="a", archive_label="lab", notional=1_000_000, slots=5)
+    def fail(**kwargs):
+        raise OSError("FIRST-WEEK-ARCHIVE-FAIL")
+    store.find = fail
+    q1 = MomentumForecaster(); q1.name = "Q1"
+    res = Runner(store, market, cfg, [MomentumForecaster(), q1, RandomForecaster(1)]).run()
+    assert res["summary"]["weeks_operated"] == 0
+    spec = importlib.util.spec_from_file_location("assemble_backtest_reports", _ROOT / "scripts" / "assemble_backtest_reports.py")
+    asm = importlib.util.module_from_spec(spec); spec.loader.exec_module(asm)
+    for name in ("header_15", "header_15b", "header_15c"):
+        text = getattr(asm, name)(res) if name == "header_15" else getattr(asm, name)(res, res)
+        assert "FIRST-WEEK-ARCHIVE-FAIL" in text, name

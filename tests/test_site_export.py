@@ -217,7 +217,8 @@ def test_r20_02_boundary_equal_instant_counts_as_on_time(tmp_path, monkeypatch):
     sha = hashlib.sha256(body).hexdigest()
     (tmp_path / "f.json").write_bytes(body)
     for at, expected in (("2026-09-14T00:30:00+00:00", True), ("2026-09-14T00:30:01+00:00", False)):
-        rec = {"source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": at, "path": "f.json", "sha256": sha, "clock_source": "system"}
+        rec = {"capture_id": "c1", "source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": at, "path": "f.json", "sha256": sha,
+               "clock_source": "system", "url": "u", "bytes": len(body)}                     # registro completo según el contrato tipado (R28-06)
         (tmp_path / "manifest.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
         ex._MANIFEST = None
         assert ex.forecast_archive("lab", "2026-W38", {"Q0": sha})["before_deadline"] is expected
@@ -298,8 +299,8 @@ def test_r21_05_first_ingestion_is_chosen_by_instant_across_offsets(tmp_path, mo
     import hashlib
     body = json.dumps({"forecast": {"deadline_at": "2026-09-14T08:30:00+08:00"}}).encode(); sha = hashlib.sha256(body).hexdigest()
     (tmp_path / "f.json").write_bytes(body)
-    recs = [{"source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": "2026-09-13T19:00:00+08:00", "path": "f.json", "sha256": sha, "clock_source": "injected"},
-            {"source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": "2026-09-13T12:00:00+00:00", "path": "f.json", "sha256": sha, "clock_source": "system"}]
+    recs = [{"capture_id": "c1", "source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": "2026-09-13T19:00:00+08:00", "path": "f.json", "sha256": sha, "clock_source": "injected", "url": "u", "bytes": 1},
+            {"capture_id": "c2", "source_id": "forecast", "dataset": "lab/Q0/2026-W38", "ingested_at": "2026-09-13T12:00:00+00:00", "path": "f.json", "sha256": sha, "clock_source": "system", "url": "u", "bytes": 1}]
     (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
     fa = ex.forecast_archive("lab", "2026-W38", {"Q0": sha})
     assert fa["before_deadline"] is False and any(r.startswith("clock:injected") for r in fa["reasons"])   # 19:00+08 = 11:00 UTC es la primera
@@ -953,3 +954,67 @@ def test_r27_04_evidence_outside_the_archive_is_not_evidence(tmp_path, monkeypat
     _rewrite_manifest(ex, tmp_path, rows)
     c = ex.classify_week("lab", week)
     assert c["prospective"] is False, (target, how, c["reasons"])
+
+
+def test_r28_01_a_nested_classification_keeps_the_outer_generation(tmp_path, monkeypatch):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    src, fid = pk.admitted[0].capture_id, fc["Q0"].capture_id
+    def write(rows):
+        (tmp_path / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    rows = _manifest_rows(tmp_path)
+    for r in rows:
+        if r["capture_id"] == src:
+            r["clock_source"] = "injected"
+    write(rows)
+    assert ex.classify_week("lab", week)["prospective"] is False
+    original = ex.forecast_archive
+    def interleave(*a, **k):
+        res = original(*a, **k)
+        ex.classify_week("lab", {"status": "invalid:archive"})              # clasificación anidada
+        assert ex._PIN is not None
+        rows = _manifest_rows(tmp_path)
+        for r in rows:
+            if r["capture_id"] == src:
+                r["clock_source"] = "system"
+            if r["capture_id"] == fid:
+                r["clock_source"] = "injected"
+        write(rows)
+        return res
+    monkeypatch.setattr(ex, "forecast_archive", interleave)
+    mixed = ex.classify_week("lab", week)
+    monkeypatch.setattr(ex, "forecast_archive", original)
+    assert mixed["prospective"] is False and "unverified_inputs" in mixed["reasons"], mixed["reasons"]
+    assert ex._PIN is None and ex.classify_week("lab", week)["prospective"] is False
+
+
+@pytest.mark.parametrize("case", ["week_none", "week_list", "index_is_a_directory"])
+def test_r28_03_the_initial_read_and_the_week_shape_are_contained(tmp_path, monkeypatch, case):
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    if case == "week_none":
+        c = ex.classify_week("lab", None)
+    elif case == "week_list":
+        c = ex.classify_week("lab", [])
+    else:
+        mf = tmp_path / "manifest.jsonl"
+        mf.unlink(); mf.mkdir()
+        ex._MANIFEST = None
+        c = ex.classify_week("lab", week)
+    assert c["prospective"] is False and any(r.startswith("classification_error:") for r in c["reasons"]), c
+    assert ex._PIN is None
+
+
+@pytest.mark.parametrize("target", ["master", "forecast", "packet", "source"])
+@pytest.mark.parametrize("field,value", [("bytes", []), ("url", []), ("http_status", [])])
+def test_r28_06_the_exporter_applies_the_store_record_contract(tmp_path, monkeypatch, target, field, value):
+    from twlab.store import ManifestCorrupt
+    ex, store, pkt, pk, fc, week = _real_week_fixture(tmp_path, monkeypatch)
+    cid = {"master": week["master_capture"], "forecast": fc["Q0"].capture_id, "packet": pkt.capture_id, "source": pk.admitted[0].capture_id}[target]
+    rows = _manifest_rows(tmp_path)
+    for r in rows:
+        if r["capture_id"] == cid:
+            r[field] = value
+    _rewrite_manifest(ex, tmp_path, rows)
+    with pytest.raises(ManifestCorrupt):
+        store.get(cid)
+    c = ex.classify_week("lab", week)
+    assert c["prospective"] is False, (target, field, c["reasons"])

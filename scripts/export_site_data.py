@@ -280,10 +280,21 @@ def _instant(s: str | None) -> datetime | None:
     return d.astimezone(timezone.utc) if d else None
 
 
+def _typed_record(rec) -> bool:
+    """El registro cumple el contrato tipado del almacén (`CaptureRecord`): lo que `RawStore` rechaza como corrupto
+    tampoco es evidencia para el exportador (R28-06)."""
+    try:
+        from twlab.store import CaptureRecord
+        CaptureRecord.from_manifest_line(dict(rec))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _intact_evidence(rec: dict | None) -> bool:
     """Registro completo, con hora utilizable y bytes íntegros, **sin** mirar el reloj: es lo que decide cuál es la
     primera copia íntegra; el reloj de esa copia se juzga después (R21-05, R26-04)."""
-    if not isinstance(rec, dict):
+    if not isinstance(rec, dict) or not _typed_record(rec):
         return False
     for k in ("path", "sha256", "ingested_at", "clock_source"):
         if not rec.get(k) or not isinstance(rec.get(k), str):
@@ -303,6 +314,8 @@ def _record_ok(rec: dict | None) -> str | None:
     for k in ("path", "sha256", "ingested_at", "clock_source"):
         if not rec.get(k) or not isinstance(rec.get(k), str):
             return f"incomplete_record:{k}"
+    if not _typed_record(rec):
+        return "malformed_record"
     if rec.get("clock_source") != "system":
         return f"clock:{rec.get('clock_source')}"
     try:
@@ -651,12 +664,25 @@ def classify_week(archive_label: str, w: dict) -> dict:
     R23-01). Cualquier excepción durante la clasificación cierra la semana como no acreditada (R23-02).
     Devuelve `fa`, `inp`, `master`, `prospective` y `reasons`."""
     global _PIN
-    recs = manifest()
-    _PIN = (recs, _BY_ID)                        # una sola generación del índice para toda la clasificación (R27-02)
+    if not isinstance(w, dict):
+        return _closed_week("classification_error:TypeError")
+    outer = _PIN
     try:
-        return _classify_week(archive_label, w)
+        if outer is None:
+            try:
+                recs = manifest()
+            except Exception as exc:  # noqa: BLE001 - índice ilegible: nada se acredita (R28-03)
+                return _closed_week(f"classification_error:{type(exc).__name__}")
+            _PIN = (recs, _BY_ID)                # una sola generación del índice para toda la clasificación (R27-02)
+        return _classify_week(archive_label, w)  # una clasificación anidada hereda la generación exterior (R28-01)
     finally:
-        _PIN = None
+        _PIN = outer
+
+
+def _closed_week(why: str) -> dict:
+    fa = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": False,
+          "reasons": [why], "ranking": {}, "master_sha256": {}}
+    return {"fa": fa, "inp": {"ok": None, "reason": "not_checked"}, "master": {"ok": None, "reasons": []}, "prospective": False, "reasons": [why]}
 
 
 def _stage(fn, fallback):
@@ -671,10 +697,7 @@ def _classify_week(archive_label: str, w: dict) -> dict:
     not_checked = {"ok": None, "reason": "not_checked"}
     if w.get("status") == "invalid:archive":
         # semana no emitida: no hay lista completa que clasificar, aunque haya predicciones archivadas antes del fallo
-        why = "invalid:archive"
-        fa = {"archived_at": {}, "archived_at_latest": {}, "deadline_at": {}, "clock_source": {}, "before_deadline": False,
-              "reasons": [why], "ranking": {}, "master_sha256": {}}
-        return {"fa": fa, "inp": dict(not_checked), "master": {"ok": None, "reasons": []}, "prospective": False, "reasons": [why]}
+        return _closed_week("invalid:archive")
     fa = _stage(lambda: forecast_archive(archive_label, w["week_id"], {
         f: {"sha": x.get("forecast_sha256"), "picks": [p.get("security_id") for p in x.get("picks") or []],
             "symbols": [p.get("symbol") for p in x.get("picks") or []], "status": x.get("forecast_status", x.get("status")),
@@ -879,9 +902,12 @@ def build() -> dict:
                 if w["prospective"]:
                     prospective_weeks.append(w["week_id"])
             sc["prospective_weeks"] = prospective_weeks
-            pending = [w for w in sc["weeks"] if w["pending_outcome"] or w["status"] == "invalid:archive"]
+            # la semana en curso: la última si está pendiente de desenlace o no se emitió; si no, la última pendiente.
+            # Un fallo histórico seguido de semanas válidas no es la semana en curso (R27-08, R28-07)
+            last = sc["weeks"][-1] if sc["weeks"] else None
+            pending = [last] if last and (last["pending_outcome"] or last["status"] == "invalid:archive") else ([w for w in sc["weeks"] if w["pending_outcome"]] or ([last] if last else []))
             if pending:
-                w = pending[-1]                  # la semana en curso: pendiente de desenlace o no emitida por fallo del archivo (R27-08)
+                w = pending[-1]                  # siempre la última semana de la corrida cuando nada queda pendiente
                 sc["current_week"] = {"week_id": w["week_id"], "archived_at": w["forecast_archived_at"], "deadline_at": w["forecast_deadline_at"],
                                       "before_deadline": w["forecast_before_deadline"], "inputs_before_cutoff": w["inputs_before_cutoff"],
                                       "prospective": w["prospective"], "reasons": w["forecast_reasons"],

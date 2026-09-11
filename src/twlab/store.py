@@ -117,6 +117,7 @@ def _validate_record_fields(data: dict) -> None:
     b = data.get("bytes")
     if not isinstance(b, int) or isinstance(b, bool) or b < 0:
         raise ValueError("record field 'bytes' must be a non-negative integer")
+    data.setdefault("http_status", None); data.setdefault("content_type", None); data.setdefault("receipt", None)   # opcionales
     hs = data.get("http_status")
     if hs is not None and (not isinstance(hs, int) or isinstance(hs, bool)):
         raise ValueError("record field 'http_status' must be an integer or null")
@@ -231,7 +232,11 @@ class RawStore:
         if not p.exists():
             return []
         latest: dict[str, CaptureRecord] = {}
-        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:                  # bytes que no son texto, o un directorio (R28-04)
+            raise ManifestCorrupt(f"{p.name}: unreadable index: {exc}") from exc
+        for n, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
                 continue
             try:

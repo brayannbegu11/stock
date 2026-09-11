@@ -82,9 +82,22 @@ def avg_eligible(weeks) -> int:
 
 
 def current_week(weeks):
-    """La semana en curso del informe: la última pendiente de desenlace o no emitida por fallo del archivo (R27-07)."""
-    cands = [w for w in weeks if w.get("pending_outcome") or w.get("status") == "invalid:archive"]
-    return cands[-1] if cands else weeks[-1]
+    """La semana en curso del informe: la última si está pendiente o no se emitió; si no, la última pendiente; si no,
+    la última (R27-07, R28-07). Un fallo histórico seguido de semanas válidas no es la semana en curso."""
+    last = weeks[-1]
+    if last.get("pending_outcome") or last.get("status") == "invalid:archive":
+        return last
+    cands = [w for w in weeks if w.get("pending_outcome")]
+    return cands[-1] if cands else last
+
+
+def failed_weeks_note(weeks) -> str:
+    """Una línea por semana no emitida, con su causa concreta (R28-08)."""
+    failed = [w for w in weeks if w.get("status") == "invalid:archive"]
+    if not failed:
+        return ""
+    items = "; ".join(f"{w['week_id']} ({w.get('archive_error') or 'fallo del archivo'})" for w in failed)
+    return f"\n\nSemanas **no emitidas** por fallo del archivo (`invalid:archive`), con su causa: {items}. Sus cestas heredadas se gestionaron; no cuentan como operadas.\n"
 
 
 def temporal_sentence(s, cw) -> str:
@@ -161,14 +174,19 @@ def header_15(d):
     initial = a["notional"] * a["slots"]
     operated_ids = [w["week_id"] for w in weeks if not w.get("pending_outcome") and w["week_id"] not in s.get("weeks_extraordinary_closure_unhandled", [])]
     closures = ", ".join(s.get("weeks_extraordinary_closure_unhandled", [])) or "ninguna"
-    diff_a1_q1 = F["A1"]["mean_weekly_net_return_open_close"] - F["Q1"]["mean_weekly_net_return_open_close"]
-    net = {f: F[f]["mean_weekly_net_return_open_close"] for f in FC}
-    ew_gross = s["universe_ew"]["mean_weekly_gross_open_close"]
-    if net["Q0"] < net["A1"] and net["Q1"] < net["A1"]:
+    net = {f: F[f].get("mean_weekly_net_return_open_close") for f in FC}
+    ew_gross = (s.get("universe_ew") or {}).get("mean_weekly_gross_open_close")
+    mature = all(isinstance(v, (int, float)) for v in net.values()) and isinstance(ew_gross, (int, float))   # sin semanas operadas no hay medias (R28-09)
+    diff_a1_q1 = (net["A1"] - net["Q1"]) if mature else None
+    if not mature:
+        lectura = "todavía no hay semanas operadas, así que no hay medias que leer"
+    elif net["Q0"] < net["A1"] and net["Q1"] < net["A1"]:
         lectura = "las dos reglas de precios lo hicieron peor que el azar" + (", y el azar peor que el mercado" if net["A1"] < ew_gross else "")
     else:
         lectura = "ninguna regla de precios se separa del azar de forma que pueda leerse sin intervalo"
-    comp_costes = "es mayor que" if abs(diff_a1_q1) > F["Q1"]["mean_costs_over_invested"] else "no supera"
+    q1_costs = F["Q1"].get("mean_costs_over_invested")
+    comp_costes = ("es mayor que" if abs(diff_a1_q1) > (q1_costs or 0) else "no supera") if mature else "no puede compararse aún con"
+    first_id, last_id = (operated_ids[0], operated_ids[-1]) if operated_ids else ("—", "—")
     return f"""# Backtest del universo completo, {periodo(s)} (Q0, Q1, A1; sin dividendos)
 
 **Qué es:** el primer recorrido del protocolo sobre **todas** las acciones ordinarias del tablero principal de TWSE y TPEx ({twd(s['universe_size'])} valores del maestro, informe 10), con las cotizaciones oficiales diarias por fecha (`twlab/sources/twse_daily.py`: TWSE `MI_INDEX`, TPEx `dailyQuotes`, capturadas el 9 y 10 de septiembre de 2026 para las sesiones desde julio de 2024; Astra comprobó que 15.538 pares TWSE–FinMind de 2025 coinciden exactamente). Periodo: cortes dominicales entre {s['period'][0]} y {s['period'][1]} ({s['weeks_total']} semanas: {operated} operadas y la semana en curso, pendiente de desenlace). La corrida no usa ningún LLM; es una reconstrucción histórica con datos archivados después de los cortes, **no** evidencia prospectiva (véase la lista de la semana más abajo). Etiqueta: `{s['label']}`; cifras tomadas de `data/store/backtest_{s['label']}.json`, generado con el código corregido en la ronda 17 (dimensionado exacto con comisión, estados de entrada de la semana pendiente).
@@ -177,9 +195,9 @@ def header_15(d):
 
 **Qué NO demuestra:** rentabilidad. {operated} semanas no bastan; la fuente no trae dividendos (mayo-septiembre es la temporada de reparto en Taiwán: los retornos, las etiquetas de Q1 y las comparaciones están **sesgados a la baja**; el control 100→90 con dividendo de 10 rinde 0 % con derechos y −10 % sin ellos); el universo es el censo vigente (supervivencia); los costes son ilustrativos; y el exceso emparejado es **degenerado** cuando quedan pocas semanas emparejables (las entradas fallidas de Q0 y Q1 dejan exposiciones muy distintas de las de A1): en ese caso no hay intervalo de confianza que publicar.
 
-## Resultado en una tabla ({operated} semanas operadas, {operated_ids[0]} a {operated_ids[-1]})
+## Resultado en una tabla ({operated} semanas operadas, {first_id} a {last_id})
 
-{common_table(s, a, initial)}
+{common_table(s, a, initial)}{failed_weeks_note(weeks)}
 
 Lectura correcta: en un mercado que subió ({pct(s['universe_ew']['mean_weekly_gross_open_close'])} semanal el universo elegible, bruto), {lectura}. La diferencia media neta A1−Q1 ({pct(diff_a1_q1)} por semana) {comp_costes} el coste medio ({pct(F['Q1']['mean_costs_over_invested'], 2, False)} sobre compras brutas más ventas brutas heredadas); con {operated} semanas, sin dividendos y sin intervalo, la diferencia no puede atribuirse a la señal. Lo que sí es un hecho operativo:
 
@@ -234,7 +252,7 @@ def header_15b(d, d_std):
 
 ## Resultado en una tabla ({operated} semanas operadas)
 
-{common_table(s, a, initial)}
+{common_table(s, a, initial)}{failed_weeks_note(weeks)}
 
 Lectura: el orden entre pronosticadores y el signo de las medias se leen en la tabla; ninguna diferencia es estadísticamente distinguible de cero con {operated} semanas. Con {twd(a['notional'])} TWD por puesto, la comisión mínima de {int(float(a.get('min_commission_twd', 20)))} TWD equivale al {pct(float(a.get('min_commission_twd', 20)) / a['notional'], 2, False)} del nocional por lado, por encima del {pct(float(a['commission_per_side']), 4, False)} nominal siempre que el importe de la orden baje de {twd(float(a.get('min_commission_twd', 20)) / float(a['commission_per_side']))} TWD.
 
@@ -279,7 +297,7 @@ def header_15c(d, d_std):
 
 ## Resultado en una tabla ({operated} semanas operadas)
 
-{common_table(s, a, initial)}
+{common_table(s, a, initial)}{failed_weeks_note(weeks)}
 
 ## Lista de la semana en curso ({cw['week_id']}, corte {cw['cutoff_at'][:10]} 18:00 Taipei)
 

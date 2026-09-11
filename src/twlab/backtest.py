@@ -798,6 +798,14 @@ class Runner:
     def run_week(self, sunday: date) -> None:
         cfg = self.cfg
         cutoff = taipei(sunday, time(18, 0))
+        try:
+            self._check_market()                                        # antes de planificar: sin calendario no hay plan (R28-04)
+        except ManifestInconsistent as exc:
+            iso = (sunday + timedelta(days=1)).isocalendar()
+            self.weeks.append({"week_id": f"{iso[0]}-W{iso[1]:02d}", "cutoff_at": cutoff.isoformat(), "status": "invalid:archive",
+                               "forecasters": {}, "pending_outcome": False, "archive_error": f"{type(exc).__name__}: {exc}"[:300],
+                               "note": f"invalid:archive ({type(exc).__name__}): mercado inutilizable; semana no planificada"})
+            return
         plan = plan_week(cutoff, self.market.calendar)
         record: dict = {"week_id": plan.week_id, "cutoff_at": cutoff.isoformat(), "status": plan.status, "forecasters": {}}
         self.weeks.append(record)
@@ -823,7 +831,7 @@ class Runner:
             record["note"] = "invalid:no_sessions (registrado, sin operaciones; eventos procesados hasta el límite)"
             return
         try:
-            self._emit_week(plan, record, bound)
+            emitted = self._emit_week(plan, record, bound)
         except ARCHIVE_ERRORS as exc:
             # el archivo no permite emitir con garantías: la semana queda registrada como fallida (con la traza de lo
             # que llegó a archivarse antes del fallo), sin evaluación, y la corrida continúa con la siguiente (R26-03);
@@ -833,6 +841,21 @@ class Runner:
             record["note"] = f"invalid:archive ({type(exc).__name__}): semana no emitida ni evaluada; posiciones heredadas gestionadas"
             self._carry_inherited(plan, record, bound)
             return
+        # la evaluación queda fuera de la contención: un fallo en ella no es del archivo y no debe intentar
+        # retroceder libros ya operados (R28-05); se propaga tal cual
+        self._evaluate_week(plan, record, bound, *emitted)
+
+    def _check_market(self) -> None:
+        """El mercado en memoria debe tener la forma que la emisión presupone; si no, no se emite nada (R28-04)."""
+        m = self.market
+        if not isinstance(m.master, SecurityMaster):
+            raise ManifestInconsistent("security master unavailable: the market does not carry a SecurityMaster")
+        if not all(isinstance(v, SecurityVersion) for v in m.master._versions):  # noqa: SLF001
+            raise ManifestInconsistent("security master contains rows that are not SecurityVersion")
+        if not isinstance(m.calendar, TradingCalendar):
+            raise ManifestInconsistent("market calendar unavailable")
+        if not isinstance(m.securities, dict) or not isinstance(m.by_session, dict) or not isinstance(m.by_symbol, dict):
+            raise ManifestInconsistent("market structures unavailable (securities, by_session, by_symbol)")
 
     def _carry_inherited(self, plan: WeekPlan, record: dict, bound: date) -> None:
         """Semana sin emisión: se aplican los derechos, se reintentan las salidas de las cestas heredadas en el último
@@ -856,6 +879,7 @@ class Runner:
                 exit_basket(lg, ss, close_prices=close_prices, at=plan.exit_at, week_id=wid)
             self.open_slots[name] = [(wid, ss) for wid, ss in self.open_slots[name]
                                      if any(s.status in ("filled", "exit_blocked") or (s.status == "exited" and not s.liquidated) for s in ss)]
+            lg.advance_to(plan.exit_at)                        # el reloj del libro llega al cierre aunque no haya cestas (R28-02)
             close_marks, stale = self.marks(exit_s, lg, "close")
             try:
                 v = lg.valuation(prices=close_marks, at=plan.exit_at)
@@ -865,10 +889,10 @@ class Runner:
             except MissingPrice as exc:
                 fr.update({"equity_end": None, "flags": [f"missing_price:{exc}"] + stale, "note": "semana no emitida; cestas heredadas gestionadas"})
 
-    def _emit_week(self, plan: WeekPlan, record: dict, bound: date) -> None:
+    def _emit_week(self, plan: WeekPlan, record: dict, bound: date):
+        """Emisión de la semana: paquete, maestro y predicciones archivadas. Devuelve lo que la evaluación necesita."""
         cfg = self.cfg
-        if not isinstance(self.market.master, SecurityMaster):          # sin maestro no hay identidad que archivar (R27-06)
-            raise ManifestInconsistent("security master unavailable: the market does not carry a SecurityMaster")
+        self._check_market()                                            # (R27-06, R28-04)
         packet, pkt_rec, candidates = self.build_week_packet(plan)
         mrec = self.master_record()             # el maestro se archiva antes que cualquier predicción que lo cite (R24-02)
         view = PredictorView(packet)
@@ -882,9 +906,20 @@ class Runner:
                       pending_outcome=pending_exit)
         picks: dict[str, list[str]] = {}
         for name, f in self.forecasters.items():
-            selections, meta = f.forecast(view, plan, candidates, slots=cfg.slots)
-            obj = self.make_forecast(f, plan, packet, selections, meta, candidates)
-            problems = validate_prediction(obj, packet, calendar=self.market.calendar, experiment_ids=list(self.forecasters))
+            try:
+                selections, meta = f.forecast(view, plan, candidates, slots=cfg.slots)
+                meta = meta if isinstance(meta, dict) else {}
+                obj = self.make_forecast(f, plan, packet, selections, meta, candidates)
+                if not isinstance(obj, dict):
+                    raise TypeError(f"make_forecast returned {type(obj).__name__}, not a dict")
+                problems = validate_prediction(obj, packet, calendar=self.market.calendar, experiment_ids=list(self.forecasters))
+            except Exception as exc:  # noqa: BLE001 - un pronosticador roto no aborta la semana: queda como predicción inválida (R28-04)
+                selections, meta = [], {}
+                problems = [f"forecast_error:{type(exc).__name__}:{str(exc)[:120]}"]
+                obj = self._invalid_forecast(f, plan, packet, problems[0])
+            if any(not isinstance(obj.get(k), str) for k in ("cutoff_at", "deadline_at", "status")) or not isinstance(obj.get("ranking"), list):
+                selections, problems = [], ["forecast_error:missing_or_mistyped_fields"]           # contrato mínimo del archivo (R28-04)
+                obj = self._invalid_forecast(f, plan, packet, problems[0])
             if problems:
                 obj["status"], obj["ranking"], obj["status_reason"] = "invalid", [], "; ".join(problems[:3])
             # la predicción archivada fija los bytes del paquete (hash lógico) y del maestro (sha256) con los que se resolvió
@@ -917,6 +952,18 @@ class Runner:
             raise ManifestInconsistent(f"{plan.week_id}: the security master changed during emission; predictions cite {mrec.sha256[:12]}")
         record["master_capture"] = mrec.capture_id                          # identidad de los valores (R23-01)
         record["master_sha256"] = mrec.sha256
+        return picks, candidates, entry_s, exit_s, pending_entry, pending_exit
+
+    def _invalid_forecast(self, f: Forecaster, plan: WeekPlan, packet: Packet, reason: str) -> dict:
+        """Predicción inválida mínima (contrato del laboratorio) cuando el pronosticador falla al construir la suya (R28-04)."""
+        return {"schema_version": "2.0", "forecast_id": f"{f.name}-{plan.week_id}", "experiment_id": f.name,
+                "protocol_version": "2.0-draft-backtest", "packet_id": packet.packet_id, "cutoff_at": plan.cutoff_at.isoformat(),
+                "issued_at": (plan.cutoff_at + timedelta(minutes=5)).isoformat(), "deadline_at": plan.deadline_at.isoformat(),
+                "timezone": "Asia/Taipei", "evidence_class": EVIDENCE, "status": "invalid", "ranking": [], "status_reason": reason}
+
+    def _evaluate_week(self, plan: WeekPlan, record: dict, bound: date, picks, candidates, entry_s, exit_s, pending_entry, pending_exit) -> None:
+        """Evaluación de la semana (libro, cestas, retornos); fuera de la contención de fallos del archivo (R28-05)."""
+        cfg = self.cfg
         if pending_entry:
             record["note"] = f"pending_outcome: entrada prevista {entry_s.isoformat()} posterior al límite {bound.isoformat()}"
             return
@@ -967,6 +1014,7 @@ class Runner:
             inherited_fills = [s.exit for _, ss in prior for s in ss if s.exit is not None and s.exit.at == plan.exit_at]
             self.open_slots[name] = [(wid, ss) for wid, ss in self.open_slots[name]
                                      if any(s.status in ("filled", "exit_blocked") or (s.status == "exited" and not s.liquidated) for s in ss)]
+            lg.advance_to(plan.exit_at)                        # reloj del libro en el cierre también sin cestas (R28-02)
             close_marks, stale1 = self.marks(exit_s, lg, "close")
             try:
                 val = lg.valuation(prices=close_marks, at=plan.exit_at)
@@ -1221,7 +1269,8 @@ def markdown_report(result: dict, *, title: str) -> str:
     lines.append("|---|" + "---|" * len(names))
     for w in result["weeks"]:
         if w["status"] != "valid":
-            lines.append(f"| {w['week_id']} | " + " | ".join([w.get("note", w["status"])] + [""] * (len(names) - 1)) + " |")
+            why = w.get("note", w["status"]) + (f" — {w['archive_error']}" if w.get("archive_error") else "")   # causa concreta (R28-08)
+            lines.append(f"| {w['week_id']} | " + " | ".join([why] + [""] * (len(names) - 1)) + " |")
             continue
         cells = []
         for n in names:

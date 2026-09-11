@@ -32,3 +32,8 @@ Con este código pasan enteras `review/out/astra_scratch/test_r26.py` y `test_r2
 ## 5. Pendientes que siguen abiertos
 
 Readmisión verificada en modo prospectivo (extractor multicaptura) y construcción del paquete en ese modo; sello externo de fecha; dividendos del universo completo; política de cierres sobrevenidos; adaptador oficial de lotes sueltos. Los bloqueantes que dependen del usuario no cambian (informe 21 §4).
+
+## 6. Fe de erratas (tras la ronda 28)
+
+Varias garantías de este informe (y las equivalentes del README y del informe 32 §6) excedían lo que el código acreditaba, como señaló Astra en la ronda 28: (1) «una generación por clasificación» no resistía una clasificación anidada, que liberaba el fijado (R28-01); (2) la «equivalencia exacta» de la semana fallida con una válida sin cesta no incluía el avance del reloj del libro hasta el cierre (R28-02); (3) la contención de fallos del archivo abarcaba también la evaluación, y la lectura inicial del índice y la forma de la semana quedaban fuera de la contención del clasificador (R28-03, R28-05); (4) «ninguna excepción escapa de `run_week`» no cubría índices no UTF-8, pronosticadores rotos ni estructuras de mercado inválidas (R28-04); (5) el exportador no aplicaba el contrato tipado del almacén (R28-06); (6) la semana en curso podía quedarse en un fallo histórico y las causas de fallos históricos se perdían en tabla, informe y cabeceras (R28-07, R28-08, R28-09). Todo queda corregido en el informe 34.
+
